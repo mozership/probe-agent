@@ -6,7 +6,9 @@ description: Test a web application from a task, or a persona and a goal, writte
 params: [task, expect, persona, goal, url, allow_hosts, secrets, cache, cache_mode, model, effort, max_steps, timeout, headless, window_w, window_h, evidence_dir]
 runs:
   using: binary
-  # probe manifest <tag> <checksums-file> puts the tag of a release here and
-  # the digests of its executables in checksums. The release must publish
-  # the executable of each platform under this name.
-  url: https://github.com/mozership/probe-agent/releases/download/v0.0.0/probe-agent_{os}_{arch}
+  url: https://github.com/mozership/probe-agent/releases/download/v0.1.0/probe-agent_{os}_{arch}
+  checksums:
+    darwin_amd64: "da4d4b51fd1d2edb81ac283dd7fccf2a12005a31315f057bf97804a9aa0a9411"
+    darwin_arm64: "df7a3cba01f90aaf5d2de2b965360d904d3bc5995a9e96783133c0424b134c5d"
+    linux_amd64: "e4a67d9bcf7ba41812be13d2c423e19acc8a4a5a1c77cdbeffbfb6e724f0d9c2"
+    linux_arm64: "921e7fdb7f3f84d9009e15000d7f603dbc0b2b04865805dab11d22c7a9e8311b"
