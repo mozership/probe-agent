@@ -2,6 +2,7 @@ package page
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -65,7 +66,7 @@ func server(t *testing.T) *httptest.Server {
 		fmt.Fprint(w, "slow answer")
 	})
 	mux.HandleFunc("/next", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `<!doctype html><title>Next</title><h1>Second page</h1>`)
+		fmt.Fprint(w, `<!doctype html><title>Next</title><h1>Second page</h1><p role="alert">Saved   3 notes</p><ul><li>A <button>Delete</button></li><li>B <button onclick="this.textContent='Gone'">Delete</button></li></ul>`)
 	})
 	s := httptest.NewServer(mux)
 	t.Cleanup(s.Close)
@@ -327,5 +328,85 @@ func TestSlowest(t *testing.T) {
 	}
 	if fmt.Sprint(got) != "[30 30 20]" {
 		t.Errorf("slowest = %v", got)
+	}
+}
+
+func TestChrome_LocatesElementsAgain(t *testing.T) {
+	c := startChrome(t)
+	s := server(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := c.Navigate(ctx, s.URL); err != nil {
+		t.Fatal(err)
+	}
+	read, err := c.Read(ctx, "interactive", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := c.Locator(ctx, Target{Ref: refOf(t, read, `textbox "Email"`)})
+	if err != nil || l == nil || *l != (Locator{Role: "textbox", Name: "Email"}) {
+		t.Fatalf("locator %+v, %v", l, err)
+	}
+	pt, err := call[map[string]float64](c, ctx, "point", refOf(t, read, `button "Sign up"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if at, err := c.Locator(ctx, Target{X: pt["x"], Y: pt["y"]}); err != nil || at == nil || at.Role != "button" || at.Name != "Sign up" {
+		t.Errorf("locator at a point %+v, %v", at, err)
+	}
+	if none, err := c.Locator(ctx, Target{X: 1, Y: 790}); err != nil || none != nil {
+		t.Errorf("locator at a blank point %+v, %v", none, err)
+	}
+
+	// The page loaded again has the field under another ref.
+	if err := c.Navigate(ctx, "reload"); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := c.Locate(ctx, *l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.FormInput(ctx, ref, "carol@example.com"); err != nil {
+		t.Errorf("the located field: %v", err)
+	}
+
+	// The second of two buttons named alike.
+	if err := c.Navigate(ctx, s.URL+"/next"); err != nil {
+		t.Fatal(err)
+	}
+	read, _ = c.Read(ctx, "interactive", 0, "")
+	refs := regexp.MustCompile(`button "Delete" \[(ref_\d+)\]`).FindAllStringSubmatch(read, -1)
+	if len(refs) != 2 {
+		t.Fatalf("read %s", read)
+	}
+	second, err := c.Locator(ctx, Target{Ref: refs[1][1]})
+	if err != nil || second.Nth != 1 || second.Of != 2 {
+		t.Fatalf("locator of the second %+v, %v", second, err)
+	}
+	ref, err = c.Locate(ctx, *second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Click(ctx, Target{Ref: ref}, "left", 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if text, _ := c.Text(ctx); !strings.Contains(text, "B Gone") {
+		t.Errorf("the click went to another button: %q", text)
+	}
+	// One "Delete" is left where there were two: which is meant cannot be
+	// told, and waiting does not help.
+	start := time.Now()
+	if _, err := c.Locate(ctx, *second); !errors.Is(err, ErrAmbiguous) || time.Since(start) > 2*time.Second {
+		t.Errorf("located among another number: %v after %s", err, time.Since(start))
+	}
+	if alerts, err := c.Alerts(ctx); err != nil || len(alerts) != 1 || alerts[0] != "Saved 3 notes" {
+		t.Errorf("alerts %q, %v", alerts, err)
+	}
+
+	short, cancelShort := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancelShort()
+	if _, err := c.Locate(short, Locator{Role: "button", Name: "Nowhere"}); err == nil || errors.Is(err, ErrAmbiguous) {
+		t.Errorf("located a button the page lacks")
 	}
 }

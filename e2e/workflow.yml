@@ -9,6 +9,11 @@
 #
 # Each run signs up with addresses of its own, so that runs against the same
 # server do not collide.
+#
+# The sign-up of Alice replays e2e/cache/signup.json, and records it again
+# when it no longer matches. CI runs with CACHE_MODE=strict, which writes no
+# recording and blocks the test when the one committed no longer matches,
+# and checks that it is replayed whole.
 name: probe-agent against a sign-up
 
 actions:
@@ -21,6 +26,7 @@ vars:
   url: "{{APP_URL ?? 'http://localhost:18090'}}"
   id: "{{random_str(8)}}"
   password: "pw-{{random_str(16)}}"
+  cache_mode: "{{CACHE_MODE ?? 'auto'}}"
 
 jobs:
 - name: Sign-up
@@ -51,8 +57,10 @@ jobs:
       secrets:
         EMAIL: "alice+{{vars.id}}@example.com"
         PASSWORD: "{{vars.password}}"
+      cache: e2e/cache/signup.json
+      cache_mode: "{{vars.cache_mode}}"
     timeout: 5m
-    test: res.verdict == "pass"
+    test: res.verdict == "pass" && (vars.cache_mode != "strict" || res.cache.status == "hit")
     outputs:
       report: res.filepaths.report
   - name: The account exists, as the pages said

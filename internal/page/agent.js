@@ -292,5 +292,65 @@
     return main.innerText + (squash(rest) ? '\n\n' + rest : '');
   };
 
-  window.__probeAgent = { read, point, scrollTo, focus, formInput, text };
+  // The elements shown with role and name, in the order of the document,
+  // shadow roots included.
+  const withRoleAndName = (role, name) => {
+    const out = [];
+    const walk = (root) => {
+      for (const el of root.querySelectorAll('*')) {
+        if (roleOf(el) === role && clip(nameOf(el, role), 200) === name && shown(el)) out.push(el);
+        if (el.shadowRoot) walk(el.shadowRoot);
+      }
+    };
+    walk(document);
+    return out;
+  };
+
+  // locatorOf describes el by its role, its name, and, when other elements
+  // have both, which of how many it is. An element with no name among
+  // others of its role has nothing but its order to tell it by, which rows
+  // that reorder would give to another, so it is not described.
+  const locatorOf = (el) => {
+    const role = roleOf(el);
+    if (!role) return null;
+    const name = clip(nameOf(el, role), 200);
+    const twins = withRoleAndName(role, name);
+    if (twins.length <= 1) return { role, name };
+    if (!name) return null;
+    return { role, name, nth: Math.max(twins.indexOf(el), 0), of: twins.length };
+  };
+
+  // locator describes the element of ref, or the one one can act on at x,
+  // y, so that a later run can find it again with locate. It is null for a
+  // point with nothing to act on, and for an element it cannot describe.
+  const locator = (ref, x, y) => {
+    if (ref) return locatorOf(byRef(ref));
+    let el = document.elementFromPoint(x, y);
+    while (el && !interactive(el, roleOf(el))) el = el.parentElement;
+    return el ? locatorOf(el) : null;
+  };
+
+  // locate finds the element a locator describes, and returns its ref and
+  // how many elements have its role and name. The ref is '' unless that
+  // tells the element: one element where the locator counted one, or as
+  // many as it counted, of which it takes the one at its place.
+  const locate = (loc) => {
+    const found = withRoleAndName(loc.role, loc.name);
+    const of = loc.of || 1;
+    const el = found.length === of ? found[loc.nth || 0] : null;
+    return { ref: el ? refOf(el) : '', count: found.length };
+  };
+
+  // alerts returns the texts of the alerts the page shows, which say what
+  // just happened.
+  const alerts = () => {
+    const out = [];
+    for (const el of document.querySelectorAll('[role=alert], [role=alertdialog]')) {
+      const t = squash(el.innerText);
+      if (t && shown(el)) out.push(clip(t, 300));
+    }
+    return out;
+  };
+
+  window.__probeAgent = { read, point, scrollTo, focus, formInput, text, locator, locate, alerts };
 })();

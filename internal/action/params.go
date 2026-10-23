@@ -26,9 +26,26 @@ const (
 	defaultHeight   = 800
 )
 
+// The modes of the cache.
+const (
+	// cacheAuto replays the recording if there is one, and records the
+	// run when it passes without replaying all of it.
+	cacheAuto = "auto"
+	// cacheRead replays the recording if there is one, and never writes
+	// it, as in CI, where the recording comes from the repository.
+	cacheRead = "read"
+	// cacheRefresh records the run as if there were no recording.
+	cacheRefresh = "refresh"
+	// cacheStrict replays as read does, and ends a test whose recording no
+	// longer matches the application blocked, without the model, so that
+	// CI tells a stale recording rather than paying for the tester.
+	cacheStrict = "strict"
+)
+
 // params are the keys the action takes in with.
 var params = []string{
 	"task", "expect", "persona", "goal", "url", "allow_hosts", "secrets",
+	"cache", "cache_mode",
 	"model", "effort", "max_steps", "timeout",
 	"headless", "window_w", "window_h", "evidence_dir",
 }
@@ -44,6 +61,8 @@ type req struct {
 	Expect      string
 	Persona     string
 	Goal        string
+	Cache       string
+	CacheMode   string
 	URL         string
 	AllowHosts  []string
 	Secrets     map[string]string
@@ -61,13 +80,14 @@ type req struct {
 // numbers and the booleans are taken as strings too.
 func parse(with map[string]any) (req, error) {
 	r := req{
-		Model:    llm.DefaultModel,
-		Effort:   defaultEffort,
-		MaxSteps: defaultMaxSteps,
-		Timeout:  defaultTimeout,
-		Headless: true,
-		Width:    defaultWidth,
-		Height:   defaultHeight,
+		Model:     llm.DefaultModel,
+		Effort:    defaultEffort,
+		MaxSteps:  defaultMaxSteps,
+		Timeout:   defaultTimeout,
+		Headless:  true,
+		CacheMode: cacheAuto,
+		Width:     defaultWidth,
+		Height:    defaultHeight,
 	}
 	var errs []error
 	str := func(key string, dst *string) {
@@ -109,6 +129,8 @@ func parse(with map[string]any) (req, error) {
 	str("model", &r.Model)
 	str("effort", &r.Effort)
 	str("evidence_dir", &r.EvidenceDir)
+	str("cache", &r.Cache)
+	str("cache_mode", &r.CacheMode)
 	num("max_steps", &r.MaxSteps)
 	num("window_w", &r.Width)
 	num("window_h", &r.Height)
@@ -136,6 +158,15 @@ func parse(with map[string]any) (req, error) {
 			errs = append(errs, fmt.Errorf("url %q must be an http or https URL", r.URL))
 		}
 	}
+	switch r.CacheMode {
+	case cacheAuto, cacheRead, cacheRefresh, cacheStrict:
+	default:
+		errs = append(errs, fmt.Errorf("cache_mode %q must be auto, read, refresh or strict", r.CacheMode))
+	}
+	if r.Cache != "" && persona {
+		errs = append(errs, errors.New("cache is for scenario tests; a persona test takes another way each run"))
+	}
+
 	switch r.Effort {
 	case "low", "medium", "high", "xhigh", "max":
 	default:

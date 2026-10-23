@@ -52,6 +52,12 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	var rec *scenario.Recording
+	if r.Cache != "" && r.CacheMode != cacheRefresh {
+		if rec, err = loadRecording(r.Cache); err != nil {
+			return nil, err
+		}
+	}
 	ev, err := newEvidence(r.EvidenceDir)
 	if err != nil {
 		return nil, err
@@ -73,6 +79,12 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 		MaxSteps: r.MaxSteps,
 		Timeout:  r.Timeout,
 		Save:     ev.save,
+		// A recording is replayed in any mode of the cache but refresh,
+		// and written in auto and refresh.
+		Recording: rec,
+		Record:    r.Cache != "" && (r.CacheMode == cacheAuto || r.CacheMode == cacheRefresh),
+		Strict:    r.Cache != "" && r.CacheMode == cacheStrict,
+		Viewport:  scenario.Viewport{Width: r.Width, Height: r.Height},
 	}
 	model := llm.NewAnthropic(r.Model, r.Effort)
 	o, err := scenario.Run(a.ctx, cfg, chrome, model)
@@ -84,6 +96,13 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 	f, err := ev.write(r, o)
 	if err != nil {
 		return nil, err
+	}
+	if o.Recording != nil {
+		if err := saveRecording(r.Cache, o.Recording); err != nil {
+			return nil, err
+		}
+		f.Recording = r.Cache
+		a.log.Info("recorded the test", "cache", r.Cache, "steps", len(o.Recording.Steps))
 	}
 	return result(r, o, f, time.Since(start))
 }
@@ -112,10 +131,13 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 			"trace":      f.Trace,
 			"screenshot": o.FinalScreenshot,
 		},
-		"report": shortReport(o, f),
+		"report": shortReport(r, o, f),
 	}
 	if o.Mode == scenario.ModePersona {
 		res["findings"] = o.Findings
+	}
+	if c := cacheOf(r, o, f.Recording != ""); c != nil {
+		res["cache"] = c
 	}
 	reqMap := map[string]any{
 		"url":       r.URL,
@@ -143,7 +165,7 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 
 // shortReport is what Probe prints under the step: the verdict, why, and
 // where the full report is.
-func shortReport(o scenario.Outcome, f files) string {
+func shortReport(r req, o scenario.Outcome, f files) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s: %s\n", verdictMarks[o.Verdict], o.Verdict, oneLine(o.Reason))
 	for _, e := range o.Evidence {
@@ -160,6 +182,27 @@ func shortReport(o scenario.Outcome, f files) string {
 			}
 			fmt.Fprintf(&b, "  %s %s: %s%s\n", severityMarks[f.Severity], f.Severity, oneLine(f.Title), unverified)
 		}
+	}
+	if c := cacheOf(r, o, f.Recording != ""); c != nil {
+		fmt.Fprintf(&b, "  cache: %s", c.Status)
+		switch c.Status {
+		case scenario.ReplayHit:
+			fmt.Fprintf(&b, ", %d steps replayed without the model", c.Replayed)
+		case scenario.ReplayPartial:
+			if o.Stopped == scenario.StoppedStale {
+				fmt.Fprintf(&b, ", %d steps replayed, stale at step %d: %s", c.Replayed, c.DivergedAt, c.Reason)
+			} else {
+				fmt.Fprintf(&b, ", %d steps replayed, then the tester from step %d: %s", c.Replayed, c.DivergedAt, c.Reason)
+			}
+		case scenario.ReplayMiss:
+			if c.Reason != "" {
+				fmt.Fprintf(&b, " (%s)", c.Reason)
+			}
+		}
+		if c.Saved {
+			fmt.Fprintf(&b, ", recorded to %s", c.Path)
+		}
+		b.WriteString("\n")
 	}
 	fmt.Fprintf(&b, "  %d steps, stopped: %s, %s\n", len(o.Steps), o.Stopped, o.Duration.Round(time.Second))
 	fmt.Fprintf(&b, "  report: %s", f.Report)

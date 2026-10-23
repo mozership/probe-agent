@@ -76,18 +76,20 @@ func TestParse_TakesTemplatedStrings(t *testing.T) {
 
 func TestParse_Refuses(t *testing.T) {
 	for name, with := range map[string]map[string]any{
-		"no task":        {"expect": "e", "url": "http://a.test/"},
-		"no expect":      {"task": "t", "url": "http://a.test/"},
-		"no url":         {"task": "t", "expect": "e"},
-		"a url not http": {"task": "t", "expect": "e", "url": "file:///etc/passwd"},
-		"a bad timeout":  {"task": "t", "expect": "e", "url": "http://a.test/", "timeout": "soon"},
-		"zero steps":     {"task": "t", "expect": "e", "url": "http://a.test/", "max_steps": 0.0},
-		"a bad effort":   {"task": "t", "expect": "e", "url": "http://a.test/", "effort": "huge"},
-		"a bad secret":   {"task": "t", "expect": "e", "url": "http://a.test/", "secrets": map[string]any{"MY-PW": "x"}},
-		"an unknown key": {"task": "t", "expect": "e", "url": "http://a.test/", "prompt": "x"},
-		"both modes":     {"task": "t", "expect": "e", "persona": "p", "goal": "g", "url": "http://a.test/"},
-		"no goal":        {"persona": "p", "url": "http://a.test/"},
-		"only a goal":    {"goal": "g", "url": "http://a.test/"},
+		"no task":          {"expect": "e", "url": "http://a.test/"},
+		"no expect":        {"task": "t", "url": "http://a.test/"},
+		"no url":           {"task": "t", "expect": "e"},
+		"a url not http":   {"task": "t", "expect": "e", "url": "file:///etc/passwd"},
+		"a bad timeout":    {"task": "t", "expect": "e", "url": "http://a.test/", "timeout": "soon"},
+		"zero steps":       {"task": "t", "expect": "e", "url": "http://a.test/", "max_steps": 0.0},
+		"a bad effort":     {"task": "t", "expect": "e", "url": "http://a.test/", "effort": "huge"},
+		"a bad secret":     {"task": "t", "expect": "e", "url": "http://a.test/", "secrets": map[string]any{"MY-PW": "x"}},
+		"an unknown key":   {"task": "t", "expect": "e", "url": "http://a.test/", "prompt": "x"},
+		"both modes":       {"task": "t", "expect": "e", "persona": "p", "goal": "g", "url": "http://a.test/"},
+		"no goal":          {"persona": "p", "url": "http://a.test/"},
+		"only a goal":      {"goal": "g", "url": "http://a.test/"},
+		"a bad cache mode": {"task": "t", "expect": "e", "url": "http://a.test/", "cache": "c.json", "cache_mode": "sometimes"},
+		"a persona cache":  {"persona": "p", "goal": "g", "url": "http://a.test/", "cache": "c.json"},
 	} {
 		if _, err := parse(with); err == nil {
 			t.Errorf("%s: parsed", name)
@@ -254,5 +256,73 @@ func TestEvidence_WritesThePersonaReport(t *testing.T) {
 	}
 	if strings.Contains(string(md), "## Task") {
 		t.Errorf("a persona report has a task")
+	}
+}
+
+func TestParse_Cache(t *testing.T) {
+	r, err := parse(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "cache": " .probe-agent/signup.json "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Cache != ".probe-agent/signup.json" || r.CacheMode != "auto" {
+		t.Errorf("cache %q, mode %q", r.Cache, r.CacheMode)
+	}
+	if r, err := parse(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "cache": "c.json", "cache_mode": "strict"}); err != nil || r.CacheMode != "strict" {
+		t.Errorf("strict: %q, %v", r.CacheMode, err)
+	}
+}
+
+func TestRecording_RoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache", "signup.json")
+	if rec, err := loadRecording(path); rec != nil || err != nil {
+		t.Fatalf("a missing recording: %v, %v", rec, err)
+	}
+	rec := &scenario.Recording{Version: 2, Task: "t", Expect: "e", Start: "/", Steps: []scenario.Recorded{
+		{Tool: "left_click", Locator: &page.Locator{Role: "link", Name: "Sign up"}, Path: "/signup"},
+	}}
+	if err := saveRecording(path, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadRecording(path)
+	if err != nil || got.Steps[0].Locator.Name != "Sign up" || got.Steps[0].Path != "/signup" {
+		t.Errorf("loaded %+v, %v", got, err)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.HasSuffix(string(data), "}\n") || !strings.Contains(string(data), "\n  \"steps\"") {
+		t.Errorf("the recording is not written for a repository to keep:\n%s", data)
+	}
+	os.WriteFile(path, []byte("not json"), 0o644)
+	if _, err := loadRecording(path); err == nil {
+		t.Errorf("loaded a broken recording")
+	}
+}
+
+func TestResult_Cache(t *testing.T) {
+	r := req{Task: "t", Expect: "e", Cache: "c.json", CacheMode: "auto"}
+	o := outcome()
+	o.Replay = &scenario.Replay{Status: scenario.ReplayPartial, Replayed: 3, DivergedAt: 4, Reason: "the page has no button \"Next\"", Stale: true}
+	ret, err := result(r, o, files{Report: "/tmp/r.md", Recording: "c.json"}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := ret["res"].(map[string]any)
+	c := res["cache"].(map[string]any)
+	if c["status"] != "partial" || c["replayed"] != 3.0 || c["diverged_at"] != 4.0 || c["stale"] != true || c["saved"] != true || c["path"] != "c.json" {
+		t.Errorf("cache %v", c)
+	}
+	if report := res["report"].(string); !strings.Contains(report, "cache: partial, 3 steps replayed, then the tester from step 4") || !strings.Contains(report, "recorded to c.json") {
+		t.Errorf("report %q", report)
+	}
+
+	miss := cacheOf(req{Cache: "c.json", CacheMode: "read"}, outcome(), false)
+	if miss.Status != "miss" || !strings.Contains(miss.Reason, "no recording at c.json") {
+		t.Errorf("miss %+v", miss)
+	}
+	if cacheOf(req{}, outcome(), false) != nil {
+		t.Errorf("a test without a cache has res.cache")
+	}
+	none, _ := result(req{Task: "t"}, outcome(), files{}, time.Second)
+	if _, ok := none["res"].(map[string]any)["cache"]; ok {
+		t.Errorf("res.cache without a cache")
 	}
 }

@@ -1,0 +1,84 @@
+{
+  "version": 2,
+  "task": "As a new user of this service, sign up for an account with the name\nAlice Tester, the email address {secret:EMAIL} and the password\n{secret:PASSWORD}, agreeing to the terms.",
+  "expect": "The account is created: a page welcomes Alice Tester by name and says\nthe account for the email address is ready.",
+  "start": "/",
+  "landing": "/",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "steps": [
+    {
+      "tool": "left_click",
+      "locator": {
+        "role": "link",
+        "name": "Create a free account"
+      },
+      "path": "/signup"
+    },
+    {
+      "tool": "form_input",
+      "input": {
+        "value": "Alice Tester"
+      },
+      "locator": {
+        "role": "textbox",
+        "name": "Full name"
+      },
+      "path": "/signup"
+    },
+    {
+      "tool": "form_input",
+      "input": {
+        "value": "{secret:EMAIL}"
+      },
+      "locator": {
+        "role": "textbox",
+        "name": "Email address"
+      },
+      "path": "/signup"
+    },
+    {
+      "tool": "form_input",
+      "input": {
+        "value": "{secret:PASSWORD}"
+      },
+      "locator": {
+        "role": "textbox",
+        "name": "Password (8 characters or more)"
+      },
+      "path": "/signup"
+    },
+    {
+      "tool": "form_input",
+      "input": {
+        "value": "{secret:PASSWORD}"
+      },
+      "locator": {
+        "role": "textbox",
+        "name": "Confirm password"
+      },
+      "path": "/signup"
+    },
+    {
+      "tool": "form_input",
+      "input": {
+        "value": true
+      },
+      "locator": {
+        "role": "checkbox",
+        "name": "I agree to the terms of service"
+      },
+      "path": "/signup"
+    },
+    {
+      "tool": "left_click",
+      "locator": {
+        "role": "button",
+        "name": "Create account"
+      },
+      "path": "/welcome"
+    }
+  ]
+}

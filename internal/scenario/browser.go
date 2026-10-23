@@ -102,6 +102,8 @@ var actions = map[string]bool{
 // result and the step that records it.
 func (r *run) browser(ctx context.Context, call llm.Call) (llm.Result, Step) {
 	step := Step{Tool: call.Name}
+	// The tester had a screenshot of the page the step acts on.
+	pixels := r.shot != "" && r.shot == r.url
 	var raw map[string]any
 	if json.Unmarshal(call.Input, &raw) == nil && len(raw) > 0 {
 		step.Input, _ = r.secrets.maskAny(raw).(map[string]any)
@@ -110,6 +112,14 @@ func (r *run) browser(ctx context.Context, call llm.Call) (llm.Result, Step) {
 
 	var in browserInput
 	text, images, err := "", []llm.Image(nil), json.Unmarshal(call.Input, &in)
+	// The element a step acts on is described before the step, which can
+	// take it off the page, for the recording.
+	var loc *page.Locator
+	if err == nil && r.cfg.Record && targeted[call.Name] {
+		if t, terr := in.Target.page(); terr == nil {
+			loc, _ = r.page.Locator(ctx, t)
+		}
+	}
 	if err == nil {
 		text, images, err = r.member(ctx, call.Name, in)
 	}
@@ -142,7 +152,16 @@ func (r *run) browser(ctx context.Context, call llm.Call) (llm.Result, Step) {
 		}
 		r.url, r.title = url, title
 	}
+	if r.cfg.Record && actions[call.Name] && !res.IsError {
+		r.record(ctx, call.Name, step.Input, loc, step.URL, pixels)
+	}
 	return res, step
+}
+
+// targeted are the members that act on the element of a target.
+var targeted = map[string]bool{
+	"left_click": true, "right_click": true, "double_click": true, "triple_click": true,
+	"hover": true, "scroll_to": true, "form_input": true,
 }
 
 // member runs the member name with in, and returns the text and the images
@@ -168,6 +187,7 @@ func (r *run) member(ctx context.Context, name string, in browserInput) (string,
 		if err != nil {
 			return "", nil, err
 		}
+		r.shot = r.url
 		return "", []llm.Image{{MediaType: "image/jpeg", Data: img}}, nil
 
 	case "zoom":
@@ -178,6 +198,7 @@ func (r *run) member(ctx context.Context, name string, in browserInput) (string,
 		if err != nil {
 			return "", nil, err
 		}
+		r.shot = r.url
 		return "", []llm.Image{{MediaType: "image/jpeg", Data: img}}, nil
 
 	case "left_click", "right_click", "double_click", "triple_click":

@@ -43,6 +43,9 @@ const (
 	StoppedTimeout  = "timeout"
 	StoppedNoFinish = "no_finish"
 	StoppedRefused  = "refused"
+	// StoppedStale is a test whose recording no longer matched the
+	// application, under Config.Strict.
+	StoppedStale = "stale"
 )
 
 // Config is a test: a scenario test of Task and Expect, or a persona test
@@ -68,6 +71,18 @@ type Config struct {
 	MaxSteps int
 	// Timeout bounds the whole test, the judge included.
 	Timeout time.Duration
+	// Recording is a recording of an earlier run of the scenario test to
+	// replay, if any. The tester carries on from where it stops matching.
+	Recording *Recording
+	// Record asks for the recording of a scenario test that passes, as
+	// Outcome.Recording, unless it would replay as Recording does.
+	Record bool
+	// Strict ends a test whose recording no longer matches the
+	// application, blocked, rather than having the tester carry on.
+	Strict bool
+	// Viewport is the size of the viewport, which a step at a point of it
+	// is recorded and replayed at.
+	Viewport Viewport
 	// Save keeps an image as evidence under name and returns where it was
 	// kept, or "" when it was not. Nil keeps none.
 	Save func(name string, data []byte) string
@@ -106,11 +121,16 @@ type Outcome struct {
 	ConsoleErrors []page.ConsoleError `json:"console_errors"`
 	NetworkErrors []page.NetworkError `json:"network_errors"`
 	// Findings are what a persona test found wrong, the most severe first.
-	Findings []Finding     `json:"findings,omitempty"`
-	Metrics  Metrics       `json:"metrics"`
-	Usage    llm.Usage     `json:"usage"`
-	Model    string        `json:"model"`
-	Duration time.Duration `json:"-"`
+	Findings []Finding `json:"findings,omitempty"`
+	Metrics  Metrics   `json:"metrics"`
+	// Replay is how the test used Config.Recording, when it had one.
+	Replay *Replay `json:"replay,omitempty"`
+	// Recording is the recording of the run, when Config.Record asked for
+	// it and the test passed.
+	Recording *Recording    `json:"-"`
+	Usage     llm.Usage     `json:"usage"`
+	Model     string        `json:"model"`
+	Duration  time.Duration `json:"-"`
 }
 
 // Metrics are measures of a test that do not depend on the model's
@@ -157,6 +177,17 @@ type run struct {
 	steps []Step
 	// notes are the findings the tester noted in a persona test.
 	notes []note
+	// recorded are the steps that changed the page, for the recording.
+	recorded []Recorded
+	// handoffNote tells the tester what was replayed before it took over.
+	handoffNote string
+	// shown are the texts of the elements the pages showed the tester,
+	// which a value it typed may have been read off.
+	shown []string
+	// shot is the URL of the page the tester last took a screenshot of.
+	shot string
+	// landing is where the page the test opened first landed.
+	landing string
 	// texts are what the pages showed the tester, which the judge's
 	// quotes are checked against.
 	texts []string
@@ -167,7 +198,9 @@ type run struct {
 // seen keeps text as a page showed it to the tester, masked as the model
 // read it.
 func (r *run) seen(text string) {
-	r.texts = append(r.texts, r.secrets.mask(text))
+	masked := r.secrets.mask(text)
+	r.texts = append(r.texts, masked)
+	r.shown = append(r.shown, shownTexts(masked)...)
 }
 
 func (r *run) save(name string, data []byte) string {
@@ -198,11 +231,32 @@ func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, er
 		return Outcome{}, fmt.Errorf("opening %s: %w", cfg.StartURL, err)
 	}
 	r.url, r.title, _ = p.State(testerCtx)
+	r.landing = r.relative(r.url)
 
 	o := Outcome{Mode: cfg.Mode(), Model: m.Name()}
-	stopped, summary, err := r.test(testerCtx)
-	if err != nil {
-		return Outcome{}, err
+	var stopped, summary string
+	if rec := cfg.Recording; rec != nil && o.Mode == ModeScenario {
+		o.Replay = &Replay{Status: ReplayMiss, Reason: r.usable(rec)}
+		if o.Replay.Reason == "" {
+			*o.Replay = r.replay(testerCtx, rec)
+		}
+		switch o.Replay.Status {
+		case ReplayHit:
+			stopped = StoppedDone
+			summary = fmt.Sprintf("All %d steps were replayed from a recording of an earlier run; the model was not asked to act.", o.Replay.Replayed)
+		case ReplayPartial:
+			r.handoffNote = r.handoff(*o.Replay, rec)
+		}
+		if cfg.Strict && o.Replay.Stale {
+			stopped, summary = StoppedStale, o.Replay.Reason
+		}
+	}
+	if stopped == "" {
+		var err error
+		stopped, summary, err = r.test(testerCtx)
+		if err != nil {
+			return Outcome{}, err
+		}
 	}
 	o.Stopped, o.Summary = stopped, summary
 
@@ -213,6 +267,9 @@ func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, er
 	o.FinalScreenshot = final.screenshot
 
 	switch {
+	case stopped == StoppedStale:
+		o.Verdict = Blocked
+		o.Reason = "The recording no longer matches the application: " + summary + ". In strict mode the tester does not take over; record the test again."
 	case stopped == StoppedRefused:
 		o.Verdict, o.Reason = Blocked, "The model declined the task: "+summary
 	case o.Mode == ModePersona:
@@ -237,6 +294,12 @@ func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, er
 			return Outcome{}, err
 		}
 		o.Verdict, o.Reason, o.Evidence = v.verdict, v.reason, v.evidence
+	}
+	if cfg.Record && o.Mode == ModeScenario && o.Verdict == Pass && stopped == StoppedDone &&
+		(o.Replay == nil || o.Replay.Status != ReplayHit) {
+		if rec := r.recording(); cfg.Recording == nil || !sameRecording(rec, cfg.Recording) {
+			o.Recording = rec
+		}
 	}
 
 	o.Steps = r.steps
@@ -275,7 +338,7 @@ func judgeReserve(timeout time.Duration) time.Duration {
 func (r *run) test(ctx context.Context) (stopped, summary string, err error) {
 	opts := llm.ChatOptions{
 		System:  testerSystem(r.hosts),
-		Prompt:  testerPrompt(r.secrets.mask(r.cfg.Task), r.secrets.mask(r.cfg.Expect), r.cfg.StartURL, r.secrets),
+		Prompt:  testerPrompt(r.secrets.mask(r.cfg.Task), r.secrets.mask(r.cfg.Expect), r.cfg.StartURL, r.secrets) + r.handoffNote,
 		Tools:   []llm.Tool{finishTool},
 		Browser: &llm.BrowserToolset{Disabled: Disabled},
 	}

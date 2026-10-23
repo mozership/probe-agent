@@ -81,6 +81,8 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 | `timeout` | Duration | No | `4m` | Limit for the whole test, the judge included, as `90s` or a number of seconds. Keep it below the step's `timeout`, which is `5m` unless set |
 | `headless` | Boolean | No | `true` | Run Chrome without a window |
 | `window_w`, `window_h` | Integer | No | `1280`, `800` | The viewport, in pixels |
+| `cache` | String | No | - | A file to keep the steps of a scenario test that passed in, and to replay them from; see [Replay](#replay) |
+| `cache_mode` | String | No | `auto` | `auto`, `read`, `strict` or `refresh`; see [Replay](#replay) |
 | `evidence_dir` | String | No | the temporary directory | Where the screenshots and the report are written, each test in a directory of its own |
 
 The model is called with the credentials the [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-go) finds, such as `ANTHROPIC_API_KEY`, which the action takes from Probe's environment. List it under `secrets` of the workflow so that Probe hides it in its output.
@@ -94,12 +96,13 @@ The model is called with the credentials the [Anthropic SDK](https://github.com/
 | `res.findings` | List | In a persona test, what is wrong with the application, the most severe first: `title`, `severity` (`high`, `medium` or `low`), `category` (`error`, `functional`, `usability`, `performance`, `content` or `accessibility`), `expected`, `observed`, `evidence`, `steps`, `url`, `screenshot`, and `verified`, whether any of the evidence was found in the record |
 | `res.reason` | String | Why, in the judge's words |
 | `res.evidence` | List | What the judge quoted: `quote`, and `verified`, whether a page showed it |
-| `res.stopped` | String | How the tester stopped: `done`, `blocked`, `max_steps`, `timeout`, `no_finish` or `refused` |
+| `res.stopped` | String | How the tester stopped: `done`, `blocked`, `max_steps`, `timeout`, `no_finish`, `refused`, or `stale` for a recording that no longer matched under `cache_mode: strict` |
 | `res.summary` | String | What the tester said it did and saw |
 | `res.steps` | List | Each call to the browser: `index`, `tool`, `input`, `result` or `error`, `url`, `screenshot` and the tester's `notes` |
 | `res.url`, `res.title` | String | The page the tester left the browser on |
 | `res.console_errors` | List | The errors the pages wrote to their console, as the browser action reports them |
 | `res.network_errors` | List | The requests that failed or were answered with 400 or more: `method`, `url`, `status`, `error` |
+| `res.cache` | Object | With `cache`, how the test used it: `path`, `mode`, `status` (`miss`, `hit` or `partial`), `replayed`, the steps replayed, `diverged_at` and `reason`, where and why the recording stopped, `stale`, whether it stopped because the application no longer matches it, and `saved`, whether the run was recorded |
 | `res.metrics` | Object | Measures that do not depend on the model, to compare runs by: `steps`, `duration_ms`, `requests`, `failed_requests`, `console_errors`, and `slowest_requests`, the ten requests that took longest, with `method`, `url`, `status` and `duration_ms` |
 | `res.usage` | Object | The `requests` made to the model and the tokens they used |
 | `res.filepaths` | Object | `report`, a Markdown report with a screenshot of each step; `trace`, the result as JSON; `screenshot`, the final page |
@@ -107,6 +110,39 @@ The model is called with the credentials the [Anthropic SDK](https://github.com/
 | `status` | Integer | `0`; the verdict is for the step's `test` |
 
 `blocked` is kept apart from `fail`: it is what the tester could not get past, such as a CAPTCHA or information the task does not give, rather than what the application did wrong.
+
+## Replay
+
+A scenario test that passes the same way every run need not ask the model how to do it every run. With `cache`, the steps of a run that passed are kept in a file, and the next run replays them without the model; only the judge is asked, so that what the pages show is still judged.
+
+```yaml
+    with:
+      url: https://staging.example.com/
+      task: Sign up with {secret:EMAIL} and the password {secret:PASSWORD}.
+      expect: The dashboard greets the new user.
+      cache: .probe-agent/signup.json
+      cache_mode: "{{CACHE_MODE ?? 'auto'}}"
+```
+
+A replay:
+
+1. Begins only on the page the recording began on, as the start URL may redirect elsewhere, such as to a login.
+2. Finds each element a step acted on by its role and its name, such as `button "Create account"`. Where other elements of the page had both, it counts them too, and takes the same one of as many; another number of them is ambiguous, and the replay stops rather than guess. An element with no name among others of its role is not recorded: only its order would tell it, and rows that reorder would give the step to another.
+3. Checks after each step that the page is on the route it reached when recorded, and shows no alert the recording did not. A route is a page's path and query, with what looks minted per record, such as an ID, a token or a date, read as one: `/orders/42` and `/orders/7` are one route, and `/companies` and `/companies?tab=notes` are two.
+4. Ends without the model, or hands the test to the tester where it stopped, telling it what was replayed and why it stopped. Once the test passes, the run is recorded again.
+
+A value the tester typed that the task spells out, or that it made up, such as a name, is typed again. A value it may have read off the screen, such as a code the application showed, or a date, belongs to that run: its step is recorded as a gap, without the value, and the replay hands the test to the tester there. A step at a point of the viewport, rather than on an element, is replayed only at the viewport it was recorded at.
+
+The recording is of the task, the expectation and the start URL; when one of them changes, it is not replayed. It keeps the secrets as placeholders, and the URLs on the host of `url` as paths, so that a recording made against one host is replayed against another. It is written only when it changes, so that a committed one stays clean while it replays. A persona test takes no `cache`: it is to take another way each run.
+
+| `cache_mode` | Replays | Records | Where the recording stops matching |
+|---|---|---|---|
+| `auto` | yes | a run that passed, if it changes the recording | the tester carries on |
+| `read` | yes | never | the tester carries on |
+| `strict` | yes | never | the test is blocked without the model, as `stopped: stale` |
+| `refresh` | no | a run that passed | |
+
+Commit the file, and run CI with `strict`, so that a recording that no longer matches fails the test rather than paying the tester on every run until someone records it again. Record it again with `auto` where someone looks at the change. A gap is not a change of the application: `strict` hands it to the tester too.
 
 ## Secrets
 

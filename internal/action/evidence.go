@@ -48,6 +48,8 @@ func (e *evidence) save(name string, data []byte) string {
 type files struct {
 	Report string
 	Trace  string
+	// Recording is where the run was recorded, if it was.
+	Recording string
 }
 
 // write writes the report of o, for a person to read, and its trace, for a
@@ -88,6 +90,13 @@ func markdown(r req, o scenario.Outcome, dir string) string {
 	w("| | |\n|---|---|\n")
 	w("| Stopped | %s |\n", o.Stopped)
 	w("| Steps | %d |\n", len(o.Steps))
+	if rp := o.Replay; rp != nil {
+		w("| Replay | %s, %d steps replayed", rp.Status, rp.Replayed)
+		if rp.Reason != "" {
+			w(" (%s)", rp.Reason)
+		}
+		w(" |\n")
+	}
 	w("| Duration | %s |\n", o.Duration.Round(1e8))
 	w("| Model | %s |\n", o.Model)
 	w("| Tokens | %d in (%d from cache), %d out, %d requests |\n\n",

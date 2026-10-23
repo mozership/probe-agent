@@ -25,12 +25,21 @@ type fakePage struct {
 	afterClick string
 	network    []page.NetworkError
 	requests   page.Requests
+	// locators are what the elements of the refs are.
+	locators map[string]page.Locator
+	alerts   []string
+	// landOn, when set, is where navigating to the first URL lands, as
+	// after a redirect.
+	landOn string
 }
 
 func (p *fakePage) Navigate(_ context.Context, url string) error {
 	p.navigated = append(p.navigated, url)
 	if url != "back" {
 		p.url = url
+	}
+	if p.landOn != "" && len(p.navigated) == 1 {
+		p.url = p.landOn
 	}
 	return nil
 }
@@ -57,7 +66,22 @@ func (p *fakePage) Text(context.Context) (string, error)                      { 
 func (p *fakePage) State(context.Context) (string, string, error)             { return p.url, p.title, nil }
 func (p *fakePage) ConsoleErrors() []page.ConsoleError                        { return nil }
 func (p *fakePage) NetworkErrors() []page.NetworkError                        { return p.network }
-func (p *fakePage) Requests() page.Requests                                   { return p.requests }
+func (p *fakePage) Locator(_ context.Context, t page.Target) (*page.Locator, error) {
+	if l, ok := p.locators[t.Ref]; ok {
+		return &l, nil
+	}
+	return nil, nil
+}
+func (p *fakePage) Locate(_ context.Context, l page.Locator) (string, error) {
+	for ref, m := range p.locators {
+		if m == l {
+			return ref, nil
+		}
+	}
+	return "", fmt.Errorf("the page has no %s", l)
+}
+func (p *fakePage) Alerts(context.Context) ([]string, error) { return p.alerts, nil }
+func (p *fakePage) Requests() page.Requests                  { return p.requests }
 func (p *fakePage) FormInput(_ context.Context, ref string, v any) (string, error) {
 	p.inputs = append(p.inputs, v)
 	return "Set the value of " + ref + ".", nil

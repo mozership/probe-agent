@@ -4,7 +4,12 @@
 // requests.
 package page
 
-import "context"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strconv"
+)
 
 // Page is the tab the agent drives.
 type Page interface {
@@ -48,6 +53,42 @@ type Page interface {
 	// Requests returns how many requests the page sent so far, and the
 	// slowest of them.
 	Requests() Requests
+	// Locator describes the element of t so that a later page can find it
+	// again. It is nil for a point with nothing to act on.
+	Locator(ctx context.Context, t Target) (*Locator, error)
+	// Locate returns the ref of the element l describes, waiting a while
+	// for it to appear. It fails with ErrNotFound or ErrAmbiguous.
+	Locate(ctx context.Context, l Locator) (string, error)
+	// Alerts returns the texts of the alerts the page shows.
+	Alerts(ctx context.Context) ([]string, error)
+}
+
+// The ways Locate fails.
+var (
+	// ErrNotFound is an element the page did not show in time.
+	ErrNotFound = errors.New("not found")
+	// ErrAmbiguous is an element the page shows among another number of
+	// elements like it than the locator counted, which cannot tell which
+	// is meant.
+	ErrAmbiguous = errors.New("ambiguous")
+)
+
+// Locator describes an element by what a user sees of it: its role, its
+// name, and, when other elements of the page had both, which of how many
+// it was, from 0.
+type Locator struct {
+	Role string `json:"role"`
+	Name string `json:"name"`
+	Nth  int    `json:"nth,omitempty"`
+	Of   int    `json:"of,omitempty"`
+}
+
+func (l Locator) String() string {
+	s := l.Role + " " + strconv.Quote(l.Name)
+	if l.Of > 1 {
+		s += fmt.Sprintf(" (%d of %d)", l.Nth+1, l.Of)
+	}
+	return s
 }
 
 // Target is where a pointer action goes: the element of Ref, or the point

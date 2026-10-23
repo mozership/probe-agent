@@ -40,6 +40,8 @@ const (
 	// maxErrors bounds the console and network errors kept, for a page
 	// that writes one every frame.
 	maxErrors = 200
+	// locateTimeout bounds waiting for an element a locator describes.
+	locateTimeout = 5 * time.Second
 	// maxSlowest is how many of the slowest requests are kept.
 	maxSlowest = 10
 )
@@ -546,6 +548,53 @@ func (c *Chrome) Read(ctx context.Context, filter string, depth int, ref string)
 		depth = 15
 	}
 	return call[string](c, ctx, "read", filter, depth, ref)
+}
+
+// Locator describes the element of t so that a later page can find it
+// again.
+func (c *Chrome) Locator(ctx context.Context, t Target) (*Locator, error) {
+	return call[*Locator](c, ctx, "locator", t.Ref, t.X, t.Y)
+}
+
+// Locate returns the ref of the element l describes, waiting up to
+// locateTimeout for it to appear, as on a page still being drawn.
+func (c *Chrome) Locate(ctx context.Context, l Locator) (string, error) {
+	deadline := time.Now().Add(locateTimeout)
+	for {
+		found, err := call[struct {
+			Ref   string `json:"ref"`
+			Count int    `json:"count"`
+		}](c, ctx, "locate", l)
+		switch {
+		case err == nil && found.Ref != "":
+			return found.Ref, nil
+		case err == nil && found.Count > 0:
+			// Waiting cannot tell apart elements that are all there.
+			return "", locateError{ErrAmbiguous, fmt.Sprintf("the page has %d of %s, where it had %d", found.Count, l, max(l.Of, 1))}
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			if err != nil {
+				return "", err
+			}
+			return "", locateError{ErrNotFound, fmt.Sprintf("the page has no %s", l)}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// locateError is an error of Locate, which says what the page had, and is
+// one of its kinds.
+type locateError struct {
+	kind error
+	msg  string
+}
+
+func (e locateError) Error() string { return e.msg }
+func (e locateError) Unwrap() error { return e.kind }
+
+// Alerts returns the texts of the alerts the page shows.
+func (c *Chrome) Alerts(ctx context.Context) ([]string, error) {
+	return call[[]string](c, ctx, "alerts")
 }
 
 // Text returns the text the page shows.
