@@ -1,0 +1,71 @@
+name: Test
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # The tests of the page package drive a real Chrome; the others answer
+  # from a stand-in for the model.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@b94431e051d1c52dcbe9a7092a4f10f827795416 # latest
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race ./...
+      # The server of the e2e workflow is a module of its own, which the
+      # commands above do not reach.
+      - run: go -C e2e/server vet ./...
+      - run: go -C e2e/server test ./...
+
+  # The action run through Probe against the sign-up of e2e/server, with a
+  # real model. It calls the Claude API, so it runs only where the
+  # repository has the key, and not for pull requests from forks.
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Skip without a key
+        if: env.ANTHROPIC_API_KEY == ''
+        run: echo "ANTHROPIC_API_KEY is not set; the e2e workflow is skipped." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: env.ANTHROPIC_API_KEY != ''
+      - name: Setup Chrome
+        if: env.ANTHROPIC_API_KEY != ''
+        uses: browser-actions/setup-chrome@b94431e051d1c52dcbe9a7092a4f10f827795416 # latest
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        if: env.ANTHROPIC_API_KEY != ''
+        with:
+          go-version-file: go.mod
+      # Probe resolves the action before the first job of a workflow, so it
+      # is built first.
+      - if: env.ANTHROPIC_API_KEY != ''
+        run: go build -o e2e/action/probe-agent .
+      - name: Start the sign-up server
+        if: env.ANTHROPIC_API_KEY != ''
+        run: |
+          go -C e2e/server build -o server .
+          e2e/server/server > "$RUNNER_TEMP/server.txt" 2>&1 &
+      - name: Run the e2e workflow
+        if: env.ANTHROPIC_API_KEY != ''
+        uses: mozership/probe-action@831b8b6c6aa0c8a61aa75b58f36a08da5c579e83 # v1.3.0
+        with:
+          path: e2e/workflow.yml
+          version: v1.27.0
+      - name: Keep the evidence
+        if: always() && env.ANTHROPIC_API_KEY != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agent-evidence
+          path: out/agent
+      - name: What the server logged
+        if: always() && env.ANTHROPIC_API_KEY != ''
+        run: cat "$RUNNER_TEMP/server.txt"

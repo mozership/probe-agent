@@ -1,0 +1,5 @@
+/probe-agent
+/dist/
+/out/
+/e2e/action/probe-agent
+/e2e/server/server

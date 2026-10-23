@@ -1,0 +1,11 @@
+# probe-agent built from this checkout, for the e2e workflows. Probe
+# resolves an action before the first job starts, so the executable is
+# built before probe runs:
+#
+#   go build -o e2e/action/probe-agent . && probe e2e/workflow.yml
+name: agent
+description: Test a web application from a task written in words, with a model that uses it through a browser
+params: [task, expect, url, allow_hosts, secrets, model, effort, max_steps, timeout, headless, window_w, window_h, evidence_dir]
+runs:
+  using: binary
+  path: probe-agent
