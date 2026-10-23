@@ -80,7 +80,7 @@ The model is called with the credentials the [Anthropic SDK](https://github.com/
 
 ## Secrets
 
-The model reads `{secret:NAME}` where a secret is. When it types the placeholder, the browser is given the value; what the pages show the model, and what the action returns, have each value replaced with its placeholder again. A placeholder of a secret that was not given is an error the model is told of, not text it types.
+The model reads `{secret:NAME}` where a secret is. When it types the placeholder, the browser is given the value; what the pages show the model, and what the action returns, have each value replaced with its placeholder again, in any case, as an application can show an email address in lower case. A placeholder of a secret that was not given is an error the model is told of, not text it types.
 
 ## Guard
 

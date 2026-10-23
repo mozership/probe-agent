@@ -11,6 +11,15 @@ func TestSecrets(t *testing.T) {
 	if got := s.mask("pw abc, long abc-and-more"); got != "pw {secret:PW}, long {secret:LONG}" {
 		t.Errorf("mask = %q", got)
 	}
+	// An application can show a value in another case, as an email address
+	// it keeps in lower case.
+	email := newSecrets(map[string]string{"EMAIL": "alice+ee6nX302@example.com"})
+	if got := email.mask("Your account alice+ee6nx302@example.com is ready."); got != "Your account {secret:EMAIL} is ready." {
+		t.Errorf("mask in another case = %q", got)
+	}
+	if got := newSecrets(nil).mask("pw abc"); got != "pw abc" {
+		t.Errorf("mask with no secrets = %q", got)
+	}
 	if got := s.mask("nothing here"); got != "nothing here" {
 		t.Errorf("an empty secret masked text: %q", got)
 	}

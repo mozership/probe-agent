@@ -18,6 +18,10 @@ type secrets struct {
 	// names are the names of the secrets with a value, the longest value
 	// first, so that a value that holds another is masked whole.
 	names []string
+	// values matches any of the values regardless of case, as an
+	// application can show a value it was given in another case, such as
+	// an email address it keeps in lower case.
+	any *regexp.Regexp
 }
 
 func newSecrets(values map[string]string) secrets {
@@ -34,15 +38,30 @@ func newSecrets(values map[string]string) secrets {
 		}
 		return s.names[i] < s.names[j]
 	})
+	if len(s.names) > 0 {
+		quoted := make([]string, len(s.names))
+		for i, name := range s.names {
+			quoted[i] = regexp.QuoteMeta(values[name])
+		}
+		s.any = regexp.MustCompile("(?i)" + strings.Join(quoted, "|"))
+	}
 	return s
 }
 
-// mask replaces the value of each secret in text with its placeholder.
+// mask replaces the value of each secret in text, in any case, with its
+// placeholder.
 func (s secrets) mask(text string) string {
-	for _, name := range s.names {
-		text = strings.ReplaceAll(text, s.values[name], "{secret:"+name+"}")
+	if s.any == nil {
+		return text
 	}
-	return text
+	return s.any.ReplaceAllStringFunc(text, func(m string) string {
+		for _, name := range s.names {
+			if strings.EqualFold(m, s.values[name]) {
+				return "{secret:" + name + "}"
+			}
+		}
+		return m
+	})
 }
 
 // maskAny masks the strings in v, a value decoded from JSON.
