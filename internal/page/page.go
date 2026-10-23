@@ -45,6 +45,9 @@ type Page interface {
 	// NetworkErrors returns the requests of the page that failed or were
 	// answered with a status of 400 or more so far.
 	NetworkErrors() []NetworkError
+	// Requests returns how many requests the page sent so far, and the
+	// slowest of them.
+	Requests() Requests
 }
 
 // Target is where a pointer action goes: the element of Ref, or the point
@@ -76,4 +79,22 @@ type NetworkError struct {
 	Status int64 `json:"status"`
 	// Error is why a request that got no response failed.
 	Error string `json:"error,omitempty"`
+}
+
+// Requests are what the requests of a page took.
+type Requests struct {
+	// Count is the requests over HTTP or HTTPS that finished or failed.
+	Count int `json:"count"`
+	// Slowest are the requests that took longest to finish, the slowest
+	// first.
+	Slowest []Request `json:"slowest"`
+}
+
+// Request is a request that finished, and how long it took from when it
+// was sent, its redirects included, to its last byte.
+type Request struct {
+	Method     string `json:"method"`
+	URL        string `json:"url"`
+	Status     int64  `json:"status"`
+	DurationMS int64  `json:"duration_ms"`
 }

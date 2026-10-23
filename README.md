@@ -2,6 +2,11 @@
 
 A [Probe](https://github.com/mozership/probe) action that tests a web application from a task written in words. A model, the tester, uses the application through a real Chrome to carry out the task; another call of the model, the judge, then decides from what the pages showed whether the expectation holds.
 
+It has two modes:
+
+- **Scenario**, with `task` and `expect`: the tester does the task, and the judge decides whether the expectation holds. For checks that should pass, as before a merge.
+- **Persona**, with `persona` and `goal`: the tester plays the persona pursuing the goal, and notes what is wrong on the way; the reviewer decides whether the persona got there, and which of the notes, and of what the browser recorded, are findings. For looking for what nobody wrote a test of, as on a staging environment again and again.
+
 ```yaml
 name: Sign-up
 actions:
@@ -28,6 +33,24 @@ jobs:
     test: res.verdict == "pass"
 ```
 
+A persona test:
+
+```yaml
+  - name: A first-time visitor writes a first note
+    uses: agent
+    with:
+      url: https://staging.example.com/
+      persona: |
+        Carol, who has never used a notes app and is not technical. She signs
+        up with {secret:EMAIL} and the password {secret:PASSWORD}.
+      goal: Create an account, and write a first note that says "Buy milk".
+      secrets:
+        EMAIL: "qa+{{random_str(8)}}@example.com"
+        PASSWORD: "{{TEST_PASSWORD}}"
+    timeout: 5m
+    test: len(filter(res.findings, .severity == "high" && .verified)) == 0
+```
+
 A test in words is not deterministic: the same step can take another path, or come to another verdict, from one run to the next. Check what matters with a deterministic step after it where you can, such as an `http` or `db` step that the account exists, and count the passes over runs with [`repeat.test`](https://github.com/mozership/probe) rather than trusting one run.
 
 ## How it works
@@ -39,14 +62,18 @@ A test in words is not deterministic: the same step can take another path, or co
 
 The tester is told to describe what it saw, not to judge, so that the verdict comes from a call that did not do the work.
 
+In a persona test, the tester also has `note_finding`, which it calls as soon as it comes across something wrong. The reviewer, in place of the judge, is given the notes besides the record, and the slowest requests. It keeps a note only where the record bears it out, drops those that come from the tester's own slips, and adds what the record shows that the tester did not note, such as an error of the server. Each finding quotes the record, and is `verified` when a quote is found in it.
+
 ## Parameters
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `url` | String | Yes | - | The page the browser opens first, `http` or `https` |
-| `task` | String | Yes | - | What the tester does, in words |
-| `expect` | String | Yes | - | What has to hold afterwards, in words |
-| `secrets` | Object | No | - | Values the model never sees, by name. Write them as `{secret:NAME}` in `task`; see [Secrets](#secrets) |
+| `task` | String | Scenario | - | What the tester does, in words |
+| `expect` | String | Scenario | - | What has to hold afterwards, in words |
+| `persona` | String | Persona | - | Who the tester plays, in words: what they know, and how they go about things |
+| `goal` | String | Persona | - | What the persona sets out to do, in words |
+| `secrets` | Object | No | - | Values the model never sees, by name. Write them as `{secret:NAME}` in `task` or `persona`; see [Secrets](#secrets) |
 | `allow_hosts` | List or string | No | the host of `url` | The hosts the tester may open pages of: `host`, `host:port`, or `*.domain`. A list, or a string apart by commas |
 | `model` | String | No | `claude-opus-5-5` | The Claude model |
 | `effort` | String | No | `medium` | `low`, `medium`, `high`, `xhigh` or `max` |
@@ -62,7 +89,9 @@ The model is called with the credentials the [Anthropic SDK](https://github.com/
 
 | Field | Type | Description |
 |---|---|---|
-| `res.verdict` | String | `pass`, `fail`, or `blocked` when the test could not be judged |
+| `res.mode` | String | `scenario` or `persona` |
+| `res.verdict` | String | `pass`, `fail`, or `blocked` when the test could not be judged. In a persona test, whether the persona reached the goal |
+| `res.findings` | List | In a persona test, what is wrong with the application, the most severe first: `title`, `severity` (`high`, `medium` or `low`), `category` (`error`, `functional`, `usability`, `performance`, `content` or `accessibility`), `expected`, `observed`, `evidence`, `steps`, `url`, `screenshot`, and `verified`, whether any of the evidence was found in the record |
 | `res.reason` | String | Why, in the judge's words |
 | `res.evidence` | List | What the judge quoted: `quote`, and `verified`, whether a page showed it |
 | `res.stopped` | String | How the tester stopped: `done`, `blocked`, `max_steps`, `timeout`, `no_finish` or `refused` |
@@ -71,6 +100,7 @@ The model is called with the credentials the [Anthropic SDK](https://github.com/
 | `res.url`, `res.title` | String | The page the tester left the browser on |
 | `res.console_errors` | List | The errors the pages wrote to their console, as the browser action reports them |
 | `res.network_errors` | List | The requests that failed or were answered with 400 or more: `method`, `url`, `status`, `error` |
+| `res.metrics` | Object | Measures that do not depend on the model, to compare runs by: `steps`, `duration_ms`, `requests`, `failed_requests`, `console_errors`, and `slowest_requests`, the ten requests that took longest, with `method`, `url`, `status` and `duration_ms` |
 | `res.usage` | Object | The `requests` made to the model and the tokens they used |
 | `res.filepaths` | Object | `report`, a Markdown report with a screenshot of each step; `trace`, the result as JSON; `screenshot`, the final page |
 | `res.report` | String | A few lines Probe prints under the step |

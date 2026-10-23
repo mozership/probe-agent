@@ -23,6 +23,8 @@ type fakePage struct {
 	navigated  []string
 	// afterClick, when set, is the URL a click takes the page to.
 	afterClick string
+	network    []page.NetworkError
+	requests   page.Requests
 }
 
 func (p *fakePage) Navigate(_ context.Context, url string) error {
@@ -54,7 +56,8 @@ func (p *fakePage) Read(context.Context, string, int, string) (string, error) { 
 func (p *fakePage) Text(context.Context) (string, error)                      { return p.text, nil }
 func (p *fakePage) State(context.Context) (string, string, error)             { return p.url, p.title, nil }
 func (p *fakePage) ConsoleErrors() []page.ConsoleError                        { return nil }
-func (p *fakePage) NetworkErrors() []page.NetworkError                        { return nil }
+func (p *fakePage) NetworkErrors() []page.NetworkError                        { return p.network }
+func (p *fakePage) Requests() page.Requests                                   { return p.requests }
 func (p *fakePage) FormInput(_ context.Context, ref string, v any) (string, error) {
 	p.inputs = append(p.inputs, v)
 	return "Set the value of " + ref + ".", nil

@@ -65,6 +65,8 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 	cfg := scenario.Config{
 		Task:     r.Task,
 		Expect:   r.Expect,
+		Persona:  r.Persona,
+		Goal:     r.Goal,
 		StartURL: r.URL,
 		Hosts:    r.AllowHosts,
 		Secrets:  r.Secrets,
@@ -91,6 +93,7 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 // type the connection to Probe carries.
 func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]any, error) {
 	res := map[string]any{
+		"mode":           o.Mode,
 		"verdict":        o.Verdict,
 		"reason":         o.Reason,
 		"evidence":       o.Evidence,
@@ -101,6 +104,7 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 		"title":          o.Title,
 		"console_errors": o.ConsoleErrors,
 		"network_errors": o.NetworkErrors,
+		"metrics":        o.Metrics,
 		"usage":          o.Usage,
 		"model":          o.Model,
 		"filepaths": map[string]string{
@@ -110,14 +114,20 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 		},
 		"report": shortReport(o, f),
 	}
+	if o.Mode == scenario.ModePersona {
+		res["findings"] = o.Findings
+	}
 	reqMap := map[string]any{
-		"task":      r.Task,
-		"expect":    r.Expect,
 		"url":       r.URL,
 		"model":     r.Model,
 		"effort":    r.Effort,
 		"max_steps": r.MaxSteps,
 		"timeout":   r.Timeout.String(),
+	}
+	if o.Mode == scenario.ModePersona {
+		reqMap["persona"], reqMap["goal"] = r.Persona, r.Goal
+	} else {
+		reqMap["task"], reqMap["expect"] = r.Task, r.Expect
 	}
 	ret := map[string]any{"req": reqMap, "res": res, "rt": took.String(), "status": 0}
 	b, err := json.Marshal(ret)
@@ -139,6 +149,16 @@ func shortReport(o scenario.Outcome, f files) string {
 	for _, e := range o.Evidence {
 		if e.Verified {
 			fmt.Fprintf(&b, "  evidence: %q\n", e.Quote)
+		}
+	}
+	if o.Mode == scenario.ModePersona {
+		fmt.Fprintf(&b, "  %d findings\n", len(o.Findings))
+		for _, f := range o.Findings {
+			unverified := ""
+			if !f.Verified {
+				unverified = " (unverified)"
+			}
+			fmt.Fprintf(&b, "  %s %s: %s%s\n", severityMarks[f.Severity], f.Severity, oneLine(f.Title), unverified)
 		}
 	}
 	fmt.Fprintf(&b, "  %d steps, stopped: %s, %s\n", len(o.Steps), o.Stopped, o.Duration.Round(time.Second))

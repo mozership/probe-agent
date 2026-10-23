@@ -4,8 +4,8 @@
 #
 #   go build -o e2e/action/probe-agent . && probe e2e/workflow.yml
 name: agent
-description: Test a web application from a task written in words, with a model that uses it through a browser
-params: [task, expect, url, allow_hosts, secrets, model, effort, max_steps, timeout, headless, window_w, window_h, evidence_dir]
+description: Test a web application from a task, or a persona and a goal, written in words, with a model that uses it through a browser
+params: [task, expect, persona, goal, url, allow_hosts, secrets, model, effort, max_steps, timeout, headless, window_w, window_h, evidence_dir]
 runs:
   using: binary
   path: probe-agent

@@ -24,7 +24,7 @@ func TestSignUp(t *testing.T) {
 	}
 	body, _ := io.ReadAll(res.Body)
 	res.Body.Close()
-	if res.StatusCode != 200 || !strings.Contains(string(body), "Welcome to Acme Notes, Alice!") {
+	if res.StatusCode != 200 || !strings.Contains(string(body), "Welcome to Acme Notes, Alice!") || !strings.Contains(string(body), `href="/notes/new"`) {
 		t.Fatalf("%d %s", res.StatusCode, body)
 	}
 
@@ -37,6 +37,13 @@ func TestSignUp(t *testing.T) {
 	res.Body.Close()
 	if got["exists"] != true || got["name"] != "Alice" {
 		t.Errorf("/api/users = %v", got)
+	}
+
+	// The note page the welcome page links to fails.
+	res, _ = c.Get(s.URL + "/notes/new")
+	res.Body.Close()
+	if res.StatusCode != 500 {
+		t.Errorf("/notes/new got %d; want 500", res.StatusCode)
 	}
 
 	// The same email again is refused.

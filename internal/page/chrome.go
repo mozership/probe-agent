@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +40,8 @@ const (
 	// maxErrors bounds the console and network errors kept, for a page
 	// that writes one every frame.
 	maxErrors = 200
+	// maxSlowest is how many of the slowest requests are kept.
+	maxSlowest = 10
 )
 
 // Options are how the browser starts.
@@ -57,11 +61,26 @@ type Chrome struct {
 	console  []ConsoleError
 	network  []NetworkError
 	requests map[network.RequestID]request
+	count    int
+	slowest  []Request
 }
 
-// request is a request the page sent, which a failure is reported by.
+// request is what the events of a request said so far. The events come
+// on streams of their own, in no order between them, so a request is kept
+// until its events are all in, and only then recorded.
 type request struct {
 	method, url string
+	// sent is when it was sent, and is 0 until it is known.
+	sent float64
+	// ignored is a request not over HTTP or HTTPS, as of a data URL.
+	ignored bool
+	// status is of the response, and is 0 until one came.
+	status int64
+	// finished is when its last byte came, and is 0 until it did.
+	finished float64
+	failed   bool
+	canceled bool
+	errText  string
 }
 
 // Start starts Chrome with one tab, and records the console errors and
@@ -117,6 +136,7 @@ func (c *Chrome) record() {
 	sent := chromedp.Events(c.ctx, network.RequestWillBeSent)
 	received := chromedp.Events(c.ctx, network.ResponseReceived)
 	failed := chromedp.Events(c.ctx, network.LoadingFailed)
+	finished := chromedp.Events(c.ctx, network.LoadingFinished)
 
 	go func() {
 		for m, err := range console {
@@ -137,9 +157,17 @@ func (c *Chrome) record() {
 			if err != nil {
 				return
 			}
-			c.mu.Lock()
-			c.requests[ev.RequestID] = request{method: ev.Request.Method, url: ev.Request.URL}
-			c.mu.Unlock()
+			c.update(ev.RequestID, func(r *request) {
+				if !strings.HasPrefix(ev.Request.URL, "http:") && !strings.HasPrefix(ev.Request.URL, "https:") {
+					r.ignored = true
+				}
+				// A redirect is sent again under the same ID, with the method
+				// it now has, and is timed from the first request.
+				if r.sent == 0 {
+					r.sent = ev.Timestamp.Float64()
+				}
+				r.method, r.url = ev.Request.Method, ev.Request.URL
+			})
 		}
 	}()
 	go func() {
@@ -147,10 +175,10 @@ func (c *Chrome) record() {
 			if err != nil {
 				return
 			}
-			if ev.Response == nil || ev.Response.Status < 400 {
+			if ev.Response == nil {
 				continue
 			}
-			c.addNetworkError(ev.RequestID, NetworkError{URL: ev.Response.URL, Status: ev.Response.Status})
+			c.update(ev.RequestID, func(r *request) { r.status = ev.Response.Status })
 		}
 	}()
 	go func() {
@@ -158,26 +186,72 @@ func (c *Chrome) record() {
 			if err != nil {
 				return
 			}
-			// A request the page or the browser gave up on, as when the
-			// page navigated away, is not a failure of the server.
-			if ev.Canceled {
-				continue
+			c.update(ev.RequestID, func(r *request) {
+				r.failed, r.canceled, r.errText = true, ev.Canceled, ev.ErrorText
+			})
+		}
+	}()
+	go func() {
+		for ev, err := range finished {
+			if err != nil {
+				return
 			}
-			c.addNetworkError(ev.RequestID, NetworkError{Error: ev.ErrorText})
+			c.update(ev.RequestID, func(r *request) { r.finished = ev.Timestamp.Float64() })
 		}
 	}()
 }
 
-func (c *Chrome) addNetworkError(id network.RequestID, e NetworkError) {
+// update applies an event to the request of id, and records the request
+// once its events are all in: a failed request as a network error, and a
+// finished one by how long it took, and as a network error if its status
+// is 400 or more.
+func (c *Chrome) update(id network.RequestID, apply func(*request)) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	r := c.requests[id]
-	e.Method = r.method
-	if e.URL == "" {
-		// A request that got no response is known by the URL it was
-		// sent to.
-		e.URL = r.url
+	apply(&r)
+	c.requests[id] = r
+
+	done := r.sent > 0 && (r.failed || (r.finished > 0 && r.status > 0))
+	if r.ignored && (r.failed || r.finished > 0) {
+		delete(c.requests, id)
+		return
 	}
+	if !done {
+		return
+	}
+	delete(c.requests, id)
+	c.count++
+	switch {
+	case r.status >= 400:
+		c.addNetworkError(NetworkError{Method: r.method, URL: r.url, Status: r.status})
+	case r.failed && !r.canceled:
+		// A request the page or the browser gave up on, as when the page
+		// navigated away, is not a failure of the server.
+		c.addNetworkError(NetworkError{Method: r.method, URL: r.url, Error: r.errText})
+	}
+	if !r.failed {
+		c.slowest = slowest(c.slowest, Request{
+			Method:     r.method,
+			URL:        r.url,
+			Status:     r.status,
+			DurationMS: int64(math.Round((r.finished - r.sent) * 1000)),
+		}, maxSlowest)
+	}
+}
+
+// slowest adds req to list, the slowest first, keeping at most n.
+func slowest(list []Request, req Request, n int) []Request {
+	i := sort.Search(len(list), func(i int) bool { return list[i].DurationMS < req.DurationMS })
+	if i >= n {
+		return list
+	}
+	list = slices.Insert(list, i, req)
+	return list[:min(len(list), n)]
+}
+
+// addNetworkError keeps e, with c.mu held.
+func (c *Chrome) addNetworkError(e NetworkError) {
 	if len(c.network) < maxErrors {
 		c.network = append(c.network, e)
 	}
@@ -195,6 +269,14 @@ func (c *Chrome) NetworkErrors() []NetworkError {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]NetworkError{}, c.network...)
+}
+
+// Requests returns how many requests were sent so far, and the slowest of
+// them.
+func (c *Chrome) Requests() Requests {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return Requests{Count: c.count, Slowest: append([]Request{}, c.slowest...)}
 }
 
 // bound returns the context an action runs in: the tab's, ended by ctx and

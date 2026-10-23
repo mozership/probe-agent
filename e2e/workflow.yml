@@ -75,3 +75,35 @@ jobs:
         PASSWORD: "{{vars.password}}"
     timeout: 5m
     test: res.verdict == "fail" && len(filter(res.network_errors, .status == 500)) > 0
+
+- name: Persona
+  defaults:
+    agent:
+      url: "{{vars.url}}/"
+      evidence_dir: out/agent
+      timeout: 4m
+  steps:
+  - name: Wait for the server
+    uses: http
+    with:
+      url: "{{vars.url}}"
+      get: /health
+    retry: {max_attempts: 30, interval: 1s}
+    test: res.code == 200
+  - name: A first-time visitor finds that the first note cannot be written
+    uses: agent
+    with:
+      persona: |
+        Carol, who has never used a notes app before and is not technical.
+        She signs up with the email address {secret:EMAIL} and the password
+        {secret:PASSWORD}.
+      goal: |
+        Create an account, and write a first note that says "Buy milk".
+      secrets:
+        EMAIL: "carol+{{vars.id}}@example.com"
+        PASSWORD: "{{vars.password}}"
+    timeout: 5m
+    test: |
+      res.mode == "persona" && res.verdict == "fail"
+      && len(filter(res.findings, .severity == "high" && .verified)) > 0
+      && len(filter(res.network_errors, .status == 500)) > 0

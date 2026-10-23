@@ -28,7 +28,7 @@ const (
 
 // params are the keys the action takes in with.
 var params = []string{
-	"task", "expect", "url", "allow_hosts", "secrets",
+	"task", "expect", "persona", "goal", "url", "allow_hosts", "secrets",
 	"model", "effort", "max_steps", "timeout",
 	"headless", "window_w", "window_h", "evidence_dir",
 }
@@ -42,6 +42,8 @@ func Params() []string {
 type req struct {
 	Task        string
 	Expect      string
+	Persona     string
+	Goal        string
 	URL         string
 	AllowHosts  []string
 	Secrets     map[string]string
@@ -101,6 +103,8 @@ func parse(with map[string]any) (req, error) {
 
 	str("task", &r.Task)
 	str("expect", &r.Expect)
+	str("persona", &r.Persona)
+	str("goal", &r.Goal)
 	str("url", &r.URL)
 	str("model", &r.Model)
 	str("effort", &r.Effort)
@@ -109,7 +113,20 @@ func parse(with map[string]any) (req, error) {
 	num("window_w", &r.Width)
 	num("window_h", &r.Height)
 
-	for _, k := range []string{"task", "expect", "url"} {
+	// A step is a scenario test of task and expect, or a persona test of
+	// persona and goal.
+	scenario := r.Task != "" || r.Expect != ""
+	persona := r.Persona != "" || r.Goal != ""
+	required := []string{"url"}
+	switch {
+	case scenario && persona:
+		errs = append(errs, errors.New("give task and expect for a scenario test, or persona and goal for a persona test, not both"))
+	case persona:
+		required = append(required, "persona", "goal")
+	default:
+		required = append(required, "task", "expect")
+	}
+	for _, k := range required {
 		if v, _ := with[k].(string); strings.TrimSpace(v) == "" {
 			errs = append(errs, fmt.Errorf("%s is required", k))
 		}

@@ -1,7 +1,8 @@
 // Command server is the application the e2e workflows test: a sign-up
 // that keeps its accounts in memory. An email with +broken in it makes the
 // sign-up fail with a server error, as a bug would, so that a workflow can
-// check that a test of it fails.
+// check that a test of it fails. The page to write a first note, which the
+// welcome page links to, always fails, for a persona test to find.
 //
 // It listens on 127.0.0.1:18090, or on the address ADDR names.
 package main
@@ -61,6 +62,7 @@ input[type=text], input[type=email], input[type=password] { width: 100%; padding
 {{else if eq .Page "welcome"}}
   <h1>Welcome to Acme Notes, {{.Name}}!</h1>
   <p>Your account {{.Email}} is ready.</p>
+  <p><a href="/notes/new">Write your first note</a></p>
 {{end}}
 </main></body></html>`))
 
@@ -166,6 +168,10 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("/signup", a.signup)
 	mux.HandleFunc("/welcome", a.welcome)
 	mux.HandleFunc("/api/users", a.users)
+	mux.HandleFunc("/notes/new", func(w http.ResponseWriter, r *http.Request) {
+		log.Print("the note page: failing as built")
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	return mux
 }

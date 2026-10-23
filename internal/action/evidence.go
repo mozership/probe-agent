@@ -67,6 +67,8 @@ func (e *evidence) write(r req, o scenario.Outcome) (files, error) {
 	return f, nil
 }
 
+var severityMarks = map[string]string{"high": "🔴", "medium": "🟠", "low": "🟡"}
+
 var verdictMarks = map[string]string{scenario.Pass: "✅", scenario.Fail: "❌", scenario.Blocked: "⚠️"}
 
 // markdown is the report of o. Images are linked by their names, as they
@@ -91,8 +93,46 @@ func markdown(r req, o scenario.Outcome, dir string) string {
 	w("| Tokens | %d in (%d from cache), %d out, %d requests |\n\n",
 		o.Usage.InputTokens+o.Usage.CacheReadTokens+o.Usage.CacheWriteTokens, o.Usage.CacheReadTokens, o.Usage.OutputTokens, o.Usage.Requests)
 
-	w("## Task\n\n%s\n\n", quoteBlock(r.Task))
-	w("## Expectation\n\n%s\n\n", quoteBlock(r.Expect))
+	if o.Mode == scenario.ModePersona {
+		w("## Persona\n\n%s\n\n", quoteBlock(r.Persona))
+		w("## Goal\n\n%s\n\n", quoteBlock(r.Goal))
+		w("## Findings\n\n")
+		if len(o.Findings) == 0 {
+			w("None.\n\n")
+		}
+		for i, f := range o.Findings {
+			w("### %d. %s %s\n\n", i+1, severityMarks[f.Severity], f.Title)
+			w("%s, %s", f.Severity, f.Category)
+			if !f.Verified {
+				w(", **none of its evidence was found in the record**")
+			}
+			w("\n\n")
+			if f.Expected != "" {
+				w("- Expected: %s\n", oneLine(f.Expected))
+			}
+			w("- Observed: %s\n", oneLine(f.Observed))
+			for _, e := range f.Evidence {
+				mark := "✓"
+				if !e.Verified {
+					mark = "✗"
+				}
+				w("- %s %q\n", mark, e.Quote)
+			}
+			if len(f.Steps) > 0 {
+				w("- Steps: %s\n", strings.Trim(fmt.Sprint(f.Steps), "[]"))
+			}
+			if f.URL != "" {
+				w("- At <%s>\n", f.URL)
+			}
+			if f.Screenshot != "" {
+				w("\n![finding %d](%s)\n", i+1, rel(f.Screenshot))
+			}
+			w("\n")
+		}
+	} else {
+		w("## Task\n\n%s\n\n", quoteBlock(r.Task))
+		w("## Expectation\n\n%s\n\n", quoteBlock(r.Expect))
+	}
 	if len(o.Evidence) > 0 {
 		w("## Evidence\n\n")
 		for _, e := range o.Evidence {
@@ -148,6 +188,14 @@ func markdown(r req, o scenario.Outcome, dir string) string {
 			} else {
 				w("- %s %s → %s\n", e.Method, e.URL, e.Error)
 			}
+		}
+		w("\n")
+	}
+
+	if len(o.Metrics.SlowestRequests) > 0 {
+		w("## Slowest requests\n\n%d requests in all.\n\n", o.Metrics.Requests)
+		for _, q := range o.Metrics.SlowestRequests {
+			w("- %d ms: %s %s → %d\n", q.DurationMS, q.Method, q.URL, q.Status)
 		}
 		w("\n")
 	}

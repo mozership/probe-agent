@@ -85,10 +85,23 @@ func TestParse_Refuses(t *testing.T) {
 		"a bad effort":   {"task": "t", "expect": "e", "url": "http://a.test/", "effort": "huge"},
 		"a bad secret":   {"task": "t", "expect": "e", "url": "http://a.test/", "secrets": map[string]any{"MY-PW": "x"}},
 		"an unknown key": {"task": "t", "expect": "e", "url": "http://a.test/", "prompt": "x"},
+		"both modes":     {"task": "t", "expect": "e", "persona": "p", "goal": "g", "url": "http://a.test/"},
+		"no goal":        {"persona": "p", "url": "http://a.test/"},
+		"only a goal":    {"goal": "g", "url": "http://a.test/"},
 	} {
 		if _, err := parse(with); err == nil {
 			t.Errorf("%s: parsed", name)
 		}
+	}
+}
+
+func TestParse_Persona(t *testing.T) {
+	r, err := parse(map[string]any{"persona": " A first-time visitor ", "goal": "Write a note", "url": "http://a.test/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Persona != "A first-time visitor" || r.Goal != "Write a note" || r.Task != "" {
+		t.Errorf("parsed %+v", r)
 	}
 }
 
@@ -180,5 +193,66 @@ func TestEvidence_WritesTheReport(t *testing.T) {
 	}
 	if info, err := os.Stat(f.Report); err != nil || info.Mode().Perm() != 0o600 {
 		t.Errorf("the report is readable by others: %v", info.Mode())
+	}
+}
+
+func personaOutcome() scenario.Outcome {
+	o := outcome()
+	o.Mode = scenario.ModePersona
+	o.Verdict, o.Reason = scenario.Fail, "No note could be written."
+	o.Findings = []scenario.Finding{
+		{Title: "The note page fails", Severity: "high", Category: "error", Expected: "A form", Observed: "A 500",
+			Evidence: []scenario.Evidence{{Quote: "GET http://a.test/notes/new -> 500", Verified: true}}, Steps: []int{2}, Verified: true},
+		{Title: "A typo", Severity: "low", Category: "content", Observed: "Welcom", Evidence: []scenario.Evidence{{Quote: "Welcom"}}},
+	}
+	o.Metrics = scenario.Metrics{Steps: 2, Requests: 9, SlowestRequests: []page.Request{{Method: "GET", URL: "http://a.test/api", Status: 200, DurationMS: 2400}}}
+	return o
+}
+
+func TestResult_Persona(t *testing.T) {
+	r := req{Persona: "p", Goal: "g", URL: "http://a.test/", Timeout: time.Minute}
+	ret, err := result(r, personaOutcome(), files{Report: "/tmp/x/report.md"}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := ret["res"].(map[string]any)
+	findings := res["findings"].([]any)
+	if res["mode"] != "persona" || len(findings) != 2 || findings[0].(map[string]any)["severity"] != "high" {
+		t.Errorf("res %v", res)
+	}
+	if m := res["metrics"].(map[string]any); m["requests"] != 9.0 || m["slowest_requests"].([]any)[0].(map[string]any)["duration_ms"] != 2400.0 {
+		t.Errorf("metrics %v", res["metrics"])
+	}
+	if q := ret["req"].(map[string]any); q["persona"] != "p" || q["goal"] != "g" || q["task"] != nil {
+		t.Errorf("req %v", q)
+	}
+	report := res["report"].(string)
+	if !strings.Contains(report, "2 findings") || !strings.Contains(report, "high: The note page fails") || !strings.Contains(report, "low: A typo (unverified)") {
+		t.Errorf("report %q", report)
+	}
+
+	sc, _ := result(req{Task: "t", Expect: "e"}, outcome(), files{}, time.Second)
+	if _, ok := sc["res"].(map[string]any)["findings"]; ok {
+		t.Errorf("a scenario test has findings")
+	}
+}
+
+func TestEvidence_WritesThePersonaReport(t *testing.T) {
+	ev, err := newEvidence(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := ev.write(req{Persona: "A visitor", Goal: "Write a note"}, personaOutcome())
+	if err != nil {
+		t.Fatal(err)
+	}
+	md, _ := os.ReadFile(f.Report)
+	for _, want := range []string{"# ❌ FAIL", "## Persona\n\n> A visitor", "## Goal\n\n> Write a note", "### 1. 🔴 The note page fails", "- Steps: 2", "### 2. 🟡 A typo", "none of its evidence was found", "2400 ms: GET http://a.test/api"} {
+		if !strings.Contains(string(md), want) {
+			t.Errorf("the report lacks %q:\n%s", want, md)
+		}
+	}
+	if strings.Contains(string(md), "## Task") {
+		t.Errorf("a persona report has a task")
 	}
 }

@@ -1,7 +1,10 @@
 // Package scenario runs a test written in words: a model, the tester, uses
 // a web application through a browser to carry out a task, and another
 // call of the model, the judge, decides from what the pages showed whether
-// the expectation holds.
+// the expectation holds. In a persona test, the tester plays a persona
+// that pursues a goal and notes what is wrong on the way, and the
+// reviewer, in place of the judge, decides whether it got there and what
+// of the notes, and of what the browser recorded, are findings.
 //
 // It knows the browser and the model only through page.Page and llm.Model,
 // so that it can be tested with a page and a model that answer from a
@@ -42,12 +45,17 @@ const (
 	StoppedRefused  = "refused"
 )
 
-// Config is a test.
+// Config is a test: a scenario test of Task and Expect, or a persona test
+// of Persona and Goal.
 type Config struct {
 	// Task is what the tester does, in words.
 	Task string
 	// Expect is what has to hold afterwards, in words.
 	Expect string
+	// Persona is who the tester plays, in words.
+	Persona string
+	// Goal is what the persona sets out to do, in words.
+	Goal string
 	// StartURL is the page the browser opens first.
 	StartURL string
 	// Hosts are the hosts the tester may open pages of. Without them, it
@@ -65,8 +73,19 @@ type Config struct {
 	Save func(name string, data []byte) string
 }
 
+// Mode is scenario or persona.
+func (c Config) Mode() string {
+	if c.Persona != "" || c.Goal != "" {
+		return ModePersona
+	}
+	return ModeScenario
+}
+
 // Outcome is how a test came out.
 type Outcome struct {
+	Mode string `json:"mode"`
+	// Verdict is whether the expectation held, or whether the persona
+	// reached the goal.
 	Verdict string `json:"verdict"`
 	// Reason is why, in the judge's words, or why the test was blocked.
 	Reason string `json:"reason"`
@@ -86,9 +105,25 @@ type Outcome struct {
 	// tester used them.
 	ConsoleErrors []page.ConsoleError `json:"console_errors"`
 	NetworkErrors []page.NetworkError `json:"network_errors"`
-	Usage         llm.Usage           `json:"usage"`
-	Model         string              `json:"model"`
-	Duration      time.Duration       `json:"-"`
+	// Findings are what a persona test found wrong, the most severe first.
+	Findings []Finding     `json:"findings,omitempty"`
+	Metrics  Metrics       `json:"metrics"`
+	Usage    llm.Usage     `json:"usage"`
+	Model    string        `json:"model"`
+	Duration time.Duration `json:"-"`
+}
+
+// Metrics are measures of a test that do not depend on the model's
+// judgement, to compare runs by.
+type Metrics struct {
+	Steps          int   `json:"steps"`
+	DurationMS     int64 `json:"duration_ms"`
+	Requests       int   `json:"requests"`
+	FailedRequests int   `json:"failed_requests"`
+	ConsoleErrors  int   `json:"console_errors"`
+	// SlowestRequests are the requests that took longest, the slowest
+	// first.
+	SlowestRequests []page.Request `json:"slowest_requests"`
 }
 
 // Evidence is a text the judge quoted. Verified is whether a page showed
@@ -120,6 +155,8 @@ type run struct {
 	hosts   hosts
 
 	steps []Step
+	// notes are the findings the tester noted in a persona test.
+	notes []note
 	// texts are what the pages showed the tester, which the judge's
 	// quotes are checked against.
 	texts []string
@@ -162,7 +199,7 @@ func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, er
 	}
 	r.url, r.title, _ = p.State(testerCtx)
 
-	o := Outcome{Model: m.Name()}
+	o := Outcome{Mode: cfg.Mode(), Model: m.Name()}
 	stopped, summary, err := r.test(testerCtx)
 	if err != nil {
 		return Outcome{}, err
@@ -175,11 +212,25 @@ func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, er
 	o.URL, o.Title = r.secrets.mask(final.url), r.secrets.mask(final.title)
 	o.FinalScreenshot = final.screenshot
 
-	switch stopped {
-	case StoppedBlocked:
-		o.Verdict, o.Reason = Blocked, "The tester was blocked: "+summary
-	case StoppedRefused:
+	switch {
+	case stopped == StoppedRefused:
 		o.Verdict, o.Reason = Blocked, "The model declined the task: "+summary
+	case o.Mode == ModePersona:
+		// A persona that was blocked may still have found what is wrong on
+		// the way.
+		rv, err := r.review(ctx, o, final)
+		if err != nil {
+			return Outcome{}, err
+		}
+		o.Verdict, o.Reason, o.Evidence, o.Findings = rv.verdict.verdict, rv.reason, rv.evidence, rv.findings
+		if o.Findings == nil {
+			o.Findings = []Finding{}
+		}
+		if stopped == StoppedBlocked {
+			o.Verdict, o.Reason = Blocked, "The tester was blocked: "+summary
+		}
+	case stopped == StoppedBlocked:
+		o.Verdict, o.Reason = Blocked, "The tester was blocked: "+summary
 	default:
 		v, err := r.judge(ctx, o, final)
 		if err != nil {
@@ -197,8 +248,20 @@ func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, er
 	for i := range o.NetworkErrors {
 		o.NetworkErrors[i].URL = r.secrets.mask(o.NetworkErrors[i].URL)
 	}
+	reqs := p.Requests()
+	for i := range reqs.Slowest {
+		reqs.Slowest[i].URL = r.secrets.mask(reqs.Slowest[i].URL)
+	}
 	o.Usage = m.Usage()
 	o.Duration = time.Since(start)
+	o.Metrics = Metrics{
+		Steps:           len(r.steps),
+		DurationMS:      o.Duration.Milliseconds(),
+		Requests:        reqs.Count,
+		FailedRequests:  len(o.NetworkErrors),
+		ConsoleErrors:   len(o.ConsoleErrors),
+		SlowestRequests: reqs.Slowest,
+	}
 	return o, nil
 }
 
@@ -210,12 +273,18 @@ func judgeReserve(timeout time.Duration) time.Duration {
 // test has the tester carry out the task, and returns how it stopped and
 // what it said it did.
 func (r *run) test(ctx context.Context) (stopped, summary string, err error) {
-	chat := r.model.Chat(llm.ChatOptions{
+	opts := llm.ChatOptions{
 		System:  testerSystem(r.hosts),
 		Prompt:  testerPrompt(r.secrets.mask(r.cfg.Task), r.secrets.mask(r.cfg.Expect), r.cfg.StartURL, r.secrets),
 		Tools:   []llm.Tool{finishTool},
 		Browser: &llm.BrowserToolset{Disabled: Disabled},
-	})
+	}
+	if r.cfg.Mode() == ModePersona {
+		opts.System = personaSystem(r.hosts)
+		opts.Prompt = personaPrompt(r.secrets.mask(r.cfg.Persona), r.secrets.mask(r.cfg.Goal), r.cfg.StartURL, r.secrets)
+		opts.Tools = []llm.Tool{noteTool, finishTool}
+	}
+	chat := r.model.Chat(opts)
 	turn := llm.Turn{}
 	nudged := false
 	for {
@@ -239,7 +308,7 @@ func (r *run) test(ctx context.Context) (stopped, summary string, err error) {
 				return StoppedNoFinish, reply.Text, nil
 			}
 			nudged = true
-			turn = llm.Turn{Text: "Carry on with the task with the browser tools, or call finish if you are done."}
+			turn = llm.Turn{Text: "Carry on with the browser tools, or call finish if you are done."}
 			continue
 		}
 
@@ -259,6 +328,12 @@ func (r *run) test(ctx context.Context) (stopped, summary string, err error) {
 					return StoppedBlocked, in.Summary, nil
 				}
 				return StoppedDone, in.Summary, nil
+			}
+			if call.Toolset == "" && call.Name == noteTool.Name && r.cfg.Mode() == ModePersona {
+				res := r.noted(call.Input)
+				res.CallID = call.ID
+				results = append(results, res)
+				continue
 			}
 			if call.Toolset != llm.ToolsetBrowser {
 				results = append(results, llm.Result{CallID: call.ID, Text: "Error: there is no tool " + call.Name, IsError: true})

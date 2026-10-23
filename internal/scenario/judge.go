@@ -51,69 +51,108 @@ const judgeSystem = `You judge an end-to-end test of a web application. A tester
 
 // judge has the judge decide whether the expectation holds.
 func (r *run) judge(ctx context.Context, o Outcome, f final) (verdict, error) {
-	opts := llm.ChatOptions{
+	var b strings.Builder
+	fmt.Fprintf(&b, "<task>\n%s\n</task>\n\n", r.secrets.mask(r.cfg.Task))
+	fmt.Fprintf(&b, "<expect>\n%s\n</expect>\n\n", r.secrets.mask(r.cfg.Expect))
+	r.writeRecord(&b, o, f)
+
+	var v verdict
+	blocked, err := r.ask(ctx, "judge", llm.ChatOptions{
 		System: judgeSystem,
-		Prompt: r.judgePrompt(o, f),
+		Prompt: b.String(),
 		Tools:  []llm.Tool{verdictTool},
+		Images: finalImage(f),
+	}, verdictTool.Name, func(input json.RawMessage) bool {
+		var in struct {
+			Verdict  string   `json:"verdict"`
+			Reason   string   `json:"reason"`
+			Evidence []string `json:"evidence"`
+		}
+		if err := json.Unmarshal(input, &in); err != nil || (in.Verdict != Pass && in.Verdict != Fail) {
+			return false
+		}
+		v = r.checked(in.Verdict, in.Reason, in.Evidence, f)
+		return true
+	})
+	if err != nil {
+		return verdict{}, err
 	}
-	if f.image != nil {
-		opts.Images = []llm.Image{{MediaType: "image/jpeg", Data: f.image}}
+	if blocked != "" {
+		return verdict{verdict: Blocked, reason: blocked}, nil
 	}
+	return v, nil
+}
+
+// ask has a chat of its own call the tool name once, and hands its input to
+// take, which says whether it took it. It asks twice at most. When the
+// chat gives nothing take takes, it returns why, as the reason of a
+// blocked test; role names the chat in it.
+func (r *run) ask(ctx context.Context, role string, opts llm.ChatOptions, name string, take func(json.RawMessage) bool) (blocked string, err error) {
 	chat := r.model.Chat(opts)
 	turn := llm.Turn{}
 	for range 2 {
 		reply, err := chat.Send(ctx, turn)
 		if err != nil {
 			if ctx.Err() != nil {
-				return verdict{verdict: Blocked, reason: "The test ran out of time before the judge gave a verdict."}, nil
+				return fmt.Sprintf("The test ran out of time before the %s answered.", role), nil
 			}
-			return verdict{}, fmt.Errorf("asking the judge: %w", err)
+			return "", fmt.Errorf("asking the %s: %w", role, err)
 		}
 		if reply.Stop == llm.StopRefusal {
-			return verdict{verdict: Blocked, reason: "The model declined to judge: " + reply.Refusal}, nil
+			return fmt.Sprintf("The model declined to act as the %s: %s", role, reply.Refusal), nil
 		}
 		for _, call := range reply.Calls {
-			if call.Name != verdictTool.Name {
-				continue
+			if call.Name == name && take(call.Input) {
+				return "", nil
 			}
-			var in struct {
-				Verdict  string   `json:"verdict"`
-				Reason   string   `json:"reason"`
-				Evidence []string `json:"evidence"`
-			}
-			if err := json.Unmarshal(call.Input, &in); err != nil || (in.Verdict != Pass && in.Verdict != Fail) {
-				continue
-			}
-			return r.checked(in.Verdict, in.Reason, in.Evidence, f), nil
 		}
-		turn = llm.Turn{Text: "Call verdict with your verdict."}
-		// A reply with calls other than verdict needs their results.
+		turn = llm.Turn{Text: "Call " + name + " with your answer."}
+		// A reply with calls needs their results.
 		for _, call := range reply.Calls {
-			turn.Results = append(turn.Results, llm.Result{CallID: call.ID, Text: "Error: call verdict.", IsError: true})
+			turn.Results = append(turn.Results, llm.Result{CallID: call.ID, Text: "Error: call " + name + " as its schema says.", IsError: true})
 		}
 	}
-	return verdict{verdict: Blocked, reason: errNoVerdict.Error() + "."}, nil
+	return fmt.Sprintf("The %s gave no answer.", role), nil
+}
+
+func finalImage(f final) []llm.Image {
+	if f.image == nil {
+		return nil
+	}
+	return []llm.Image{{MediaType: "image/jpeg", Data: f.image}}
 }
 
 // checked returns the verdict with each quote checked against what the
 // pages showed. A pass that quotes nothing the pages showed rests on
 // nothing, and is taken as no verdict.
 func (r *run) checked(v, reason string, quotes []string, f final) verdict {
-	seen := normalize(strings.Join(append(append([]string{}, r.texts...), f.text, f.elements), "\n"))
-	out := verdict{verdict: v, reason: reason}
+	evidence, verified := verify(quotes, r.pages(f))
+	out := verdict{verdict: v, reason: reason, evidence: evidence}
+	if v == Pass && verified == 0 {
+		out.verdict = Blocked
+		out.reason = "The pass was given without quoting anything the pages showed, so it was not taken. The reason given: " + reason
+	}
+	return out
+}
+
+// pages is all the pages showed the tester, normalized.
+func (r *run) pages(f final) string {
+	return normalize(strings.Join(append(append([]string{}, r.texts...), f.text, f.elements), "\n"))
+}
+
+// verify checks each quote against seen, a normalized text, and returns
+// the quotes as evidence and how many of them it found.
+func verify(quotes []string, seen string) ([]Evidence, int) {
+	var evidence []Evidence
 	verified := 0
 	for _, q := range quotes {
 		ok := normalize(q) != "" && strings.Contains(seen, normalize(q))
 		if ok {
 			verified++
 		}
-		out.evidence = append(out.evidence, Evidence{Quote: q, Verified: ok})
+		evidence = append(evidence, Evidence{Quote: q, Verified: ok})
 	}
-	if v == Pass && verified == 0 {
-		out.verdict = Blocked
-		out.reason = "The judge passed the test without quoting anything the pages showed, so the verdict was not taken. The judge said: " + reason
-	}
-	return out
+	return evidence, verified
 }
 
 // normalize makes texts compare as the same that differ only in spaces,
@@ -123,11 +162,10 @@ func normalize(s string) string {
 	return strings.Trim(s, `"'“”「」 `)
 }
 
-func (r *run) judgePrompt(o Outcome, f final) string {
-	var b strings.Builder
-	w := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
-	w("<task>\n%s\n</task>\n\n", r.secrets.mask(r.cfg.Task))
-	w("<expect>\n%s\n</expect>\n\n", r.secrets.mask(r.cfg.Expect))
+// writeRecord writes what the tester did and what the pages showed, for the
+// judge or the reviewer.
+func (r *run) writeRecord(b *strings.Builder, o Outcome, f final) {
+	w := func(format string, args ...any) { fmt.Fprintf(b, format, args...) }
 	w("<tester_report stopped=%q>\n%s\n</tester_report>\n\n", o.Stopped, o.Summary)
 
 	w("<steps>\n")
@@ -149,23 +187,11 @@ func (r *run) judgePrompt(o Outcome, f final) string {
 	}
 	w("</steps>\n\n")
 
-	if errs := r.page.ConsoleErrors(); len(errs) > 0 {
-		w("<console_errors>\n")
-		for _, e := range errs[:min(len(errs), maxListed)] {
-			w("- %s: %s (%s)\n", e.Type, r.secrets.mask(e.Text), e.URL)
-		}
-		w("</console_errors>\n\n")
+	if lines := r.consoleLines(); len(lines) > 0 {
+		w("<console_errors>\n%s\n</console_errors>\n\n", strings.Join(lines, "\n"))
 	}
-	if errs := r.page.NetworkErrors(); len(errs) > 0 {
-		w("<failed_requests>\n")
-		for _, e := range errs[:min(len(errs), maxListed)] {
-			if e.Status > 0 {
-				w("- %s %s -> %d\n", e.Method, r.secrets.mask(e.URL), e.Status)
-			} else {
-				w("- %s %s -> %s\n", e.Method, r.secrets.mask(e.URL), e.Error)
-			}
-		}
-		w("</failed_requests>\n\n")
+	if lines := r.failedLines(); len(lines) > 0 {
+		w("<failed_requests>\n%s\n</failed_requests>\n\n", strings.Join(lines, "\n"))
 	}
 
 	w("The pages the tester read, in order:\n")
@@ -178,5 +204,30 @@ func (r *run) judgePrompt(o Outcome, f final) string {
 	if f.image != nil {
 		w("\nA screenshot of the final page follows.\n")
 	}
-	return b.String()
+}
+
+// consoleLines are the console errors as the judge and the reviewer are
+// shown them.
+func (r *run) consoleLines() []string {
+	var lines []string
+	errs := r.page.ConsoleErrors()
+	for _, e := range errs[:min(len(errs), maxListed)] {
+		lines = append(lines, fmt.Sprintf("- %s: %s (%s)", e.Type, r.secrets.mask(e.Text), r.secrets.mask(e.URL)))
+	}
+	return lines
+}
+
+// failedLines are the failed requests as the judge and the reviewer are
+// shown them.
+func (r *run) failedLines() []string {
+	var lines []string
+	errs := r.page.NetworkErrors()
+	for _, e := range errs[:min(len(errs), maxListed)] {
+		if e.Status > 0 {
+			lines = append(lines, fmt.Sprintf("- %s %s -> %d", e.Method, r.secrets.mask(e.URL), e.Status))
+		} else {
+			lines = append(lines, fmt.Sprintf("- %s %s -> %s", e.Method, r.secrets.mask(e.URL), e.Error))
+		}
+	}
+	return lines
 }

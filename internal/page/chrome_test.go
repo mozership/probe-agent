@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/chromedp/cdproto/network"
 )
 
 const formPage = `<!doctype html>
@@ -53,6 +55,14 @@ func server(t *testing.T) *httptest.Server {
 			return
 		}
 		fmt.Fprint(w, formPage)
+	})
+	mux.HandleFunc("/timed", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `<!doctype html><title>Timed</title><p id="out"></p>
+<script>fetch("/slow", {method: "POST"}).then(r => r.text()).then(t => document.getElementById("out").textContent = t)</script>`)
+	})
+	mux.HandleFunc("/slow", func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(400 * time.Millisecond)
+		fmt.Fprint(w, "slow answer")
 	})
 	mux.HandleFunc("/next", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `<!doctype html><title>Next</title><h1>Second page</h1>`)
@@ -224,5 +234,98 @@ func TestChrome_Screenshot(t *testing.T) {
 	}
 	if len(zoomed) < 3 || zoomed[0] != 0xff {
 		t.Errorf("the zoomed screenshot is not a JPEG")
+	}
+}
+
+func TestChrome_TimesRequests(t *testing.T) {
+	c := startChrome(t)
+	s := server(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := c.Navigate(ctx, s.URL+"/timed"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		r := c.Requests()
+		if len(r.Slowest) > 0 && strings.HasSuffix(r.Slowest[0].URL, "/slow") {
+			got := r.Slowest[0]
+			if got.Method != "POST" || got.Status != 200 || got.DurationMS < 400 || r.Count < 2 {
+				t.Errorf("requests %+v", r)
+			}
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Errorf("the slow request was not timed: %+v", c.Requests())
+}
+
+// TestChrome_RecordsRequestsInAnyOrder checks that the events of a request,
+// which come on streams of their own, are recorded whatever order they are
+// handled in.
+func TestChrome_RecordsRequestsInAnyOrder(t *testing.T) {
+	sent := func(method, url string, at float64) func(*request) {
+		return func(r *request) {
+			if r.sent == 0 {
+				r.sent = at
+			}
+			r.method, r.url = method, url
+		}
+	}
+	status := func(s int64) func(*request) { return func(r *request) { r.status = s } }
+	finished := func(at float64) func(*request) { return func(r *request) { r.finished = at } }
+	failed := func(canceled bool) func(*request) {
+		return func(r *request) { r.failed, r.canceled, r.errText = true, canceled, "net::ERR_FAILED" }
+	}
+
+	c := &Chrome{requests: map[network.RequestID]request{}}
+	// A POST redirected to a GET, its response handled after its end.
+	c.update("1", sent("POST", "http://a.test/signup", 10))
+	c.update("1", sent("GET", "http://a.test/welcome", 10.1))
+	c.update("1", finished(10.5))
+	c.update("1", status(200))
+	// A 404 whose sending is handled last.
+	c.update("2", status(404))
+	c.update("2", finished(11.02))
+	c.update("2", sent("GET", "http://a.test/favicon.ico", 11))
+	// A request that failed, and one the page gave up on.
+	c.update("3", failed(false))
+	c.update("3", sent("GET", "http://a.test/api", 12))
+	c.update("4", sent("GET", "http://a.test/gone", 13))
+	c.update("4", failed(true))
+	// A request that has not finished.
+	c.update("5", sent("GET", "http://a.test/slow", 14))
+
+	r := c.Requests()
+	if r.Count != 4 || len(r.Slowest) != 2 {
+		t.Fatalf("requests %+v", r)
+	}
+	if got := r.Slowest[0]; got.Method != "GET" || got.URL != "http://a.test/welcome" || got.Status != 200 || got.DurationMS != 500 {
+		t.Errorf("the redirect %+v", got)
+	}
+	if got := r.Slowest[1]; got.Status != 404 || got.DurationMS != 20 {
+		t.Errorf("the 404 %+v", got)
+	}
+	errs := c.NetworkErrors()
+	if len(errs) != 2 || errs[0].URL != "http://a.test/favicon.ico" || errs[0].Status != 404 || errs[1].Error != "net::ERR_FAILED" || errs[1].Method != "GET" {
+		t.Errorf("network errors %+v", errs)
+	}
+	if len(c.requests) != 1 {
+		t.Errorf("requests kept: %v", c.requests)
+	}
+}
+
+func TestSlowest(t *testing.T) {
+	var list []Request
+	for _, d := range []int64{5, 30, 10, 30, 1, 20} {
+		list = slowest(list, Request{DurationMS: d}, 3)
+	}
+	var got []int64
+	for _, r := range list {
+		got = append(got, r.DurationMS)
+	}
+	if fmt.Sprint(got) != "[30 30 20]" {
+		t.Errorf("slowest = %v", got)
 	}
 }
