@@ -17,7 +17,7 @@ import (
 )
 
 // Provider is a provider of models reached through an API compatible with
-// the Chat Completions API of OpenAI.
+// the Chat Completions API of OpenAI, or through its Responses API.
 type Provider struct {
 	// Name is the provider's name, such as openai.
 	Name string
@@ -32,12 +32,15 @@ type Provider struct {
 	// Efforts maps an effort of the agent to the reasoning_effort the
 	// provider takes. An effort it does not map is not sent.
 	Efforts map[string]string
+	// Responses is whether the provider is reached through the Responses
+	// API, by which a model of OpenAI both reasons and calls tools.
+	Responses bool
 }
 
 // The providers the agent knows, by name.
 var Providers = map[string]Provider{
 	"openai": {
-		Name: "openai", BaseURL: "https://api.openai.com/v1", KeyEnv: "OPENAI_API_KEY", Vision: true,
+		Name: "openai", BaseURL: "https://api.openai.com/v1", KeyEnv: "OPENAI_API_KEY", Vision: true, Responses: true,
 		Efforts: map[string]string{"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "xhigh"},
 	},
 	"xai": {
@@ -103,6 +106,9 @@ func (c *Compatible) Usage() Usage {
 
 // Chat starts a chat with the model.
 func (c *Compatible) Chat(opts ChatOptions) Chat {
+	if c.provider.Responses {
+		return c.responsesChat(opts)
+	}
 	ch := &compatibleChat{model: c, browser: map[string]bool{}}
 	if opts.System != "" {
 		ch.messages = append(ch.messages, map[string]any{"role": "system", "content": opts.System})
@@ -216,10 +222,10 @@ func (c *compatibleChat) Send(ctx context.Context, turn Turn) (Reply, error) {
 		body["reasoning_effort"] = e
 	}
 	var resp completion
-	if err := c.model.post(ctx, body, &resp); err != nil {
+	if err := c.model.post(ctx, "/chat/completions", body, &resp); err != nil {
 		return Reply{}, err
 	}
-	c.model.add(resp)
+	c.model.add(resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.PromptTokensDetails.CachedTokens)
 	if len(resp.Choices) == 0 {
 		return Reply{}, errors.New(c.model.provider.Name + ": the response has no choices")
 	}
@@ -326,27 +332,28 @@ func (c *compatibleChat) turnMessages(turn Turn) []any {
 	return out
 }
 
-func (c *Compatible) add(r completion) {
+// add counts a request of input tokens, cached of them read from the
+// cache, and output tokens.
+func (c *Compatible) add(input, output, cached int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	cached := r.Usage.PromptTokensDetails.CachedTokens
 	c.usage = c.usage.Add(Usage{
 		Requests:        1,
-		InputTokens:     r.Usage.PromptTokens - cached,
-		OutputTokens:    r.Usage.CompletionTokens,
+		InputTokens:     input - cached,
+		OutputTokens:    output,
 		CacheReadTokens: cached,
 	})
 }
 
-// post sends body to the Chat Completions API, and reads the response into
+// post sends body to the path of the API, and reads the response into
 // out. A request the provider was too busy for, or failed on, is sent
 // again a few times.
-func (c *Compatible) post(ctx context.Context, body any, out any) error {
+func (c *Compatible) post(ctx context.Context, path string, body any, out any) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	url := strings.TrimRight(c.provider.BaseURL, "/") + "/chat/completions"
+	url := strings.TrimRight(c.provider.BaseURL, "/") + path
 	for attempt := 0; ; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 		if err != nil {

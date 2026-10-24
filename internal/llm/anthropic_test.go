@@ -19,6 +19,7 @@ type api struct {
 	replies  []string
 	requests []map[string]any
 	headers  []http.Header
+	paths    []string
 }
 
 func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -29,6 +30,7 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	a.requests = append(a.requests, req)
 	a.headers = append(a.headers, r.Header.Clone())
+	a.paths = append(a.paths, r.URL.Path)
 	if len(a.replies) == 0 {
 		a.t.Errorf("no reply left for %s", body)
 		w.WriteHeader(500)
