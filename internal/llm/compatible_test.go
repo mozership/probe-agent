@@ -41,7 +41,7 @@ const compatibleEndReply = `{
 }`
 
 func TestCompatible_FirstRequest(t *testing.T) {
-	m, a := newCompatible(t, "openai", "max", true, compatibleToolReply)
+	m, a := newCompatible(t, "xai", "max", true, compatibleToolReply)
 	chat := m.Chat(ChatOptions{
 		System:  "be a tester",
 		Prompt:  "do the task",

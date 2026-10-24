@@ -78,7 +78,7 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 | `provider` | String | No | `anthropic` | `anthropic`, `openai`, `xai`, `gemini` or `sakura`; see [Models](#models) |
 | `model` | String | Not with `anthropic` | `claude-opus-5-5` with `anthropic` | The model's ID |
 | `effort` | String | No | `medium` | `low`, `medium`, `high`, `xhigh` or `max` |
-| `base_url` | String | No | the provider's | The URL the provider's API is under, as for a proxy, or another API compatible with OpenAI's under `openai` |
+| `base_url` | String | No | the provider's | The URL the provider's API is under, as for a proxy, or another API compatible with OpenAI's Responses API under `openai` |
 | `vision` | Boolean | No | `false` with `sakura`, else `true` | Whether the model sees images. Not with `anthropic` |
 | `max_steps` | Integer | No | `40` | The calls the tester may make to the browser |
 | `timeout` | Duration | No | `4m` | Limit for the whole test, the judge included, as `90s` or a number of seconds. Keep it below the step's `timeout`, which is `5m` unless set |
@@ -92,12 +92,12 @@ The model is called with the API key of its provider, which the action takes fro
 
 ## Models
 
-The agent is built for Claude, which is trained to use a browser through the browser toolset of the Claude API. The other providers are reached through their APIs compatible with OpenAI's Chat Completions, and their models are offered the same members of the toolset as tools of the agent's own, so that they run the same tests; how well they carry out a task depends on the model.
+The agent is built for Claude, which is trained to use a browser through the browser toolset of the Claude API. The other providers are reached through their APIs compatible with OpenAI's Chat Completions, or through OpenAI's Responses API for `openai`, by which its models both reason and call tools; their models are offered the same members of the toolset as tools of the agent's own, so that they run the same tests; how well they carry out a task depends on the model.
 
 | `provider` | API key | Notes |
 |---|---|---|
 | `anthropic` | `ANTHROPIC_API_KEY`, or what else the [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-go) finds | The default |
-| `openai` | `OPENAI_API_KEY` | `max` is sent as `xhigh` |
+| `openai` | `OPENAI_API_KEY` | The Responses API, keeping nothing on OpenAI's side. `max` is sent as `xhigh` |
 | `xai` | `XAI_API_KEY` | `max` is sent as `xhigh` |
 | `gemini` | `GEMINI_API_KEY` | `xhigh` and `max` are sent as `high` |
 | `sakura` | `SAKURA_AI_ENGINE_TOKEN` | The Sakura AI Engine. Its models differ in what they take, so `effort` is not sent, and they see no images unless `vision` is `true`. Choose one that calls tools, such as `gpt-oss-120b` |
