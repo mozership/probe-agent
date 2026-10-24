@@ -14,6 +14,11 @@
 # when it no longer matches. CI runs with CACHE_MODE=strict, which writes no
 # recording and blocks the test when the one committed no longer matches,
 # and checks that it is replayed whole.
+#
+# PROVIDER and MODEL run the tests with another model, as
+# PROVIDER=openai MODEL=gpt-5.4 with OPENAI_API_KEY set. The recording
+# would be replayed whatever the model, so give CACHE_MODE=refresh for the
+# tester to sign Alice up, and leave the recording it writes uncommitted.
 name: probe-agent against a sign-up
 
 actions:
@@ -21,12 +26,18 @@ actions:
 
 secrets:
 - ANTHROPIC_API_KEY
+- OPENAI_API_KEY
+- XAI_API_KEY
+- GEMINI_API_KEY
+- SAKURA_AI_ENGINE_TOKEN
 
 vars:
   url: "{{APP_URL ?? 'http://localhost:18090'}}"
   id: "{{random_str(8)}}"
   password: "pw-{{random_str(16)}}"
   cache_mode: "{{CACHE_MODE ?? 'auto'}}"
+  provider: "{{PROVIDER ?? 'anthropic'}}"
+  model: "{{MODEL ?? ''}}"
 
 jobs:
 - name: Sign-up
@@ -34,6 +45,8 @@ jobs:
     agent:
       url: "{{vars.url}}/"
       evidence_dir: out/agent
+      provider: "{{vars.provider}}"
+      model: "{{vars.model}}"
       timeout: 4m
   steps:
   - name: Wait for the server
@@ -89,6 +102,8 @@ jobs:
     agent:
       url: "{{vars.url}}/"
       evidence_dir: out/agent
+      provider: "{{vars.provider}}"
+      model: "{{vars.model}}"
       timeout: 4m
   steps:
   - name: Wait for the server

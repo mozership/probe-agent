@@ -98,7 +98,7 @@ func markdown(r req, o scenario.Outcome, dir string) string {
 		w(" |\n")
 	}
 	w("| Duration | %s |\n", o.Duration.Round(1e8))
-	w("| Model | %s |\n", o.Model)
+	w("| Model | %s (%s) |\n", o.Model, r.Provider)
 	w("| Tokens | %d in (%d from cache), %d out, %d requests |\n\n",
 		o.Usage.InputTokens+o.Usage.CacheReadTokens+o.Usage.CacheWriteTokens, o.Usage.CacheReadTokens, o.Usage.OutputTokens, o.Usage.Requests)
 

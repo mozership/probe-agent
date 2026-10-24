@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -92,6 +93,8 @@ func (p *fakePage) FormInput(_ context.Context, ref string, v any) (string, erro
 type fakeModel struct {
 	scripts [][]llm.Reply
 	chats   []*fakeChat
+	// blind is a model that sees no images.
+	blind bool
 }
 
 type fakeChat struct {
@@ -101,6 +104,7 @@ type fakeChat struct {
 }
 
 func (m *fakeModel) Name() string     { return "fake" }
+func (m *fakeModel) Vision() bool     { return !m.blind }
 func (m *fakeModel) Usage() llm.Usage { return llm.Usage{Requests: len(m.chats)} }
 func (m *fakeModel) Chat(opts llm.ChatOptions) llm.Chat {
 	c := &fakeChat{opts: opts}
@@ -225,6 +229,34 @@ func TestRun_APassThatQuotesNothingSeenIsBlocked(t *testing.T) {
 	}
 	if o.Verdict != Blocked || !strings.Contains(o.Reason, "without quoting anything the pages showed") {
 		t.Errorf("verdict %s (%s); want blocked for want of evidence", o.Verdict, o.Reason)
+	}
+}
+
+func TestRun_TheJudgeSeesTheFinalPageWhenTheModelSeesImages(t *testing.T) {
+	for _, blind := range []bool{false, true} {
+		p := &fakePage{text: "Something went wrong."}
+		m := &fakeModel{blind: blind, scripts: [][]llm.Reply{
+			{toolCall("1", "finish", map[string]any{"status": "done", "summary": "An error page."})},
+			{toolCall("j1", "verdict", map[string]any{"verdict": "fail", "reason": "No dashboard.", "evidence": []string{}})},
+		}}
+		var saved []string
+		cfg := config()
+		cfg.Save = func(name string, _ []byte) string {
+			saved = append(saved, name)
+			return name
+		}
+		o, err := Run(context.Background(), cfg, p, m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		judge := m.chats[1].opts
+		said := strings.Contains(judge.Prompt, "A screenshot of the final page follows.")
+		if blind == (len(judge.Images) > 0) || blind == said {
+			t.Errorf("blind %v: the judge had %d images and was told of a screenshot: %v", blind, len(judge.Images), said)
+		}
+		if o.FinalScreenshot != "final.jpg" || !slices.Contains(saved, "final.jpg") {
+			t.Errorf("blind %v: the final screenshot %q was not kept (saved %v)", blind, o.FinalScreenshot, saved)
+		}
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/go-hclog"
 	"github.com/mozership/probe/actionrpc"
 
@@ -58,6 +59,10 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 			return nil, err
 		}
 	}
+	model, err := newModel(r)
+	if err != nil {
+		return nil, err
+	}
 	ev, err := newEvidence(r.EvidenceDir)
 	if err != nil {
 		return nil, err
@@ -86,7 +91,6 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 		Strict:    r.Cache != "" && r.CacheMode == cacheStrict,
 		Viewport:  scenario.Viewport{Width: r.Width, Height: r.Height},
 	}
-	model := llm.NewAnthropic(r.Model, r.Effort)
 	o, err := scenario.Run(a.ctx, cfg, chrome, model)
 	if err != nil {
 		return nil, err
@@ -105,6 +109,29 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 		a.log.Info("recorded the test", "cache", r.Cache, "steps", len(o.Recording.Steps))
 	}
 	return result(r, o, f, time.Since(start))
+}
+
+// newModel returns the model of the provider r names. The API key of a
+// provider other than anthropic is read from its environment variable
+// here, so that a test without one ends before the browser starts; the
+// Anthropic SDK finds its own, as in ANTHROPIC_API_KEY.
+func newModel(r req) (llm.Model, error) {
+	if r.Provider == anthropic {
+		var opts []option.RequestOption
+		if r.BaseURL != "" {
+			opts = append(opts, option.WithBaseURL(r.BaseURL))
+		}
+		return llm.NewAnthropic(r.Model, r.Effort, opts...), nil
+	}
+	p := llm.Providers[r.Provider]
+	key := os.Getenv(p.KeyEnv)
+	if key == "" {
+		return nil, fmt.Errorf("the provider %s needs its API key in the environment variable %s", r.Provider, p.KeyEnv)
+	}
+	if r.BaseURL != "" {
+		p.BaseURL = r.BaseURL
+	}
+	return llm.NewCompatible(p, r.Model, r.Effort, key, r.Vision), nil
 }
 
 // result is what the action returns: req, res, rt and status, as Probe
@@ -141,6 +168,7 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 	}
 	reqMap := map[string]any{
 		"url":       r.URL,
+		"provider":  r.Provider,
 		"model":     r.Model,
 		"effort":    r.Effort,
 		"max_steps": r.MaxSteps,

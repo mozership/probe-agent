@@ -90,10 +90,65 @@ func TestParse_Refuses(t *testing.T) {
 		"only a goal":      {"goal": "g", "url": "http://a.test/"},
 		"a bad cache mode": {"task": "t", "expect": "e", "url": "http://a.test/", "cache": "c.json", "cache_mode": "sometimes"},
 		"a persona cache":  {"persona": "p", "goal": "g", "url": "http://a.test/", "cache": "c.json"},
+		"a bad provider":   {"task": "t", "expect": "e", "url": "http://a.test/", "provider": "acme", "model": "m"},
+		"no model":         {"task": "t", "expect": "e", "url": "http://a.test/", "provider": "openai"},
+		"a bad base_url":   {"task": "t", "expect": "e", "url": "http://a.test/", "provider": "openai", "model": "m", "base_url": "api.test"},
+		"a bad vision":     {"task": "t", "expect": "e", "url": "http://a.test/", "provider": "openai", "model": "m", "vision": "maybe"},
+		"claude's vision":  {"task": "t", "expect": "e", "url": "http://a.test/", "vision": false},
 	} {
 		if _, err := parse(with); err == nil {
 			t.Errorf("%s: parsed", name)
 		}
+	}
+}
+
+func TestParse_Provider(t *testing.T) {
+	base := func(more map[string]any) map[string]any {
+		with := map[string]any{"task": "t", "expect": "e", "url": "http://a.test/"}
+		for k, v := range more {
+			with[k] = v
+		}
+		return with
+	}
+	for _, c := range []struct {
+		with   map[string]any
+		want   string
+		vision bool
+	}{
+		{base(nil), "anthropic " + llm.DefaultModel, true},
+		{base(map[string]any{"provider": "OpenAI", "model": "gpt-x"}), "openai gpt-x", true},
+		{base(map[string]any{"provider": "gemini", "model": "gemini-x", "vision": "false"}), "gemini gemini-x", false},
+		{base(map[string]any{"provider": "sakura", "model": "gpt-oss-120b"}), "sakura gpt-oss-120b", false},
+		{base(map[string]any{"provider": "sakura", "model": "Qwen3-VL", "vision": true}), "sakura Qwen3-VL", true},
+	} {
+		r, err := parse(c.with)
+		if err != nil {
+			t.Errorf("%v: %v", c.with, err)
+			continue
+		}
+		if got := r.Provider + " " + r.Model; got != c.want || r.Vision != c.vision {
+			t.Errorf("%v: %s, vision %v; want %s, vision %v", c.with, got, r.Vision, c.want, c.vision)
+		}
+	}
+	_, err := parse(base(map[string]any{"provider": "acme"}))
+	if err == nil || !strings.Contains(err.Error(), "must be anthropic, gemini, openai, sakura or xai") {
+		t.Errorf("error %v", err)
+	}
+}
+
+func TestNewModel_NeedsTheKeyOfTheProvider(t *testing.T) {
+	t.Setenv("XAI_API_KEY", "")
+	r, err := parse(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "provider": "xai", "model": "grok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newModel(r); err == nil || !strings.Contains(err.Error(), "XAI_API_KEY") {
+		t.Errorf("error %v; want one that names XAI_API_KEY", err)
+	}
+	t.Setenv("XAI_API_KEY", "k")
+	m, err := newModel(r)
+	if err != nil || m.Name() != "grok" || !m.Vision() {
+		t.Errorf("model %v, %v", m, err)
 	}
 }
 

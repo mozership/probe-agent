@@ -46,7 +46,7 @@ const (
 var params = []string{
 	"task", "expect", "persona", "goal", "url", "allow_hosts", "secrets",
 	"cache", "cache_mode",
-	"model", "effort", "max_steps", "timeout",
+	"provider", "model", "effort", "base_url", "vision", "max_steps", "timeout",
 	"headless", "window_w", "window_h", "evidence_dir",
 }
 
@@ -57,17 +57,21 @@ func Params() []string {
 
 // req is what a step asks of the action.
 type req struct {
-	Task        string
-	Expect      string
-	Persona     string
-	Goal        string
-	Cache       string
-	CacheMode   string
-	URL         string
-	AllowHosts  []string
-	Secrets     map[string]string
+	Task       string
+	Expect     string
+	Persona    string
+	Goal       string
+	Cache      string
+	CacheMode  string
+	URL        string
+	AllowHosts []string
+	Secrets    map[string]string
+	// Provider is anthropic, or a provider of llm.Providers.
+	Provider    string
 	Model       string
 	Effort      string
+	BaseURL     string
+	Vision      bool
 	MaxSteps    int
 	Timeout     time.Duration
 	Headless    bool
@@ -80,7 +84,7 @@ type req struct {
 // numbers and the booleans are taken as strings too.
 func parse(with map[string]any) (req, error) {
 	r := req{
-		Model:     llm.DefaultModel,
+		Provider:  anthropic,
 		Effort:    defaultEffort,
 		MaxSteps:  defaultMaxSteps,
 		Timeout:   defaultTimeout,
@@ -126,8 +130,10 @@ func parse(with map[string]any) (req, error) {
 	str("persona", &r.Persona)
 	str("goal", &r.Goal)
 	str("url", &r.URL)
+	str("provider", &r.Provider)
 	str("model", &r.Model)
 	str("effort", &r.Effort)
+	str("base_url", &r.BaseURL)
 	str("evidence_dir", &r.EvidenceDir)
 	str("cache", &r.Cache)
 	str("cache_mode", &r.CacheMode)
@@ -165,6 +171,39 @@ func parse(with map[string]any) (req, error) {
 	}
 	if r.Cache != "" && persona {
 		errs = append(errs, errors.New("cache is for scenario tests; a persona test takes another way each run"))
+	}
+
+	r.Provider = strings.ToLower(r.Provider)
+	p, compatible := llm.Providers[r.Provider]
+	switch {
+	case r.Provider == anthropic:
+		r.Vision = true
+		if r.Model == "" {
+			r.Model = llm.DefaultModel
+		}
+		if _, ok := with["vision"]; ok {
+			errs = append(errs, errors.New("vision is for the providers other than anthropic, whose models all see images"))
+		}
+	case compatible:
+		r.Vision = p.Vision
+		if r.Model == "" {
+			errs = append(errs, fmt.Errorf("model is required with the provider %s", r.Provider))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("provider %q must be %s", r.Provider, providerNames()))
+	}
+	if v, ok := with["vision"]; ok && compatible {
+		b, err := toBool(v)
+		if err != nil {
+			errs = append(errs, errors.New("vision must be true or false"))
+		} else {
+			r.Vision = b
+		}
+	}
+	if r.BaseURL != "" {
+		if u, err := url.Parse(r.BaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, fmt.Errorf("base_url %q must be an http or https URL", r.BaseURL))
+		}
 	}
 
 	switch r.Effort {
@@ -215,6 +254,16 @@ func parse(with map[string]any) (req, error) {
 		}
 	}
 	return r, errors.Join(errs...)
+}
+
+// anthropic is the provider of the Claude API, which the agent uses unless
+// told another.
+const anthropic = "anthropic"
+
+// providerNames lists the providers the agent knows, for an error.
+func providerNames() string {
+	names := append([]string{anthropic}, slices.Sorted(maps.Keys(llm.Providers))...)
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }
 
 // forLog returns with as it may be logged: the values of the secrets

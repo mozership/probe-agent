@@ -452,7 +452,11 @@ func (r *run) final(ctx context.Context) final {
 		f.elements = truncate(r.secrets.mask(els), 20000)
 	}
 	if img, err := r.page.Screenshot(ctx); err == nil {
-		f.image = img
+		// The judge is shown the screenshot when the model sees images; it
+		// is kept as evidence either way.
+		if r.model.Vision() {
+			f.image = img
+		}
 		f.screenshot = r.save("final.jpg", img)
 	}
 	return f

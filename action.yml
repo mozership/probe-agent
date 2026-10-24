@@ -3,7 +3,7 @@
 # --read-only or --allow-host unless --allow-action names it.
 name: agent
 description: Test a web application from a task, or a persona and a goal, written in words, with a model that uses it through a browser
-params: [task, expect, persona, goal, url, allow_hosts, secrets, cache, cache_mode, model, effort, max_steps, timeout, headless, window_w, window_h, evidence_dir]
+params: [task, expect, persona, goal, url, allow_hosts, secrets, cache, cache_mode, provider, model, effort, base_url, vision, max_steps, timeout, headless, window_w, window_h, evidence_dir]
 runs:
   using: binary
   url: https://github.com/mozership/probe-agent/releases/download/v0.1.0/probe-agent_{os}_{arch}

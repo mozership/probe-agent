@@ -51,6 +51,9 @@ func NewAnthropic(model, effort string, opts ...option.RequestOption) *Anthropic
 // Name returns the model's ID.
 func (a *Anthropic) Name() string { return a.model }
 
+// Vision says whether the model sees images, which Claude does.
+func (a *Anthropic) Vision() bool { return true }
+
 // Usage returns what every chat of the model has used so far.
 func (a *Anthropic) Usage() Usage {
 	a.mu.Lock()

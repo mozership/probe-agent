@@ -13,6 +13,10 @@ import (
 type Model interface {
 	// Name is the model's ID, such as claude-opus-5-5.
 	Name() string
+	// Vision says whether the model sees images: the images of a chat are
+	// left out for one that does not, and the members of the browser
+	// toolset that show the page as one are not offered it.
+	Vision() bool
 	Chat(opts ChatOptions) Chat
 	// Usage is what every chat of the model has used so far.
 	Usage() Usage

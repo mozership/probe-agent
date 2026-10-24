@@ -75,8 +75,11 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 | `goal` | String | Persona | - | What the persona sets out to do, in words |
 | `secrets` | Object | No | - | Values the model never sees, by name. Write them as `{secret:NAME}` in `task` or `persona`; see [Secrets](#secrets) |
 | `allow_hosts` | List or string | No | the host of `url` | The hosts the tester may open pages of: `host`, `host:port`, or `*.domain`. A list, or a string apart by commas |
-| `model` | String | No | `claude-opus-5-5` | The Claude model |
+| `provider` | String | No | `anthropic` | `anthropic`, `openai`, `xai`, `gemini` or `sakura`; see [Models](#models) |
+| `model` | String | Not with `anthropic` | `claude-opus-5-5` with `anthropic` | The model's ID |
 | `effort` | String | No | `medium` | `low`, `medium`, `high`, `xhigh` or `max` |
+| `base_url` | String | No | the provider's | The URL the provider's API is under, as for a proxy, or another API compatible with OpenAI's under `openai` |
+| `vision` | Boolean | No | `false` with `sakura`, else `true` | Whether the model sees images. Not with `anthropic` |
 | `max_steps` | Integer | No | `40` | The calls the tester may make to the browser |
 | `timeout` | Duration | No | `4m` | Limit for the whole test, the judge included, as `90s` or a number of seconds. Keep it below the step's `timeout`, which is `5m` unless set |
 | `headless` | Boolean | No | `true` | Run Chrome without a window |
@@ -85,7 +88,39 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 | `cache_mode` | String | No | `auto` | `auto`, `read`, `strict` or `refresh`; see [Replay](#replay) |
 | `evidence_dir` | String | No | the temporary directory | Where the screenshots and the report are written, each test in a directory of its own |
 
-The model is called with the credentials the [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-go) finds, such as `ANTHROPIC_API_KEY`, which the action takes from Probe's environment. List it under `secrets` of the workflow so that Probe hides it in its output.
+The model is called with the API key of its provider, which the action takes from Probe's environment. List it under `secrets` of the workflow so that Probe hides it in its output.
+
+## Models
+
+The agent is built for Claude, which is trained to use a browser through the browser toolset of the Claude API. The other providers are reached through their APIs compatible with OpenAI's Chat Completions, and their models are offered the same members of the toolset as tools of the agent's own, so that they run the same tests; how well they carry out a task depends on the model.
+
+| `provider` | API key | Notes |
+|---|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY`, or what else the [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-go) finds | The default |
+| `openai` | `OPENAI_API_KEY` | `max` is sent as `xhigh` |
+| `xai` | `XAI_API_KEY` | `max` is sent as `xhigh` |
+| `gemini` | `GEMINI_API_KEY` | `xhigh` and `max` are sent as `high` |
+| `sakura` | `SAKURA_AI_ENGINE_TOKEN` | The Sakura AI Engine. Its models differ in what they take, so `effort` is not sent, and they see no images unless `vision` is `true`. Choose one that calls tools, such as `gpt-oss-120b` |
+
+A model that sees no images reads the pages by their elements and text alone: it is not offered `screenshot` or `zoom`, acts on elements rather than points, and the judge is not shown the final page as an image. The screenshots are still kept as evidence.
+
+```yaml
+secrets:
+  - OPENAI_API_KEY
+jobs:
+- name: sign-up
+  steps:
+  - name: A new user signs up
+    uses: agent
+    with:
+      provider: openai
+      model: gpt-5.4
+      url: https://staging.example.com/
+      task: Sign up with {secret:EMAIL} and the password {secret:PASSWORD}.
+      expect: The dashboard greets the user.
+```
+
+A recording is of the steps, not of the model, so a test recorded with one model is replayed with another.
 
 ## Result
 
@@ -104,7 +139,7 @@ The model is called with the credentials the [Anthropic SDK](https://github.com/
 | `res.network_errors` | List | The requests that failed or were answered with 400 or more: `method`, `url`, `status`, `error` |
 | `res.cache` | Object | With `cache`, how the test used it: `path`, `mode`, `status` (`miss`, `hit` or `partial`), `replayed`, the steps replayed, `diverged_at` and `reason`, where and why the recording stopped, `stale`, whether it stopped because the application no longer matches it, and `saved`, whether the run was recorded |
 | `res.metrics` | Object | Measures that do not depend on the model, to compare runs by: `steps`, `duration_ms`, `requests`, `failed_requests`, `console_errors`, and `slowest_requests`, the ten requests that took longest, with `method`, `url`, `status` and `duration_ms` |
-| `res.usage` | Object | The `requests` made to the model and the tokens they used |
+| `res.usage` | Object | The `requests` made to the model and the tokens they used. `cache_write_tokens` is counted by `anthropic` alone |
 | `res.filepaths` | Object | `report`, a Markdown report with a screenshot of each step; `trace`, the result as JSON; `screenshot`, the final page |
 | `res.report` | String | A few lines Probe prints under the step |
 | `status` | Integer | `0`; the verdict is for the step's `test` |
