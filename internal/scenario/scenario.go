@@ -1,4 +1,4 @@
-// Package scenario runs a test written in words: a model, the tester, uses
+// Package scenario runs a test written in natural language: a model, the tester, uses
 // a web application through a browser to carry out a task, and another
 // call of the model, the judge, decides from what the pages showed whether
 // the expectation holds. In a persona test, the tester plays a persona
@@ -51,13 +51,13 @@ const (
 // Config is a test: a scenario test of Task and Expect, or a persona test
 // of Persona and Goal.
 type Config struct {
-	// Task is what the tester does, in words.
+	// Task is what the tester does, in natural language.
 	Task string
-	// Expect is what has to hold afterwards, in words.
+	// Expect is what has to hold afterwards, in natural language.
 	Expect string
-	// Persona is who the tester plays, in words.
+	// Persona is who the tester plays, in natural language.
 	Persona string
-	// Goal is what the persona sets out to do, in words.
+	// Goal is what the persona sets out to do, in natural language.
 	Goal string
 	// StartURL is the page the browser opens first.
 	StartURL string

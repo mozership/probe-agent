@@ -1,5 +1,5 @@
 // Command probe-agent serves a Probe action that tests a web application
-// from a task written in words: a model uses the application through a
+// from a task written in natural language: a model uses the application through a
 // browser, and another call of the model judges whether the expectation
 // held. Probe starts it for a step that uses
 // github.com/mozership/probe-agent@<commit>.

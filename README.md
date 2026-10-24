@@ -1,6 +1,6 @@
 # probe-agent
 
-A [Probe](https://github.com/mozership/probe) action that tests a web application from a task written in words. A model, the tester, uses the application through a real Chrome to carry out the task; another call of the model, the judge, then decides from what the pages showed whether the expectation holds.
+A [Probe](https://github.com/mozership/probe) action that tests a web application from a task written in natural language. A model, the tester, uses the application through a real Chrome to carry out the task; another call of the model, the judge, then decides from what the pages showed whether the expectation holds.
 
 It has two modes:
 
@@ -51,7 +51,7 @@ A persona test:
     test: len(filter(res.findings, .severity == "high" && .verified)) == 0
 ```
 
-A test in words is not deterministic: the same step can take another path, or come to another verdict, from one run to the next. Check what matters with a deterministic step after it where you can, such as an `http` or `db` step that the account exists, and count the passes over runs with [`repeat.test`](https://github.com/mozership/probe) rather than trusting one run.
+A test in natural language is not deterministic: the same step can take another path, or come to another verdict, from one run to the next. Check what matters with a deterministic step after it where you can, such as an `http` or `db` step that the account exists, and count the passes over runs with [`repeat`](https://probe.linyo.ws/reference/yaml-configuration#repeat) rather than trusting one run.
 
 ## How it works
 
@@ -69,10 +69,10 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `url` | String | Yes | - | The page the browser opens first, `http` or `https` |
-| `task` | String | Scenario | - | What the tester does, in words |
-| `expect` | String | Scenario | - | What has to hold afterwards, in words |
-| `persona` | String | Persona | - | Who the tester plays, in words: what they know, and how they go about things |
-| `goal` | String | Persona | - | What the persona sets out to do, in words |
+| `task` | String | Scenario | - | What the tester does, in natural language |
+| `expect` | String | Scenario | - | What has to hold afterwards, in natural language |
+| `persona` | String | Persona | - | Who the tester plays, in natural language: what they know, and how they go about things |
+| `goal` | String | Persona | - | What the persona sets out to do, in natural language |
 | `secrets` | Object | No | - | Values the model never sees, by name. Write them as `{secret:NAME}` in `task` or `persona`; see [Secrets](#secrets) |
 | `allow_hosts` | List or string | No | the host of `url` | The hosts the tester may open pages of: `host`, `host:port`, or `*.domain`. A list, or a string apart by commas |
 | `provider` | String | No | `anthropic` | `anthropic`, `openai`, `xai`, `gemini` or `sakura`; see [Models](#models) |
