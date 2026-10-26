@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mozership/probe/mapping"
+	"github.com/mozership/probe/actionrpc"
 
 	"github.com/mozership/probe-agent/internal/llm"
 )
@@ -213,7 +213,7 @@ func parse(with map[string]any) (req, error) {
 	}
 
 	if v, ok := with["timeout"]; ok {
-		d, err := mapping.ParseTimeout(v)
+		d, err := actionrpc.ParseTimeout(v)
 		if err != nil {
 			errs = append(errs, err)
 		} else {
