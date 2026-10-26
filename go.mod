@@ -7,7 +7,7 @@ require (
 	github.com/chromedp/cdproto v0.157.4
 	github.com/chromedp/chromedp v0.19.1
 	github.com/hashicorp/go-hclog v1.6.3
-	github.com/mozership/probe v1.29.1-0.20261025223349-1ad3e24522eb
+	github.com/mozership/probe v1.30.0
 )
 
 require (
