@@ -108,16 +108,94 @@
   const clip = (s, n) => { s = squash(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const quote = (s) => JSON.stringify(s);
 
+  // each calls f on the elements of root in the order of the page, those of
+  // an open shadow root right after its host. A closed shadow root is out of
+  // reach of a script, so its elements are not seen.
+  const each = (root, f) => {
+    for (const el of root.querySelectorAll('*')) {
+      f(el);
+      if (el.shadowRoot) each(el.shadowRoot, f);
+    }
+  };
+
+  // hasShadow tells whether el, or an element under it, has an open shadow
+  // root or is a slot: innerText leaves out the text of a shadow root, and
+  // that of the nodes slotted into a slot.
+  const hasShadow = (el) => {
+    if (el.shadowRoot || el.localName === 'slot') return true;
+    for (const n of el.querySelectorAll('*')) if (n.shadowRoot || n.localName === 'slot') return true;
+    return false;
+  };
+
+  const box = (el) => Boolean(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  const inline = (el) => /^(inline|contents|ruby)/.test(getComputedStyle(el).display);
+  // localName, as the title of an SVG is "title" and not "TITLE".
+  const noText = new Set(['script', 'style', 'template', 'noscript', 'head', 'title', 'desc']);
+
+  // leaf gives the visible text of an element with no shadow root under it.
+  // An SVG has no innerText, and shows only the text of its text elements.
+  const leaf = (el) => {
+    if (el instanceof HTMLElement) return el.innerText;
+    if (el instanceof SVGElement) {
+      const texts = el.localName === 'text' ? [el] : Array.from(el.querySelectorAll('text'));
+      return texts.map((t) => t.textContent).join(' ');
+    }
+    return el.textContent || '';
+  };
+
+  // rendered gives the text of a node of the flat tree, with a line break
+  // around each block, as innerText puts them: an element's innerText when
+  // no shadow root is under it, and otherwise the text of the children of
+  // its shadow root, or of its own, and of the nodes slotted into it.
+  const rendered = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      // A text node at the top of a shadow root takes its style from the host.
+      const parent = node.parentElement || (node.parentNode && node.parentNode.host);
+      if (!parent || !box(parent)) return '';
+      const style = getComputedStyle(parent);
+      if (style.visibility !== 'visible') return '';
+      return style.whiteSpace.startsWith('pre') ? node.nodeValue : node.nodeValue.replace(/\s+/g, ' ');
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE || noText.has(node.localName)) return '';
+    if (node.localName === 'br') return '\n';
+    if (node.localName === 'slot') return node.assignedNodes({ flatten: true }).map(rendered).join('');
+    if (!box(node)) return '';
+    let t;
+    if (!hasShadow(node)) {
+      t = leaf(node);
+    } else {
+      const children = node.shadowRoot ? node.shadowRoot.childNodes : node.childNodes;
+      t = Array.from(children, rendered).join('');
+    }
+    return inline(node) ? t : '\n' + t + '\n';
+  };
+
+  // textOf gives the visible text of el, as innerText does, and the text of
+  // the open shadow roots in it, which innerText leaves out.
+  const textOf = (el) => {
+    if (!box(el)) return '';
+    if (!hasShadow(el)) return leaf(el);
+    // The lines of the parts are put together the way innerText would:
+    // trimmed, and the empty ones dropped.
+    return rendered(el).split('\n').map((l) => l.replace(/[ \t]+/g, ' ').trim()).filter((l) => l !== '').join('\n');
+  };
+
   const nameOf = (el, role) => {
     const label = el.getAttribute('aria-label');
     if (label) return label;
     const by = el.getAttribute('aria-labelledby');
     if (by) {
-      const t = by.split(/\s+/).map((id) => document.getElementById(id)?.innerText || '').join(' ');
+      // The ids are looked up where el is, which is a shadow root for an
+      // element in one. A label may be hidden, and still names el.
+      const root = el.getRootNode();
+      const t = by.split(/\s+/).map((id) => {
+        const l = root.getElementById ? root.getElementById(id) : document.getElementById(id);
+        return l ? textOf(l) || l.textContent : '';
+      }).join(' ');
       if (squash(t)) return t;
     }
     if (el.labels && el.labels.length) {
-      const t = Array.from(el.labels).map((l) => l.innerText).join(' ');
+      const t = Array.from(el.labels).map((l) => textOf(l)).join(' ');
       if (squash(t)) return t;
     }
     if (el.tagName === 'INPUT' && ['button', 'submit', 'reset'].includes(el.type)) return el.value || el.type;
@@ -125,7 +203,7 @@
     if (fieldRoles.has(role)) {
       return el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name') || '';
     }
-    return squash(el.innerText || el.textContent) || el.getAttribute('title') || '';
+    return squash(textOf(el) || el.textContent) || el.getAttribute('title') || '';
   };
 
   const describe = (el, role) => {
@@ -283,26 +361,32 @@
     throw new Error(ref + ' is not a form field');
   };
 
-  // text returns the text the page shows, its main content first.
+  // first returns the first element that matches css, in the document or in
+  // an open shadow root, or null.
+  const first = (css) => {
+    let found = null;
+    each(document, (el) => { if (!found && el.matches(css)) found = el; });
+    return found;
+  };
+
+  // text returns the text the page shows, its main content first, the text
+  // of the open shadow roots included.
   const text = () => {
-    const main = document.querySelector('main, [role=main]');
-    const body = document.body ? document.body.innerText : '';
+    const body = document.body ? textOf(document.body) : '';
+    const main = first('main, [role=main]');
     if (!main) return body;
-    const rest = body.replace(main.innerText, '');
-    return main.innerText + (squash(rest) ? '\n\n' + rest : '');
+    const inMain = textOf(main);
+    const rest = body.replace(inMain, '');
+    return inMain + (squash(rest) ? '\n\n' + rest : '');
   };
 
   // The elements shown with role and name, in the order of the document,
   // shadow roots included.
   const withRoleAndName = (role, name) => {
     const out = [];
-    const walk = (root) => {
-      for (const el of root.querySelectorAll('*')) {
-        if (roleOf(el) === role && clip(nameOf(el, role), 200) === name && shown(el)) out.push(el);
-        if (el.shadowRoot) walk(el.shadowRoot);
-      }
-    };
-    walk(document);
+    each(document, (el) => {
+      if (roleOf(el) === role && clip(nameOf(el, role), 200) === name && shown(el)) out.push(el);
+    });
     return out;
   };
 
@@ -342,13 +426,14 @@
   };
 
   // alerts returns the texts of the alerts the page shows, which say what
-  // just happened.
+  // just happened, those in open shadow roots included.
   const alerts = () => {
     const out = [];
-    for (const el of document.querySelectorAll('[role=alert], [role=alertdialog]')) {
-      const t = squash(el.innerText);
+    each(document, (el) => {
+      if (!el.matches('[role=alert], [role=alertdialog]')) return;
+      const t = squash(textOf(el));
       if (t && shown(el)) out.push(clip(t, 300));
-    }
+    });
     return out;
   };
 

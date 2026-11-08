@@ -47,6 +47,40 @@ func startChrome(t *testing.T) *Chrome {
 	return c
 }
 
+// shadowPage is built of custom elements, whose text is in open shadow
+// roots, where innerText does not reach.
+const shadowPage = `<!doctype html>
+<html><head><title>Notes</title></head><body>
+<main>
+  <h1>Your notes</h1>
+  <note-card></note-card>
+  <note-frame><b>Slotted words</b></note-frame>
+  <save-button role="button" tabindex="0"></save-button>
+</main>
+<script>
+customElements.define('note-card', class extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({mode: 'open'}).innerHTML =
+      '<p>Inside the card</p><div role="alert">Saved in the shadow</div>' +
+      '<span id="nick">Nickname</span><input aria-labelledby="nick">';
+  }
+});
+customElements.define('note-frame', class extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({mode: 'open'}).innerHTML = '<div>Framed: <slot></slot></div>';
+  }
+});
+customElements.define('save-button', class extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({mode: 'open'}).innerHTML = '<span>Save draft</span>';
+  }
+});
+</script>
+</body></html>`
+
 func server(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -67,6 +101,9 @@ func server(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("/next", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `<!doctype html><title>Next</title><h1>Second page</h1><p role="alert">Saved   3 notes</p><ul><li>A <button>Delete</button></li><li>B <button onclick="this.textContent='Gone'">Delete</button></li></ul>`)
+	})
+	mux.HandleFunc("/shadow", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, shadowPage)
 	})
 	s := httptest.NewServer(mux)
 	t.Cleanup(s.Close)
@@ -408,5 +445,49 @@ func TestChrome_LocatesElementsAgain(t *testing.T) {
 	defer cancelShort()
 	if _, err := c.Locate(short, Locator{Role: "button", Name: "Nowhere"}); err == nil || errors.Is(err, ErrAmbiguous) {
 		t.Errorf("located a button the page lacks")
+	}
+}
+
+func TestChrome_ReadsShadowRoots(t *testing.T) {
+	c := startChrome(t)
+	s := server(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := c.Navigate(ctx, s.URL+"/shadow"); err != nil {
+		t.Fatal(err)
+	}
+
+	text, err := c.Text(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Your notes", "Inside the card", "Saved in the shadow", "Framed: Slotted words", "Save draft"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the text lacks %q:\n%s", want, text)
+		}
+	}
+	if n := strings.Count(text, "Slotted words"); n != 1 {
+		t.Errorf("the slotted text is there %d times:\n%s", n, text)
+	}
+
+	if alerts, err := c.Alerts(ctx); err != nil || len(alerts) != 1 || alerts[0] != "Saved in the shadow" {
+		t.Errorf("alerts %q, %v", alerts, err)
+	}
+
+	read, err := c.Read(ctx, "interactive", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refOf(t, read, `textbox "Nickname"`)
+	ref := refOf(t, read, `button "Save draft"`)
+
+	// The button is found again by its name, which is in its shadow root.
+	l, err := c.Locator(ctx, Target{Ref: ref})
+	if err != nil || l == nil || *l != (Locator{Role: "button", Name: "Save draft"}) {
+		t.Fatalf("locator %+v, %v", l, err)
+	}
+	if again, err := c.Locate(ctx, *l); err != nil || again != ref {
+		t.Errorf("located %q, %v; want %q", again, err, ref)
 	}
 }
