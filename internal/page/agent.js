@@ -144,7 +144,8 @@
 
   // shows tells whether el is rendered. An element with display: contents,
   // as a slot has, has no box of its own but shows what it holds, unless
-  // what holds it is not shown.
+  // what holds it is not shown. An element out of the flat tree, as a child
+  // of a host that no slot shows, has no display, and so no box.
   const shows = (el) => {
     const display = getComputedStyle(el).display;
     if (display === 'none') return false;
@@ -153,24 +154,62 @@
     return parent ? shows(parent) : true;
   };
 
-  // Spaces, tabs and line breaks that need no tidying, those of innerText
-  // and of preformatted text, are kept apart while the lines of a text are
-  // tidied, and put back after.
-  const keep = (s) => s.replace(/ /g, '').replace(/\t/g, '').replace(/\n/g, '');
-  const unkeep = (s) => s.replace(//g, ' ').replace(//g, '\t').replace(//g, '\n');
+  // The spaces, tabs and line breaks that need no tidying, those of
+  // innerText and of preformatted text, are kept apart as characters of
+  // the private use area while the lines of a text are tidied, and put back
+  // after. Those characters of the page itself are escaped first, so that
+  // they come back as they were.
+  const esc = (s) => s.replace(/[\uE000-\uE003]/g, (c) => '\uE003' + 'abcd'[c.charCodeAt(0) - 0xE000]);
+  const keep = (s) => esc(s).replace(/ /g, '\uE000').replace(/\t/g, '\uE001').replace(/\n/g, '\uE002');
+  const unkeep = (s) => s.replace(/\uE000/g, ' ').replace(/\uE001/g, '\t').replace(/\uE002/g, '\n')
+    .replace(/\uE003([abcd])/g, (_, c) => String.fromCharCode(0xE000 + 'abcd'.indexOf(c)));
   // tidy puts the lines of a text together the way innerText would: spaces
   // run together, trimmed, and the empty lines dropped, what is kept aside.
   const tidy = (s) => unkeep(s.split('\n').map((l) => l.replace(/[ \t]+/g, ' ').trim()).filter((l) => l !== '').join('\n'));
 
+  // spaced gives the text of a text node as its style shows it: spaces and
+  // line breaks kept, line breaks alone kept, as pre-line does, or both run
+  // together.
+  const spaced = (s, style) => {
+    const collapse = style.whiteSpaceCollapse ||
+      ({ pre: 'preserve', 'pre-wrap': 'preserve', 'break-spaces': 'break-spaces', 'pre-line': 'preserve-breaks' })[style.whiteSpace] ||
+      'collapse';
+    if (collapse === 'preserve' || collapse === 'break-spaces' || collapse === 'preserve-spaces') return keep(s);
+    if (collapse === 'preserve-breaks') {
+      return esc(s).replace(/[ \t]*\n[ \t]*/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n/g, '\uE002');
+    }
+    return esc(s).replace(/\s+/g, ' ');
+  };
+
+  // svgText gives the text an SVG shows: that of its text elements, without
+  // those not displayed, the parts hidden, or its title.
+  const svgText = (el) => {
+    const parts = [];
+    const walk = (node, into) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (into && getComputedStyle(node.parentElement).visibility === 'visible') into.push(node.nodeValue);
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE || noText.has(node.localName)) return;
+      if (getComputedStyle(node).display === 'none') return;
+      if (!into && node.localName === 'text') {
+        const text = [];
+        for (const child of node.childNodes) walk(child, text);
+        const t = squash(text.join(''));
+        if (t) parts.push(t);
+        return;
+      }
+      for (const child of node.childNodes) walk(child, into);
+    };
+    walk(el, null);
+    return parts.join(' ');
+  };
+
   // leaf gives the visible text of an element with no shadow root or slot
-  // under it. An SVG has no innerText, and shows only the text of its text
-  // elements.
+  // under it. An SVG has no innerText.
   const leaf = (el) => {
     if (el instanceof HTMLElement) return el.innerText;
-    if (el instanceof SVGElement) {
-      const texts = el.localName === 'text' ? [el] : Array.from(el.querySelectorAll('text'));
-      return texts.map((t) => t.textContent).join(' ');
-    }
+    if (el instanceof SVGElement) return svgText(el);
     return el.textContent || '';
   };
 
@@ -185,14 +224,15 @@
       if (!parent || !shows(parent)) return '';
       const style = getComputedStyle(parent);
       if (style.visibility !== 'visible') return '';
-      return style.whiteSpace.startsWith('pre') ? keep(node.nodeValue) : node.nodeValue.replace(/\s+/g, ' ');
+      return spaced(node.nodeValue, style);
     }
     if (node.nodeType !== Node.ELEMENT_NODE || noText.has(node.localName)) return '';
-    if (node.localName === 'br') return '\n';
+    if (node.localName === 'br') return getComputedStyle(node).display === 'none' ? '' : '\n';
     if (!shows(node)) return '';
-    if (isSlot(node)) return node.assignedNodes({ flatten: true }).map(rendered).join('');
     let t;
-    if (!hasShadow(node) && getComputedStyle(node).display !== 'contents') {
+    if (isSlot(node)) {
+      t = node.assignedNodes({ flatten: true }).map(rendered).join('');
+    } else if (!hasShadow(node) && getComputedStyle(node).display !== 'contents') {
       t = keep(leaf(node));
     } else {
       const children = node.shadowRoot ? node.shadowRoot.childNodes : node.childNodes;

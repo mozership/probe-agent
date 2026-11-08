@@ -512,6 +512,20 @@ document.getElementById('f').attachShadow({mode: 'open'}).innerHTML = '<div><slo
     more</pre></main>
 <script>document.getElementById('h').attachShadow({mode: 'open'}).innerHTML = '<span>Shadow header</span>'</script>`,
 	}
+	// Each of these is a host whose shadow root holds the text, so that the
+	// text is read from the flat tree.
+	shadow := func(style, html, light string) string {
+		return `<div id="h" style="` + style + `">` + light + `</div>
+<script>document.getElementById('h').attachShadow({mode: 'open'}).innerHTML = ` + "`" + html + "`" + `</script>`
+	}
+	pages["pre-line"] = shadow("white-space: pre-line", "one   two\n   three", "")
+	pages["break-spaces"] = shadow("white-space: break-spaces", "a   b", "")
+	// A character of the private use area is the page's own, as an icon
+	// font's is.
+	pages["private-use"] = shadow("", "icon \\uE000\\uE001\\uE002\\uE003 here", "")
+	pages["svg"] = shadow("", `<svg width="200" height="40"><text y="20">Shown svg</text><text y="20" display="none">Hidden svg</text><text y="30">A<tspan visibility="hidden">hidden</tspan>B</text></svg>`, "")
+	pages["br"] = shadow("", `One<br style="display: none">Two`, "")
+	pages["block-slot"] = shadow("", `Before<slot style="display: block"></slot>After`, "Middle")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "<!doctype html><title>Flat</title><body>"+pages[strings.TrimPrefix(r.URL.Path, "/")]+"</body>")
@@ -541,6 +555,19 @@ document.getElementById('f').attachShadow({mode: 'open'}).innerHTML = '<div><slo
 	}
 	if text := textOf("contents"); text != "Visible\n\nContents child\nFallback words\nLight slot" {
 		t.Errorf("display: contents: %q", text)
+	}
+	for name, want := range map[string]string{
+		// pre-line runs spaces together, and keeps line breaks.
+		"pre-line":     "one two\nthree",
+		"break-spaces": "a   b",
+		"private-use":  "icon \ue000\ue001\ue002\ue003 here",
+		"svg":          "Shown svg AB",
+		"br":           "OneTwo",
+		"block-slot":   "Before\nMiddle\nAfter",
+	} {
+		if text := textOf(name); text != want {
+			t.Errorf("%s: %q, want %q", name, text, want)
+		}
 	}
 	// main comes first, once, with its blank lines and its preformatted text.
 	if text := textOf("main"); text != "First para\n\nSecond para\n\n  indented\n    more\n\nShadow header\n" {
