@@ -491,3 +491,80 @@ func TestChrome_ReadsShadowRoots(t *testing.T) {
 		t.Errorf("located %q, %v; want %q", again, err, ref)
 	}
 }
+
+// TestChrome_ReadsTheFlatTree reads text where a shadow root decides what
+// shows: through a slot, an element with display: contents, or a slot's own
+// children, and where a page has a shadow root outside main.
+func TestChrome_ReadsTheFlatTree(t *testing.T) {
+	c := startChrome(t)
+	pages := map[string]string{
+		// A slot hidden with visibility hides the text slotted into it, which
+		// takes its style from the slot rather than from the host.
+		"hidden-slot": `<main><p>Visible</p></main><div id="h">Hidden bare text</div>
+<script>document.getElementById('h').attachShadow({mode: 'open'}).innerHTML = '<slot style="visibility: hidden"></slot>'</script>`,
+		"none-slot": `<main><p>Visible</p></main><div id="h">Hidden bare text</div>
+<script>document.getElementById('h').attachShadow({mode: 'open'}).innerHTML = '<div>Shown <slot style="display: none"></slot></div>'</script>`,
+		// Neither an element with display: contents nor a slot has a box.
+		"contents": `<main><p>Visible</p></main><div id="h"></div><div id="f"></div><div><slot>Light slot</slot></div>
+<script>document.getElementById('h').attachShadow({mode: 'open'}).innerHTML = '<div style="display: contents"><p>Contents child</p></div>';
+document.getElementById('f').attachShadow({mode: 'open'}).innerHTML = '<div><slot>Fallback words</slot></div>'</script>`,
+		"main": `<header><div id="h"></div></header><main><p>First para</p><p>Second para</p><pre>  indented
+    more</pre></main>
+<script>document.getElementById('h').attachShadow({mode: 'open'}).innerHTML = '<span>Shadow header</span>'</script>`,
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "<!doctype html><title>Flat</title><body>"+pages[strings.TrimPrefix(r.URL.Path, "/")]+"</body>")
+	})
+	s := httptest.NewServer(mux)
+	t.Cleanup(s.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	textOf := func(name string) string {
+		t.Helper()
+		if err := c.Navigate(ctx, s.URL+"/"+name); err != nil {
+			t.Fatal(err)
+		}
+		text, err := c.Text(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return text
+	}
+
+	if text := textOf("hidden-slot"); text != "Visible" {
+		t.Errorf("hidden slot: %q", text)
+	}
+	if text := textOf("none-slot"); text != "Visible\n\nShown" {
+		t.Errorf("slot not displayed: %q", text)
+	}
+	if text := textOf("contents"); text != "Visible\n\nContents child\nFallback words\nLight slot" {
+		t.Errorf("display: contents: %q", text)
+	}
+	// main comes first, once, with its blank lines and its preformatted text.
+	if text := textOf("main"); text != "First para\n\nSecond para\n\n  indented\n    more\n\nShadow header\n" {
+		t.Errorf("main: %q", text)
+	}
+}
+
+// TestChrome_NamesByAHiddenLabel names a field by a label that is hidden,
+// as innerText did.
+func TestChrome_NamesByAHiddenLabel(t *testing.T) {
+	c := startChrome(t)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `<!doctype html><title>Label</title><main><label hidden for="e">Email</label><input id="e"></main>`)
+	}))
+	t.Cleanup(s.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := c.Navigate(ctx, s.URL); err != nil {
+		t.Fatal(err)
+	}
+	read, err := c.Read(ctx, "interactive", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refOf(t, read, `textbox "Email"`)
+}
