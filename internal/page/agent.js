@@ -108,16 +108,166 @@
   const clip = (s, n) => { s = squash(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const quote = (s) => JSON.stringify(s);
 
+  // each calls f on the elements of root in the order of the page, those of
+  // an open shadow root right after its host. A closed shadow root is out of
+  // reach of a script, so its elements are not seen.
+  const each = (root, f) => {
+    for (const el of root.querySelectorAll('*')) {
+      f(el);
+      if (el.shadowRoot) each(el.shadowRoot, f);
+    }
+  };
+
+  // inShadow tells whether node is in a shadow root. A slot does its work
+  // only there; elsewhere it is an element like any other.
+  const inShadow = (node) => node.getRootNode() instanceof ShadowRoot;
+  const isSlot = (el) => el.localName === 'slot' && inShadow(el);
+
+  // hasShadow tells whether el, or an element under it, has an open shadow
+  // root or is a slot of one: innerText leaves out the text of a shadow
+  // root, and that of the nodes slotted into a slot.
+  const hasShadow = (el) => {
+    if (el.shadowRoot || isSlot(el)) return true;
+    for (const n of el.querySelectorAll('*')) if (n.shadowRoot || isSlot(n)) return true;
+    return false;
+  };
+
+  const box = (el) => Boolean(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  const inline = (el) => /^(inline|contents|ruby)/.test(getComputedStyle(el).display);
+  // localName, as the title of an SVG is "title" and not "TITLE".
+  const noText = new Set(['script', 'style', 'template', 'noscript', 'head', 'title', 'desc']);
+
+  // parentOf gives the element a node takes its style from in the flat
+  // tree: the slot it is slotted into, its parent, or, at the top of a
+  // shadow root, the host.
+  const parentOf = (node) => node.assignedSlot || node.parentElement || (node.parentNode && node.parentNode.host) || null;
+
+  // shows tells whether el is rendered. An element with display: contents,
+  // as a slot has, has no box of its own but shows what it holds, unless
+  // what holds it is not shown. An element out of the flat tree, as a child
+  // of a host that no slot shows, has no display, and so no box.
+  const shows = (el) => {
+    const display = getComputedStyle(el).display;
+    if (display === 'none') return false;
+    if (display !== 'contents') return box(el);
+    const parent = parentOf(el);
+    return parent ? shows(parent) : true;
+  };
+
+  // The spaces, tabs and line breaks that need no tidying, those of
+  // innerText and of preformatted text, are kept apart as characters of
+  // the private use area while the lines of a text are tidied, and put back
+  // after. Those characters of the page itself are escaped first, so that
+  // they come back as they were.
+  const esc = (s) => s.replace(/[\uE000-\uE003]/g, (c) => '\uE003' + 'abcd'[c.charCodeAt(0) - 0xE000]);
+  const keep = (s) => esc(s).replace(/ /g, '\uE000').replace(/\t/g, '\uE001').replace(/\n/g, '\uE002');
+  const unkeep = (s) => s.replace(/\uE000/g, ' ').replace(/\uE001/g, '\t').replace(/\uE002/g, '\n')
+    .replace(/\uE003([abcd])/g, (_, c) => String.fromCharCode(0xE000 + 'abcd'.indexOf(c)));
+  // tidy puts the lines of a text together the way innerText would: spaces
+  // run together, trimmed, and the empty lines dropped, what is kept aside.
+  const tidy = (s) => unkeep(s.split('\n').map((l) => l.replace(/[ \t]+/g, ' ').trim()).filter((l) => l !== '').join('\n'));
+
+  // spaced gives the text of a text node as its style shows it: spaces and
+  // line breaks kept, line breaks alone kept, as pre-line does, or both run
+  // together.
+  const spaced = (s, style) => {
+    const collapse = style.whiteSpaceCollapse ||
+      ({ pre: 'preserve', 'pre-wrap': 'preserve', 'break-spaces': 'break-spaces', 'pre-line': 'preserve-breaks' })[style.whiteSpace] ||
+      'collapse';
+    if (collapse === 'preserve' || collapse === 'break-spaces' || collapse === 'preserve-spaces') return keep(s);
+    if (collapse === 'preserve-breaks') {
+      return esc(s).replace(/[ \t]*\n[ \t]*/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n/g, '\uE002');
+    }
+    return esc(s).replace(/\s+/g, ' ');
+  };
+
+  // svgText gives the text an SVG shows: that of its text elements, without
+  // those not displayed, the parts hidden, or its title.
+  const svgText = (el) => {
+    const parts = [];
+    const walk = (node, into) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (into && getComputedStyle(node.parentElement).visibility === 'visible') into.push(node.nodeValue);
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE || noText.has(node.localName)) return;
+      if (getComputedStyle(node).display === 'none') return;
+      if (!into && node.localName === 'text') {
+        const text = [];
+        for (const child of node.childNodes) walk(child, text);
+        const t = squash(text.join(''));
+        if (t) parts.push(t);
+        return;
+      }
+      for (const child of node.childNodes) walk(child, into);
+    };
+    walk(el, null);
+    return parts.join(' ');
+  };
+
+  // leaf gives the visible text of an element with no shadow root or slot
+  // under it. An SVG has no innerText.
+  const leaf = (el) => {
+    if (el instanceof HTMLElement) return el.innerText;
+    if (el instanceof SVGElement) return svgText(el);
+    return el.textContent || '';
+  };
+
+  // rendered gives the text of a node of the flat tree, with a line break
+  // around each block, as innerText puts them: an element's innerText when
+  // no shadow root or slot is under it, and otherwise the text of the
+  // children of its shadow root, or of its own, and of the nodes slotted
+  // into it, or a slot's own children where nothing is.
+  const rendered = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const parent = parentOf(node);
+      if (!parent || !shows(parent)) return '';
+      const style = getComputedStyle(parent);
+      if (style.visibility !== 'visible') return '';
+      return spaced(node.nodeValue, style);
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE || noText.has(node.localName)) return '';
+    if (node.localName === 'br') return getComputedStyle(node).display === 'none' ? '' : '\n';
+    if (!shows(node)) return '';
+    let t;
+    if (isSlot(node)) {
+      t = node.assignedNodes({ flatten: true }).map(rendered).join('');
+    } else if (!hasShadow(node) && getComputedStyle(node).display !== 'contents') {
+      t = keep(leaf(node));
+    } else {
+      const children = node.shadowRoot ? node.shadowRoot.childNodes : node.childNodes;
+      t = Array.from(children, rendered).join('');
+    }
+    return inline(node) ? t : '\n' + t + '\n';
+  };
+
+  // textOf gives the visible text of el, as innerText does, and the text of
+  // the open shadow roots in it, which innerText leaves out. With flat, it
+  // reads el from the flat tree even when innerText would do, so that its
+  // text is put together as that of an element around it is.
+  const textOf = (el, flat = hasShadow(el)) => {
+    if (!shows(el)) return '';
+    if (!flat && getComputedStyle(el).display !== 'contents') return leaf(el);
+    return tidy(rendered(el));
+  };
+
   const nameOf = (el, role) => {
     const label = el.getAttribute('aria-label');
     if (label) return label;
     const by = el.getAttribute('aria-labelledby');
     if (by) {
-      const t = by.split(/\s+/).map((id) => document.getElementById(id)?.innerText || '').join(' ');
+      // The ids are looked up where el is, which is a shadow root for an
+      // element in one. A label may be hidden, and still names el.
+      const root = el.getRootNode();
+      const t = by.split(/\s+/).map((id) => {
+        const l = root.getElementById ? root.getElementById(id) : document.getElementById(id);
+        return l ? textOf(l) || l.textContent : '';
+      }).join(' ');
       if (squash(t)) return t;
     }
     if (el.labels && el.labels.length) {
-      const t = Array.from(el.labels).map((l) => l.innerText).join(' ');
+      // A label may be hidden, and still names el.
+      const t = Array.from(el.labels).map((l) => textOf(l) || l.textContent).join(' ');
       if (squash(t)) return t;
     }
     if (el.tagName === 'INPUT' && ['button', 'submit', 'reset'].includes(el.type)) return el.value || el.type;
@@ -125,7 +275,7 @@
     if (fieldRoles.has(role)) {
       return el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name') || '';
     }
-    return squash(el.innerText || el.textContent) || el.getAttribute('title') || '';
+    return squash(textOf(el) || el.textContent) || el.getAttribute('title') || '';
   };
 
   const describe = (el, role) => {
@@ -283,26 +433,35 @@
     throw new Error(ref + ' is not a form field');
   };
 
-  // text returns the text the page shows, its main content first.
+  // first returns the first element that matches css, in the document or in
+  // an open shadow root, or null.
+  const first = (css) => {
+    let found = null;
+    each(document, (el) => { if (!found && el.matches(css)) found = el; });
+    return found;
+  };
+
+  // text returns the text the page shows, its main content first, the text
+  // of the open shadow roots included.
   const text = () => {
-    const main = document.querySelector('main, [role=main]');
-    const body = document.body ? document.body.innerText : '';
+    if (!document.body) return '';
+    const flat = hasShadow(document.body);
+    const body = textOf(document.body, flat);
+    const main = first('main, [role=main]');
     if (!main) return body;
-    const rest = body.replace(main.innerText, '');
-    return main.innerText + (squash(rest) ? '\n\n' + rest : '');
+    // main is read as the body is, so that its text is found in the body's.
+    const inMain = textOf(main, flat);
+    const rest = body.replace(inMain, '').replace(/^\s*\n/, '');
+    return inMain + (squash(rest) ? '\n\n' + rest : '');
   };
 
   // The elements shown with role and name, in the order of the document,
   // shadow roots included.
   const withRoleAndName = (role, name) => {
     const out = [];
-    const walk = (root) => {
-      for (const el of root.querySelectorAll('*')) {
-        if (roleOf(el) === role && clip(nameOf(el, role), 200) === name && shown(el)) out.push(el);
-        if (el.shadowRoot) walk(el.shadowRoot);
-      }
-    };
-    walk(document);
+    each(document, (el) => {
+      if (roleOf(el) === role && clip(nameOf(el, role), 200) === name && shown(el)) out.push(el);
+    });
     return out;
   };
 
@@ -342,13 +501,14 @@
   };
 
   // alerts returns the texts of the alerts the page shows, which say what
-  // just happened.
+  // just happened, those in open shadow roots included.
   const alerts = () => {
     const out = [];
-    for (const el of document.querySelectorAll('[role=alert], [role=alertdialog]')) {
-      const t = squash(el.innerText);
+    each(document, (el) => {
+      if (!el.matches('[role=alert], [role=alertdialog]')) return;
+      const t = squash(textOf(el));
       if (t && shown(el)) out.push(clip(t, 300));
-    }
+    });
     return out;
   };
 
