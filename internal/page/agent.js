@@ -123,14 +123,30 @@
   const inShadow = (node) => node.getRootNode() instanceof ShadowRoot;
   const isSlot = (el) => el.localName === 'slot' && inShadow(el);
 
+  // under tells what el and the elements under it hold that innerText
+  // does not read as the flat tree shows it: an open shadow root or a slot
+  // of one (SHADOW), and a paragraph (PARAGRAPH). It is worked out once for
+  // each element, from what its children hold, and kept for the call, as
+  // the script is run anew for each.
+  const SHADOW = 1;
+  const PARAGRAPH = 2;
+  const held = new WeakMap();
+  const under = (el) => {
+    let m = held.get(el);
+    if (m !== undefined) return m;
+    m = (el.shadowRoot || isSlot(el) ? SHADOW : 0) | (el.localName === 'p' && el instanceof HTMLElement ? PARAGRAPH : 0);
+    for (const child of el.children) m |= under(child);
+    held.set(el, m);
+    return m;
+  };
+
   // hasShadow tells whether el, or an element under it, has an open shadow
   // root or is a slot of one: innerText leaves out the text of a shadow
   // root, and that of the nodes slotted into a slot.
-  const hasShadow = (el) => {
-    if (el.shadowRoot || isSlot(el)) return true;
-    for (const n of el.querySelectorAll('*')) if (n.shadowRoot || isSlot(n)) return true;
-    return false;
-  };
+  const hasShadow = (el) => (under(el) & SHADOW) !== 0;
+
+  // holdsParagraph tells whether a paragraph is under el.
+  const holdsParagraph = (el) => Array.prototype.some.call(el.children, (child) => (under(child) & PARAGRAPH) !== 0);
 
   const box = (el) => Boolean(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
   const inline = (el) => /^(inline|contents|ruby)/.test(getComputedStyle(el).display);
@@ -154,40 +170,80 @@
     return parent ? shows(parent) : true;
   };
 
-  // The spaces, tabs and line breaks that need no tidying, those of
-  // innerText and of preformatted text, are kept apart as characters of
-  // the private use area while the lines of a text are tidied, and put back
-  // after. Those characters of the page itself are escaped first, so that
-  // they come back as they were.
-  const esc = (s) => s.replace(/[\uE000-\uE003]/g, (c) => '\uE003' + 'abcd'[c.charCodeAt(0) - 0xE000]);
+  // Text read from the flat tree is put together the way innerText puts
+  // it, with characters of the private use area marking what tidy is to
+  // leave or to make into line breaks: a space, a tab and a line break that
+  // are kept as they are (U+E000 to U+E002), a line break of a <br>
+  // (U+E004), and the line breaks around a block (U+E005) and around a
+  // paragraph, which a blank line parts from what is around it (U+E006).
+  // Those characters of the page itself are escaped first, with U+E003, so
+  // that they come back as they were.
+  const marks = 'abcdefg';
+  const esc = (s) => s.replace(/[\uE000-\uE006]/g, (c) => '\uE003' + marks[c.charCodeAt(0) - 0xE000]);
   const keep = (s) => esc(s).replace(/ /g, '\uE000').replace(/\t/g, '\uE001').replace(/\n/g, '\uE002');
-  const unkeep = (s) => s.replace(/\uE000/g, ' ').replace(/\uE001/g, '\t').replace(/\uE002/g, '\n')
-    .replace(/\uE003([abcd])/g, (_, c) => String.fromCharCode(0xE000 + 'abcd'.indexOf(c)));
-  // tidy puts the lines of a text together the way innerText would: spaces
-  // run together, trimmed, and the empty lines dropped, what is kept aside.
-  const tidy = (s) => unkeep(s.split('\n').map((l) => l.replace(/[ \t]+/g, ' ').trim()).filter((l) => l !== '').join('\n'));
+  const unkeep = (s) => s.replace(/\uE000/g, ' ').replace(/\uE001/g, '\t').replace(/[\uE002\uE004]/g, '\n')
+    .replace(/\uE003([a-g])/g, (_, c) => String.fromCharCode(0xE000 + marks.indexOf(c)));
+
+  // tidy puts a text read from the flat tree together: the spaces of the
+  // texts run together and dropped at the ends of lines, the line breaks
+  // around blocks run together, as many as the most any of them asks for,
+  // and dropped at the ends, and what is kept left as it is.
+  const tidy = (s) => unkeep(s
+    .replace(/ +/g, ' ')
+    .replace(/ ?([\uE004-\uE006]) ?/g, '$1')
+    .replace(/[\uE005\uE006]+/g, (run) => (run.includes('\uE006') ? '\n\n' : '\n'))
+    .replace(/^\n+|\n+$/g, '')
+    .replace(/^ | $/g, ''));
+
+  // collapseOf gives how a style treats the white space of a text.
+  const collapseOf = (style) => style.whiteSpaceCollapse ||
+    ({ pre: 'preserve', 'pre-wrap': 'preserve', 'break-spaces': 'break-spaces', 'pre-line': 'preserve-breaks' })[style.whiteSpace] ||
+    'collapse';
+
+  // transformed gives s with the text-transform of style, as innerText
+  // gives it. A word is taken to start where s does.
+  const transformed = (s, style) => {
+    switch (style.textTransform) {
+      case 'uppercase': return s.toUpperCase();
+      case 'lowercase': return s.toLowerCase();
+      case 'capitalize': return s.replace(/(^|[^\p{L}\p{N}'’])(\p{L})/gu, (_, before, letter) => before + letter.toUpperCase());
+      default: return s;
+    }
+  };
 
   // spaced gives the text of a text node as its style shows it: spaces and
   // line breaks kept, line breaks alone kept, as pre-line does, or both run
-  // together.
+  // together. Only the white space of CSS runs together, not a no-break
+  // space.
   const spaced = (s, style) => {
-    const collapse = style.whiteSpaceCollapse ||
-      ({ pre: 'preserve', 'pre-wrap': 'preserve', 'break-spaces': 'break-spaces', 'pre-line': 'preserve-breaks' })[style.whiteSpace] ||
-      'collapse';
+    s = transformed(s, style);
+    const collapse = collapseOf(style);
     if (collapse === 'preserve' || collapse === 'break-spaces' || collapse === 'preserve-spaces') return keep(s);
     if (collapse === 'preserve-breaks') {
-      return esc(s).replace(/[ \t]*\n[ \t]*/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n/g, '\uE002');
+      return esc(s).replace(/[ \t\r\f]*\n[ \t\r\f]*/g, '\n').replace(/[ \t\r\f]+/g, ' ').replace(/\n/g, '\uE002');
     }
-    return esc(s).replace(/\s+/g, ' ');
+    return esc(s).replace(/[ \t\n\r\f]+/g, ' ');
   };
 
-  // svgText gives the text an SVG shows: that of its text elements, without
-  // those not displayed, the parts hidden, or its title.
+  // kept gives the innerText of an element to put among the texts around
+  // it: kept as it is, but for the spaces at its ends, which run together
+  // with those around it as they do on the screen, unless its style keeps
+  // them.
+  const kept = (t, style) => {
+    if (collapseOf(style) !== 'collapse') return keep(t);
+    const [, before, middle, after] = /^( *)([\s\S]*?)( *)$/.exec(t);
+    return before + keep(middle) + after;
+  };
+
+  // svgText gives the text an SVG shows: that of its text elements, as
+  // their style shows it, without those not displayed, the parts hidden, or
+  // its title.
   const svgText = (el) => {
     const parts = [];
     const walk = (node, into) => {
       if (node.nodeType === Node.TEXT_NODE) {
-        if (into && getComputedStyle(node.parentElement).visibility === 'visible') into.push(node.nodeValue);
+        const style = getComputedStyle(node.parentElement);
+        if (into && style.visibility === 'visible') into.push(spaced(node.nodeValue, style));
         return;
       }
       if (node.nodeType !== Node.ELEMENT_NODE || noText.has(node.localName)) return;
@@ -195,7 +251,7 @@
       if (!into && node.localName === 'text') {
         const text = [];
         for (const child of node.childNodes) walk(child, text);
-        const t = squash(text.join(''));
+        const t = tidy(text.join(''));
         if (t) parts.push(t);
         return;
       }
@@ -213,11 +269,11 @@
     return el.textContent || '';
   };
 
-  // rendered gives the text of a node of the flat tree, with a line break
-  // around each block, as innerText puts them: an element's innerText when
-  // no shadow root or slot is under it, and otherwise the text of the
-  // children of its shadow root, or of its own, and of the nodes slotted
-  // into it, or a slot's own children where nothing is.
+  // rendered gives the text of a node of the flat tree, marked for tidy:
+  // an element's innerText when no shadow root or slot is under it, and
+  // otherwise the text of the children of its shadow root, or of its own,
+  // and of the nodes slotted into it, or a slot's own children where
+  // nothing is.
   const rendered = (node) => {
     if (node.nodeType === Node.TEXT_NODE) {
       const parent = parentOf(node);
@@ -227,18 +283,27 @@
       return spaced(node.nodeValue, style);
     }
     if (node.nodeType !== Node.ELEMENT_NODE || noText.has(node.localName)) return '';
-    if (node.localName === 'br') return getComputedStyle(node).display === 'none' ? '' : '\n';
+    if (node.localName === 'br') return getComputedStyle(node).display === 'none' ? '' : '\uE004';
     if (!shows(node)) return '';
     let t;
     if (isSlot(node)) {
-      t = node.assignedNodes({ flatten: true }).map(rendered).join('');
-    } else if (!hasShadow(node) && getComputedStyle(node).display !== 'contents') {
-      t = keep(leaf(node));
+      // A slot slotted into another is read as itself, so that its display
+      // counts.
+      const assigned = node.assignedNodes();
+      t = Array.from(assigned.length > 0 ? assigned : node.childNodes, rendered).join('');
+    } else if (!hasShadow(node) && getComputedStyle(node).display !== 'contents' && !holdsParagraph(node)) {
+      // The innerText of an element leaves out the blank line of a
+      // paragraph at its start or end, so one that holds a paragraph is read
+      // through.
+      t = kept(leaf(node), getComputedStyle(node));
     } else {
       const children = node.shadowRoot ? node.shadowRoot.childNodes : node.childNodes;
       t = Array.from(children, rendered).join('');
     }
-    return inline(node) ? t : '\n' + t + '\n';
+    // A paragraph is parted by a blank line whatever its display, as
+    // innerText parts it.
+    if (node.localName === 'p' && node instanceof HTMLElement) return '\uE006' + t + '\uE006';
+    return inline(node) ? t : '\uE005' + t + '\uE005';
   };
 
   // textOf gives the visible text of el, as innerText does, and the text of
@@ -451,7 +516,7 @@
     if (!main) return body;
     // main is read as the body is, so that its text is found in the body's.
     const inMain = textOf(main, flat);
-    const rest = body.replace(inMain, '').replace(/^\s*\n/, '');
+    const rest = body.replace(inMain, '').replace(/^\s*\n/, '').replace(/\n+$/, '');
     return inMain + (squash(rest) ? '\n\n' + rest : '');
   };
 

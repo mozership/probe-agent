@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -553,7 +554,7 @@ document.getElementById('f').attachShadow({mode: 'open'}).innerHTML = '<div><slo
 	if text := textOf("none-slot"); text != "Visible\n\nShown" {
 		t.Errorf("slot not displayed: %q", text)
 	}
-	if text := textOf("contents"); text != "Visible\n\nContents child\nFallback words\nLight slot" {
+	if text := textOf("contents"); text != "Visible\n\nContents child\n\nFallback words\nLight slot" {
 		t.Errorf("display: contents: %q", text)
 	}
 	for name, want := range map[string]string{
@@ -570,7 +571,7 @@ document.getElementById('f').attachShadow({mode: 'open'}).innerHTML = '<div><slo
 		}
 	}
 	// main comes first, once, with its blank lines and its preformatted text.
-	if text := textOf("main"); text != "First para\n\nSecond para\n\n  indented\n    more\n\nShadow header\n" {
+	if text := textOf("main"); text != "First para\n\nSecond para\n\n  indented\n    more\n\nShadow header" {
 		t.Errorf("main: %q", text)
 	}
 }
@@ -594,4 +595,71 @@ func TestChrome_NamesByAHiddenLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 	refOf(t, read, `textbox "Email"`)
+}
+
+// TestChrome_ReadsShadowTextAsInnerTextDoes reads markup in a shadow root,
+// and the same markup in the document, where innerText reads it, and wants
+// the two alike.
+func TestChrome_ReadsShadowTextAsInnerTextDoes(t *testing.T) {
+	c := startChrome(t)
+	cases := []struct {
+		name, style, markup string
+		// light is markup the document shows as the shadow root shows
+		// markup, where a slot has no like outside one.
+		light string
+	}{
+		{name: "paragraphs", markup: `<p style="margin: 0">x</p><p style="display: inline">y</p>z`},
+		{name: "blocks", markup: "<div>a<br></div><div>b</div>"},
+		{name: "a paragraph in a block", markup: "Before<div><p>Para</p></div>After"},
+		{name: "line breaks", markup: "One<br><br>Two"},
+		{name: "no-break spaces", markup: "a&nbsp;&nbsp;b <span>&nbsp;x</span>"},
+		{name: "spaces around an inline element", markup: "<span>Hello </span> world"},
+		{name: "uppercase", style: "text-transform: uppercase", markup: "Save draft"},
+		{name: "capitalize", style: "text-transform: capitalize", markup: "hello wide world"},
+		{name: "pre", markup: "<pre>  x\n    y</pre>"},
+		{name: "pre-line", style: "white-space: pre-line", markup: "one   two\n   three"},
+		{name: "break-spaces", style: "white-space: break-spaces", markup: "a   b"},
+		{name: "svg", markup: `<svg width="200" height="30"><text y="20" style="white-space: pre">a   b</text></svg>`},
+		{
+			name:   "nested slots",
+			markup: `Before<slot><slot style="display: block">Fallback</slot></slot>After`,
+			light:  "Before<div>Fallback</div>After",
+		},
+	}
+	mux := http.NewServeMux()
+	for i, tc := range cases {
+		light := tc.light
+		if light == "" {
+			light = tc.markup
+		}
+		mux.HandleFunc(fmt.Sprintf("/light/%d", i), func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, `<!doctype html><title>Light</title><div style="%s">%s</div>`, tc.style, light)
+		})
+		mux.HandleFunc(fmt.Sprintf("/shadow/%d", i), func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, `<!doctype html><title>Shadow</title><div id="h" style="%s"></div>
+<script>document.getElementById('h').attachShadow({mode: 'open'}).innerHTML = %s</script>`, tc.style, strconv.Quote(tc.markup))
+		})
+	}
+	s := httptest.NewServer(mux)
+	t.Cleanup(s.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	textOf := func(path string) string {
+		t.Helper()
+		if err := c.Navigate(ctx, s.URL+path); err != nil {
+			t.Fatal(err)
+		}
+		text, err := c.Text(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return text
+	}
+	for i, tc := range cases {
+		want := textOf(fmt.Sprintf("/light/%d", i))
+		if got := textOf(fmt.Sprintf("/shadow/%d", i)); got != want {
+			t.Errorf("%s: %q, innerText gives %q", tc.name, got, want)
+		}
+	}
 }
