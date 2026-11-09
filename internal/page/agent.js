@@ -275,7 +275,10 @@
       // counts.
       const assigned = node.assignedNodes();
       t = Array.from(assigned.length > 0 ? assigned : node.childNodes, rendered).join('');
-    } else if (!hasShadow(node) && getComputedStyle(node).display !== 'contents') {
+    } else if (!hasShadow(node) && getComputedStyle(node).display !== 'contents' && !node.querySelector('p')) {
+      // The innerText of an element leaves out the blank line of a
+      // paragraph at its start or end, so one that holds a paragraph is read
+      // through.
       t = kept(leaf(node), getComputedStyle(node));
     } else {
       const children = node.shadowRoot ? node.shadowRoot.childNodes : node.childNodes;
@@ -497,7 +500,7 @@
     if (!main) return body;
     // main is read as the body is, so that its text is found in the body's.
     const inMain = textOf(main, flat);
-    const rest = body.replace(inMain, '').replace(/^\s*\n/, '');
+    const rest = body.replace(inMain, '').replace(/^\s*\n/, '').replace(/\n+$/, '');
     return inMain + (squash(rest) ? '\n\n' + rest : '');
   };
 

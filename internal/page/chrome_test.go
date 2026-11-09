@@ -571,7 +571,7 @@ document.getElementById('f').attachShadow({mode: 'open'}).innerHTML = '<div><slo
 		}
 	}
 	// main comes first, once, with its blank lines and its preformatted text.
-	if text := textOf("main"); text != "First para\n\nSecond para\n\n  indented\n    more\n\nShadow header\n" {
+	if text := textOf("main"); text != "First para\n\nSecond para\n\n  indented\n    more\n\nShadow header" {
 		t.Errorf("main: %q", text)
 	}
 }
@@ -610,6 +610,7 @@ func TestChrome_ReadsShadowTextAsInnerTextDoes(t *testing.T) {
 	}{
 		{name: "paragraphs", markup: `<p style="margin: 0">x</p><p style="display: inline">y</p>z`},
 		{name: "blocks", markup: "<div>a<br></div><div>b</div>"},
+		{name: "a paragraph in a block", markup: "Before<div><p>Para</p></div>After"},
 		{name: "line breaks", markup: "One<br><br>Two"},
 		{name: "no-break spaces", markup: "a&nbsp;&nbsp;b <span>&nbsp;x</span>"},
 		{name: "spaces around an inline element", markup: "<span>Hello </span> world"},
