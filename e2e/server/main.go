@@ -41,7 +41,7 @@ input[type=text], input[type=email], input[type=password] { width: 100%; padding
 .error { color: #b00; border: 1px solid #b00; padding: .5rem; }
 </style></head>
 <body>
-<header><nav><a href="/">Acme Notes</a> · <a href="/signup">Sign up</a></nav></header>
+<header><nav><a href="/">Acme Notes</a> · {{if .SignedIn}}<a href="/account">Account</a>{{else}}<a href="/signup">Sign up</a>{{end}}</nav></header>
 <main>
 {{if eq .Page "home"}}
   <h1>Acme Notes</h1>
@@ -82,6 +82,9 @@ input[type=text], input[type=email], input[type=password] { width: 100%; padding
 type view struct {
 	Page, Title, Error, Name, Email string
 	Saved                           bool
+	// SignedIn shows the link to the account in the header in place of
+	// the one to sign up.
+	SignedIn bool
 }
 
 func (a *app) render(w http.ResponseWriter, status int, v view) {
@@ -97,18 +100,20 @@ func (a *app) home(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	a.render(w, 200, view{Page: "home", Title: "Home"})
+	_, signedIn := a.signedIn(r)
+	a.render(w, 200, view{Page: "home", Title: "Home", SignedIn: signedIn})
 }
 
 func (a *app) signup(w http.ResponseWriter, r *http.Request) {
+	_, signedIn := a.signedIn(r)
 	if r.Method != http.MethodPost {
-		a.render(w, 200, view{Page: "signup", Title: "Sign up"})
+		a.render(w, 200, view{Page: "signup", Title: "Sign up", SignedIn: signedIn})
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
 	password := r.FormValue("password")
-	v := view{Page: "signup", Title: "Sign up", Name: name, Email: email}
+	v := view{Page: "signup", Title: "Sign up", Name: name, Email: email, SignedIn: signedIn}
 
 	if strings.Contains(email, "+broken") {
 		log.Printf("sign-up of %s: failing as asked", email)
@@ -166,7 +171,7 @@ func (a *app) welcome(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/signup", http.StatusSeeOther)
 		return
 	}
-	a.render(w, 200, view{Page: "welcome", Title: "Welcome", Name: acc.Name, Email: acc.Email})
+	a.render(w, 200, view{Page: "welcome", Title: "Welcome", Name: acc.Name, Email: acc.Email, SignedIn: true})
 }
 
 // accountPage shows the account of the user signed in, and changes its
@@ -177,7 +182,7 @@ func (a *app) accountPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/signup", http.StatusSeeOther)
 		return
 	}
-	v := view{Page: "account", Title: "Account", Name: acc.Name, Email: acc.Email}
+	v := view{Page: "account", Title: "Account", Name: acc.Name, Email: acc.Email, SignedIn: true}
 	if r.Method == http.MethodPost {
 		name := strings.TrimSpace(r.FormValue("name"))
 		if name == "" {
