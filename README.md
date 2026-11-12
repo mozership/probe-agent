@@ -74,6 +74,7 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 | `persona` | String | Persona | - | Who the tester plays, in natural language: what they know, and how they go about things |
 | `goal` | String | Persona | - | What the persona sets out to do, in natural language |
 | `secrets` | Object | No | - | Values the model never sees, by name. Write them as `{secret:NAME}` in `task` or `persona`; see [Secrets](#secrets) |
+| `storage_state` | String | No | - | A file of cookies and localStorage the browser starts with, as the browser action's `save_storage_state` writes; see [Starting signed in](#starting-signed-in) |
 | `allow_hosts` | List or string | No | the host of `url` | The hosts the tester may open pages of: `host`, `host:port`, or `*.domain`. A list, or a string apart by commas |
 | `provider` | String | No | `anthropic` | `anthropic`, `openai`, `xai`, `gemini` or `sakura`; see [Models](#models) |
 | `model` | String | Not with `anthropic` | `claude-opus-5-5` with `anthropic` | The model's ID |
@@ -178,6 +179,55 @@ The recording is of the task, the expectation and the start URL; when one of the
 | `refresh` | no | a run that passed | |
 
 Commit the file, and run CI with `strict`, so that a recording that no longer matches fails the test rather than paying the tester on every run until someone records it again. Record it again with `auto` where someone looks at the change. A gap is not a change of the application: `strict` hands it to the tester too.
+
+## Starting signed in
+
+A test of what a signed-in user does need not have the tester sign in first. Sign in with a deterministic step of the [browser action](https://github.com/mozership/probe-browser), save the login with its `save_storage_state`, and name the file in `storage_state`: the agent's browser starts with its cookies, `HttpOnly` ones included, and its localStorage, and the tester begins at `url` signed in.
+
+```yaml
+actions:
+  browser: github.com/mozership/probe-browser@<commit SHA>
+  agent: github.com/mozership/probe-agent@<commit SHA>
+jobs:
+- name: orders
+  steps:
+  - name: Sign in
+    id: login
+    uses: browser
+    with:
+      actions:
+        - name: navigate
+          url: https://staging.example.com/login
+        - name: type
+          selector: "#email"
+          value: "{{vars.email}}"
+        - name: type
+          selector: "#password"
+          value: "{{vars.password}}"
+        - name: click
+          selector: "button[type='submit']"
+        - name: wait_visible
+          selector: "#dashboard"
+        - name: save_storage_state
+          id: state
+    test: res.code == 0
+    outputs:
+      state: res.filepaths.state
+
+  - name: A signed-in user cancels an order
+    uses: agent
+    with:
+      url: https://staging.example.com/orders
+      storage_state: "{{outputs.login.state}}"
+      task: Cancel the most recent order.
+      expect: The order shows as cancelled, and the list no longer offers to cancel it.
+    timeout: 5m
+    test: res.verdict == "pass"
+```
+
+The file has the shape of [Playwright's storage state](https://playwright.dev/docs/auth), so one Playwright saves serves too. Before the first page, the browser takes the cookies, and opens a page of each origin with items in it to write the localStorage there. Those pages are answered with an empty one inside the browser, so they reach no server, run none of the application's scripts, are not counted in `res.metrics`, and need not be in `allow_hosts`. A file that is missing or is not a storage state fails the step before the browser starts, as when the step that saves it failed.
+
+The model is not given the file: it sees only what the pages show. The cookies sign in as the user, so keep the file out of version control, and out of the files a CI run uploads. A login expires: save it in the same run, rather than committing one.
 
 ## Secrets
 

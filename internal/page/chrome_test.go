@@ -40,7 +40,7 @@ func startChrome(t *testing.T) *Chrome {
 	if testing.Short() {
 		t.Skip("starts Chrome")
 	}
-	c, err := Start(Options{Headless: true, Width: 1280, Height: 800})
+	c, err := Start(context.Background(), Options{Headless: true, Width: 1280, Height: 800})
 	if err != nil {
 		t.Skipf("no Chrome to start: %v", err)
 	}

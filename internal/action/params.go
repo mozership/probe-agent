@@ -44,7 +44,7 @@ const (
 
 // params are the keys the action takes in with.
 var params = []string{
-	"task", "expect", "persona", "goal", "url", "allow_hosts", "secrets",
+	"task", "expect", "persona", "goal", "url", "allow_hosts", "secrets", "storage_state",
 	"cache", "cache_mode",
 	"provider", "model", "effort", "base_url", "vision", "max_steps", "timeout",
 	"headless", "window_w", "window_h", "evidence_dir",
@@ -66,6 +66,10 @@ type req struct {
 	URL        string
 	AllowHosts []string
 	Secrets    map[string]string
+	// StorageState names a file of cookies and localStorage, as the
+	// browser action's save_storage_state writes, that the browser starts
+	// with.
+	StorageState string
 	// Provider is anthropic, or a provider of llm.Providers.
 	Provider    string
 	Model       string
@@ -135,6 +139,7 @@ func parse(with map[string]any) (req, error) {
 	str("effort", &r.Effort)
 	str("base_url", &r.BaseURL)
 	str("evidence_dir", &r.EvidenceDir)
+	str("storage_state", &r.StorageState)
 	str("cache", &r.Cache)
 	str("cache_mode", &r.CacheMode)
 	num("max_steps", &r.MaxSteps)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/go-hclog"
+	"github.com/mozership/probe-browser/storagestate"
 	"github.com/mozership/probe/actionrpc"
 
 	"github.com/mozership/probe-agent/internal/llm"
@@ -53,6 +54,15 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The storage state is read before the browser starts, so that a
+	// missing file, as when the step that writes it failed, fails the step
+	// at once.
+	var state *storagestate.State
+	if r.StorageState != "" {
+		if state, err = storagestate.Read(r.StorageState); err != nil {
+			return nil, fmt.Errorf("storage_state: %w", err)
+		}
+	}
 	var rec *scenario.Recording
 	if r.Cache != "" && r.CacheMode != cacheRefresh {
 		if rec, err = loadRecording(r.Cache); err != nil {
@@ -67,7 +77,7 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	chrome, err := page.Start(page.Options{Headless: r.Headless, Width: r.Width, Height: r.Height})
+	chrome, err := page.Start(a.ctx, page.Options{Headless: r.Headless, Width: r.Width, Height: r.Height, StorageState: state})
 	if err != nil {
 		return nil, err
 	}

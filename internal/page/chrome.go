@@ -16,6 +16,7 @@ import (
 	"github.com/chromedp/cdproto/network"
 	cdppage "github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
+	"github.com/mozership/probe-browser/storagestate"
 )
 
 //go:embed agent.js
@@ -52,6 +53,10 @@ type Options struct {
 	// Width and Height are of the viewport, in CSS pixels, which are the
 	// pixels of the screenshots and of the points the model clicks.
 	Width, Height int
+	// StorageState, when set, gives the browser its cookies and
+	// localStorage before the first page opens, as of a login another step
+	// saved.
+	StorageState *storagestate.State
 }
 
 // Chrome is a tab of a Chrome the agent started.
@@ -86,8 +91,9 @@ type request struct {
 }
 
 // Start starts Chrome with one tab, and records the console errors and
-// failed requests of its pages from then on.
-func Start(o Options) (*Chrome, error) {
+// failed requests of its pages from then on. Ending ctx while it starts
+// stops the browser; the browser outlives ctx once Start returns.
+func Start(ctx context.Context, o Options) (*Chrome, error) {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.DisableGPU,
 		// Containers usually need it, as for the browser action.
@@ -96,20 +102,35 @@ func Start(o Options) (*Chrome, error) {
 		chromedp.Flag("headless", o.Headless),
 	)
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
-	ctx, cancel := chromedp.NewContext(allocCtx)
+	tabCtx, cancel := chromedp.NewContext(allocCtx)
+	// The browser is stopped once: ctx can end it while Start, on an
+	// error, stops it too, and chromedp's cancel waits on the browser to
+	// close, which only one of two calls at once sees.
+	var once sync.Once
 	c := &Chrome{
-		ctx:      ctx,
-		cancel:   func() { cancel(); allocCancel() },
+		ctx:      tabCtx,
+		cancel:   func() { once.Do(func() { cancel(); allocCancel() }) },
 		requests: map[network.RequestID]request{},
 	}
 	// The browser lives as long as the context of the first call, which
-	// therefore has no deadline.
-	if err := chromedp.Do(ctx); err != nil {
+	// therefore has no deadline; ctx ends it only until it is set up.
+	stop := context.AfterFunc(ctx, c.cancel)
+	defer stop()
+	if err := chromedp.Do(tabCtx); err != nil {
 		c.cancel()
 		return nil, fmt.Errorf("starting Chrome: %w", err)
 	}
+	// The pages opened to write localStorage are answered inside the
+	// browser, so they are loaded before the requests are recorded. Like
+	// every action, loading is bounded, and ends with ctx.
+	if o.StorageState != nil {
+		if err := c.do(ctx, storagestate.Load(o.StorageState)); err != nil {
+			c.cancel()
+			return nil, fmt.Errorf("storage_state: %w", err)
+		}
+	}
 	c.record()
-	err := chromedp.Do(ctx,
+	err := c.do(ctx,
 		chromedp.EmulateViewport(int64(o.Width), int64(o.Height)),
 		chromedp.Func(func(ctx context.Context, _ *chromedp.Target) error {
 			if _, err := chromedp.Call(ctx, network.Enable, network.EnableParams{}); err != nil {
