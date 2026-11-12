@@ -52,6 +52,10 @@ type Options struct {
 	// Width and Height are of the viewport, in CSS pixels, which are the
 	// pixels of the screenshots and of the points the model clicks.
 	Width, Height int
+	// StorageState, when set, gives the browser its cookies and
+	// localStorage before the first page opens, as of a login another step
+	// saved.
+	StorageState *StorageState
 }
 
 // Chrome is a tab of a Chrome the agent started.
@@ -107,6 +111,14 @@ func Start(o Options) (*Chrome, error) {
 	if err := chromedp.Do(ctx); err != nil {
 		c.cancel()
 		return nil, fmt.Errorf("starting Chrome: %w", err)
+	}
+	// The pages opened to write localStorage are answered inside the
+	// browser, so they are loaded before the requests are recorded.
+	if o.StorageState != nil {
+		if err := chromedp.Do(ctx, loadStorageState(o.StorageState)); err != nil {
+			c.cancel()
+			return nil, err
+		}
 	}
 	c.record()
 	err := chromedp.Do(ctx,

@@ -53,6 +53,15 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The storage state is read before the browser starts, so that a
+	// missing file, as when the step that writes it failed, fails the step
+	// at once.
+	var state *page.StorageState
+	if r.StorageState != "" {
+		if state, err = page.ReadStorageState(r.StorageState); err != nil {
+			return nil, err
+		}
+	}
 	var rec *scenario.Recording
 	if r.Cache != "" && r.CacheMode != cacheRefresh {
 		if rec, err = loadRecording(r.Cache); err != nil {
@@ -67,7 +76,7 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	chrome, err := page.Start(page.Options{Headless: r.Headless, Width: r.Width, Height: r.Height})
+	chrome, err := page.Start(page.Options{Headless: r.Headless, Width: r.Width, Height: r.Height, StorageState: state})
 	if err != nil {
 		return nil, err
 	}

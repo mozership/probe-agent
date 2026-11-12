@@ -381,3 +381,29 @@ func TestResult_Cache(t *testing.T) {
 		t.Errorf("res.cache without a cache")
 	}
 }
+
+func TestParse_StorageState(t *testing.T) {
+	r, err := parse(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "storage_state": " /tmp/state.json "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.StorageState != "/tmp/state.json" {
+		t.Errorf("storage_state %q", r.StorageState)
+	}
+	if _, err := parse(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "storage_state": 1.0}); err == nil || !strings.Contains(err.Error(), "storage_state must be a string") {
+		t.Errorf("a number was taken: %v", err)
+	}
+}
+
+// TestRun_MissingStorageState fails the step before the browser starts, as
+// when the step that saves the login failed.
+func TestRun_MissingStorageState(t *testing.T) {
+	a := &Action{ctx: t.Context()}
+	_, err := a.run(map[string]any{
+		"task": "t", "expect": "e", "url": "http://a.test/",
+		"storage_state": filepath.Join(t.TempDir(), "missing.json"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "storage_state: open") {
+		t.Errorf("error %v, want the file refused", err)
+	}
+}
