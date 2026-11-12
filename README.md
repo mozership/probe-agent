@@ -225,7 +225,7 @@ jobs:
     test: res.verdict == "pass"
 ```
 
-The file has the shape of [Playwright's storage state](https://playwright.dev/docs/auth), so one Playwright saves serves too. Before the first page, the browser takes the cookies, and opens a page of each origin with items in it to write the localStorage there. Those pages are answered with an empty one inside the browser, so they reach no server, run none of the application's scripts, are not counted in `res.metrics`, and need not be in `allow_hosts`. A file that is missing or is not a storage state fails the step before the browser starts, as when the step that saves it failed.
+The file has the shape of [Playwright's storage state](https://playwright.dev/docs/auth), so one Playwright saves serves too. Before the first page, the browser takes the cookies, and opens a page of each origin with items in it to write the localStorage there. Those pages are answered with an empty one inside the browser, so they reach no server, run none of the application's scripts, are not counted in `res.metrics`, and need not be in `allow_hosts`. A file that is missing, or is not a storage state with a list of `cookies` and one of `origins`, empty or not, fails the step before the browser starts, as when the step that saves it failed, or when the file `save_passkeys` writes is given in its place.
 
 The model is not given the file: it sees only what the pages show. The cookies sign in as the user, so keep the file out of version control, and out of the files a CI run uploads. A login expires: save it in the same run, rather than committing one.
 
