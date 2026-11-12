@@ -16,6 +16,7 @@ import (
 	"github.com/chromedp/cdproto/network"
 	cdppage "github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
+	"github.com/mozership/probe-browser/storagestate"
 )
 
 //go:embed agent.js
@@ -55,7 +56,7 @@ type Options struct {
 	// StorageState, when set, gives the browser its cookies and
 	// localStorage before the first page opens, as of a login another step
 	// saved.
-	StorageState *StorageState
+	StorageState *storagestate.State
 }
 
 // Chrome is a tab of a Chrome the agent started.
@@ -115,9 +116,9 @@ func Start(o Options) (*Chrome, error) {
 	// The pages opened to write localStorage are answered inside the
 	// browser, so they are loaded before the requests are recorded.
 	if o.StorageState != nil {
-		if err := chromedp.Do(ctx, loadStorageState(o.StorageState)); err != nil {
+		if err := chromedp.Do(ctx, storagestate.Load(o.StorageState)); err != nil {
 			c.cancel()
-			return nil, err
+			return nil, fmt.Errorf("storage_state: %w", err)
 		}
 	}
 	c.record()

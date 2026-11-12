@@ -5,49 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mozership/probe-browser/storagestate"
 )
-
-func TestReadStorageState(t *testing.T) {
-	dir := t.TempDir()
-	good := filepath.Join(dir, "state.json")
-	// As the browser action and Playwright write it.
-	if err := os.WriteFile(good, []byte(`{
-  "cookies": [{"name": "sid", "value": "s-7", "domain": "localhost", "path": "/", "expires": -1, "httpOnly": true, "secure": false, "sameSite": "Lax"}],
-  "origins": [{"origin": "http://localhost:8090", "localStorage": [{"name": "token", "value": "t-42"}]}]
-}
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	s, err := ReadStorageState(good)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(s.Cookies) != 1 || s.Cookies[0] != (StateCookie{Name: "sid", Value: "s-7", Domain: "localhost", Path: "/", Expires: -1, HTTPOnly: true, SameSite: "Lax"}) {
-		t.Errorf("cookies %+v", s.Cookies)
-	}
-	if len(s.Origins) != 1 || s.Origins[0].Origin != "http://localhost:8090" || s.Origins[0].LocalStorage[0] != (StateItem{Name: "token", Value: "t-42"}) {
-		t.Errorf("origins %+v", s.Origins)
-	}
-
-	bad := filepath.Join(dir, "bad.json")
-	if err := os.WriteFile(bad, []byte("cookies"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct{ path, want string }{
-		{filepath.Join(dir, "missing.json"), "storage_state: open"},
-		{bad, "is not a storage state"},
-	} {
-		if _, err := ReadStorageState(tc.path); err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("%s: error %v, want it to say %q", tc.path, err, tc.want)
-		}
-	}
-}
 
 // TestChrome_StartsWithAStorageState starts Chrome signed in: the server
 // gets the cookie, HttpOnly and of the session as it is, and the page reads
@@ -74,13 +38,13 @@ func TestChrome_StartsWithAStorageState(t *testing.T) {
 	}))
 	defer s.Close()
 
-	state := &StorageState{
-		Cookies: []StateCookie{
+	state := &storagestate.State{
+		Cookies: []storagestate.Cookie{
 			{Name: "sid", Value: "s-7", Domain: "127.0.0.1", Path: "/", Expires: -1, HTTPOnly: true, SameSite: "Lax"},
 			{Name: "later", Value: "yes", Domain: "127.0.0.1", Path: "/", Expires: float64(time.Now().Add(time.Hour).Unix())},
 		},
-		Origins: []StateOrigin{
-			{Origin: s.URL, LocalStorage: []StateItem{{Name: "token", Value: "t-42"}}},
+		Origins: []storagestate.Origin{
+			{Origin: s.URL, LocalStorage: []storagestate.Item{{Name: "token", Value: "t-42"}}},
 			{Origin: "http://other.test", LocalStorage: nil},
 		},
 	}
@@ -126,7 +90,7 @@ func TestChrome_StartsWithABadStorageState(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts Chrome")
 	}
-	state := &StorageState{Cookies: []StateCookie{{Name: "sid", Value: "s-7"}}}
+	state := &storagestate.State{Cookies: []storagestate.Cookie{{Name: "sid", Value: "s-7"}}}
 	c, err := Start(Options{Headless: true, Width: 1280, Height: 800, StorageState: state})
 	if err == nil {
 		c.Close()
