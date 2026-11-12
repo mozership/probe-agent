@@ -8,7 +8,7 @@ require (
 	github.com/chromedp/chromedp v0.19.1
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/mozership/probe v1.30.0
-	github.com/mozership/probe-browser v0.6.0
+	github.com/mozership/probe-browser v0.6.1
 )
 
 require (

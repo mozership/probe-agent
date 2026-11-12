@@ -407,3 +407,18 @@ func TestRun_MissingStorageState(t *testing.T) {
 		t.Errorf("error %v, want the file refused", err)
 	}
 }
+
+// TestRun_StorageStateOfAnotherShape fails the step before the browser
+// starts, rather than starting it signed out, as for the file save_passkeys
+// writes given in place of the one save_storage_state writes.
+func TestRun_StorageStateOfAnotherShape(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "passkeys.json")
+	if err := os.WriteFile(path, []byte(`{"passkeys": []}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := &Action{ctx: t.Context()}
+	_, err := a.run(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "storage_state": path})
+	if err == nil || !strings.Contains(err.Error(), "storage_state: "+path+" is not a storage state: it has no list of cookies") {
+		t.Errorf("error %v, want the file refused", err)
+	}
+}
