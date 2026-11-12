@@ -91,3 +91,68 @@ func TestSignUp_Refusals(t *testing.T) {
 		t.Errorf("a +broken email got %d; want 500", res.StatusCode)
 	}
 }
+
+func TestAccount(t *testing.T) {
+	s := httptest.NewServer(newMux())
+	defer s.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &http.Client{Jar: jar}
+
+	// Signed out, the account page sends to the sign-up.
+	res, err := c.Get(s.URL + "/account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.Request.URL.Path != "/signup" {
+		t.Errorf("signed out, /account went to %s; want /signup", res.Request.URL.Path)
+	}
+
+	form := url.Values{"name": {"Dave"}, "email": {"dave@example.com"}, "password": {"longenough"}, "confirm": {"longenough"}, "terms": {"yes"}}
+	res, err = c.PostForm(s.URL+"/signup", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+
+	res, err = c.Get(s.URL + "/account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || !strings.Contains(string(body), "Signed in as Dave (dave@example.com)") {
+		t.Fatalf("%d %s", res.StatusCode, body)
+	}
+
+	res, err = c.PostForm(s.URL+"/account", url.Values{"name": {" "}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 422 || !strings.Contains(string(body), "Enter a name.") {
+		t.Errorf("an empty name: %d %s", res.StatusCode, body)
+	}
+
+	res, err = c.PostForm(s.URL+"/account", url.Values{"name": {"Dave Renamed"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || !strings.Contains(string(body), "Your name is saved.") || !strings.Contains(string(body), "Signed in as Dave Renamed") {
+		t.Errorf("%d %s", res.StatusCode, body)
+	}
+
+	res, err = c.Get(s.URL + "/api/users?email=dave@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	json.NewDecoder(res.Body).Decode(&got)
+	res.Body.Close()
+	if got["name"] != "Dave Renamed" {
+		t.Errorf("/api/users = %v", got)
+	}
+}
