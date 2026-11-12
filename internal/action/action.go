@@ -77,7 +77,7 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	chrome, err := page.Start(page.Options{Headless: r.Headless, Width: r.Width, Height: r.Height, StorageState: state})
+	chrome, err := page.Start(a.ctx, page.Options{Headless: r.Headless, Width: r.Width, Height: r.Height, StorageState: state})
 	if err != nil {
 		return nil, err
 	}

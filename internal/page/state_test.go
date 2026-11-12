@@ -48,9 +48,12 @@ func TestChrome_StartsWithAStorageState(t *testing.T) {
 			{Origin: "http://other.test", LocalStorage: nil},
 		},
 	}
-	c, err := Start(Options{Headless: true, Width: 1280, Height: 800, StorageState: state})
-	if err != nil {
+	c, err := Start(context.Background(), Options{Headless: true, Width: 1280, Height: 800, StorageState: state})
+	if err != nil && strings.Contains(err.Error(), "starting Chrome") {
 		t.Skipf("no Chrome to start: %v", err)
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 	defer c.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -91,7 +94,7 @@ func TestChrome_StartsWithABadStorageState(t *testing.T) {
 		t.Skip("starts Chrome")
 	}
 	state := &storagestate.State{Cookies: []storagestate.Cookie{{Name: "sid", Value: "s-7"}}}
-	c, err := Start(Options{Headless: true, Width: 1280, Height: 800, StorageState: state})
+	c, err := Start(context.Background(), Options{Headless: true, Width: 1280, Height: 800, StorageState: state})
 	if err == nil {
 		c.Close()
 		t.Fatal("a cookie of no domain was taken")
@@ -101,5 +104,33 @@ func TestChrome_StartsWithABadStorageState(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "storage_state") {
 		t.Errorf("error %v, want it to name storage_state", err)
+	}
+}
+
+// TestStart_EndsWithItsContext stops a start whose context ends, as when
+// Probe stops the action while the state loads, and keeps a browser that
+// started running after its context ends.
+func TestStart_EndsWithItsContext(t *testing.T) {
+	startChrome(t) // skips where there is no Chrome
+	state := &storagestate.State{Origins: []storagestate.Origin{{Origin: "http://app.test", LocalStorage: []storagestate.Item{{Name: "token", Value: "t-42"}}}}}
+
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	if c, err := Start(ended, Options{Headless: true, Width: 1280, Height: 800, StorageState: state}); err == nil {
+		c.Close()
+		t.Error("a start whose context ended went on")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c, err := Start(ctx, Options{Headless: true, Width: 1280, Height: 800, StorageState: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	cancel()
+	actx, acancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer acancel()
+	if url, _, err := c.State(actx); err != nil || url != "about:blank" {
+		t.Errorf("after its context ended, the browser is on %q, %v", url, err)
 	}
 }
