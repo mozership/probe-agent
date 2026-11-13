@@ -15,6 +15,11 @@
 # recording and blocks the test when the one committed no longer matches,
 # and checks that it is replayed whole.
 #
+# The job Signed in signs Dave up with probe-browser, saves the login with
+# its save_storage_state, and has the tester change the name on the account
+# page, which sends anyone signed out to the sign-up, starting from that
+# state rather than signing in.
+#
 # PROVIDER and MODEL run the tests with another model, as
 # PROVIDER=openai MODEL=gpt-5.4 with OPENAI_API_KEY set. The recording
 # would be replayed whatever the model, so give CACHE_MODE=refresh for the
@@ -23,6 +28,7 @@ name: probe-agent against a sign-up
 
 actions:
   agent: ./action
+  browser: github.com/mozership/probe-browser@5e0ee79cb660e5c855414935f51ad3eeb7c6ad6e # v0.6.1
 
 secrets:
 - ANTHROPIC_API_KEY
@@ -130,3 +136,74 @@ jobs:
       res.mode == "persona" && res.verdict == "fail"
       && len(filter(res.findings, .severity == "high" && .verified)) > 0
       && len(filter(res.network_errors, .status == 500)) > 0
+
+- name: Signed in
+  defaults:
+    agent:
+      evidence_dir: out/agent
+      provider: "{{vars.provider}}"
+      model: "{{vars.model}}"
+      timeout: 4m
+  steps:
+  - name: Wait for the server
+    uses: http
+    with:
+      url: "{{vars.url}}"
+      get: /health
+    retry: {max_attempts: 30, interval: 1s}
+    test: res.code == 200
+  - name: Dave signs up in the browser, and the login is saved
+    id: login
+    uses: browser
+    with:
+      timeout: 1m
+      actions:
+      - name: navigate
+        url: "{{vars.url}}/signup"
+      - name: type
+        selector: "#name"
+        value: Dave Tester
+      - name: type
+        selector: "#email"
+        value: "dave+{{vars.id}}@example.com"
+      - name: type
+        selector: "#password"
+        value: "{{vars.password}}"
+      - name: type
+        selector: "#confirm"
+        value: "{{vars.password}}"
+      - name: click
+        selector: "input[name='terms']"
+      - name: click
+        selector: "button[type='submit']"
+      - name: wait_text
+        selector: h1
+        equals: "Welcome to Acme Notes, Dave Tester!"
+      - name: save_storage_state
+        id: state
+    test: res.code == 0 && res.filepaths.state endsWith ".json"
+    outputs:
+      state: res.filepaths.state
+  # Signed out, the account page sends to the sign-up, and the tester has
+  # no password to sign in with: only the saved login gets it there.
+  - name: A signed-in user changes their name, starting from the saved login
+    uses: agent
+    with:
+      url: "{{vars.url}}/account"
+      storage_state: "{{outputs.login.state}}"
+      task: |
+        On your account page, change your display name to Dave Renamed, and
+        save it.
+      expect: |
+        The page says the name is saved, and shows the account signed in as
+        Dave Renamed.
+    timeout: 5m
+    test: |
+      res.verdict == "pass" && res.url endsWith "/account"
+      && len(filter(res.steps, .url contains "/signup")) == 0
+  - name: The name changed, as the pages said
+    uses: http
+    with:
+      url: "{{vars.url}}"
+      get: "/api/users?email=dave%2B{{vars.id}}%40example.com"
+    test: res.code == 200 && res.body.exists == true && res.body.name == "Dave Renamed"

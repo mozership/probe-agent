@@ -2,7 +2,10 @@
 // that keeps its accounts in memory. An email with +broken in it makes the
 // sign-up fail with a server error, as a bug would, so that a workflow can
 // check that a test of it fails. The page to write a first note, which the
-// welcome page links to, always fails, for a persona test to find.
+// welcome page links to, always fails, for a persona test to find. The
+// account page, where a signed-in user changes their name, sends anyone
+// else to the sign-up, so that a workflow can check that a test starts
+// signed in from a storage state.
 //
 // It listens on 127.0.0.1:18090, or on the address ADDR names.
 package main
@@ -38,7 +41,7 @@ input[type=text], input[type=email], input[type=password] { width: 100%; padding
 .error { color: #b00; border: 1px solid #b00; padding: .5rem; }
 </style></head>
 <body>
-<header><nav><a href="/">Acme Notes</a> · <a href="/signup">Sign up</a></nav></header>
+<header><nav><a href="/">Acme Notes</a> · {{if .SignedIn}}<a href="/account">Account</a>{{else}}<a href="/signup">Sign up</a>{{end}}</nav></header>
 <main>
 {{if eq .Page "home"}}
   <h1>Acme Notes</h1>
@@ -63,11 +66,25 @@ input[type=text], input[type=email], input[type=password] { width: 100%; padding
   <h1>Welcome to Acme Notes, {{.Name}}!</h1>
   <p>Your account {{.Email}} is ready.</p>
   <p><a href="/notes/new">Write your first note</a></p>
+{{else if eq .Page "account"}}
+  <h1>Your account</h1>
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  {{if .Saved}}<p role="status">Your name is saved.</p>{{end}}
+  <p>Signed in as {{.Name}} ({{.Email}}).</p>
+  <form method="post" action="/account">
+    <label for="name">Display name</label>
+    <input id="name" name="name" type="text" value="{{.Name}}" required>
+    <p><button type="submit">Save</button></p>
+  </form>
 {{end}}
 </main></body></html>`))
 
 type view struct {
 	Page, Title, Error, Name, Email string
+	Saved                           bool
+	// SignedIn shows the link to the account in the header in place of
+	// the one to sign up.
+	SignedIn bool
 }
 
 func (a *app) render(w http.ResponseWriter, status int, v view) {
@@ -83,18 +100,20 @@ func (a *app) home(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	a.render(w, 200, view{Page: "home", Title: "Home"})
+	_, signedIn := a.signedIn(r)
+	a.render(w, 200, view{Page: "home", Title: "Home", SignedIn: signedIn})
 }
 
 func (a *app) signup(w http.ResponseWriter, r *http.Request) {
+	_, signedIn := a.signedIn(r)
 	if r.Method != http.MethodPost {
-		a.render(w, 200, view{Page: "signup", Title: "Sign up"})
+		a.render(w, 200, view{Page: "signup", Title: "Sign up", SignedIn: signedIn})
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
 	password := r.FormValue("password")
-	v := view{Page: "signup", Title: "Sign up", Name: name, Email: email}
+	v := view{Page: "signup", Title: "Sign up", Name: name, Email: email, SignedIn: signedIn}
 
 	if strings.Contains(email, "+broken") {
 		log.Printf("sign-up of %s: failing as asked", email)
@@ -134,20 +153,51 @@ func (a *app) signup(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/welcome", http.StatusSeeOther)
 }
 
-func (a *app) welcome(w http.ResponseWriter, r *http.Request) {
+// signedIn returns the account of the session r carries.
+func (a *app) signedIn(r *http.Request) (account, bool) {
 	c, err := r.Cookie("sid")
-	a.mu.Lock()
-	var acc account
-	var ok bool
-	if err == nil {
-		acc, ok = a.accounts[a.sessions[c.Value]]
+	if err != nil {
+		return account{}, false
 	}
-	a.mu.Unlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	acc, ok := a.accounts[a.sessions[c.Value]]
+	return acc, ok
+}
+
+func (a *app) welcome(w http.ResponseWriter, r *http.Request) {
+	acc, ok := a.signedIn(r)
 	if !ok {
 		http.Redirect(w, r, "/signup", http.StatusSeeOther)
 		return
 	}
-	a.render(w, 200, view{Page: "welcome", Title: "Welcome", Name: acc.Name, Email: acc.Email})
+	a.render(w, 200, view{Page: "welcome", Title: "Welcome", Name: acc.Name, Email: acc.Email, SignedIn: true})
+}
+
+// accountPage shows the account of the user signed in, and changes its
+// name. Anyone else is sent to the sign-up.
+func (a *app) accountPage(w http.ResponseWriter, r *http.Request) {
+	acc, ok := a.signedIn(r)
+	if !ok {
+		http.Redirect(w, r, "/signup", http.StatusSeeOther)
+		return
+	}
+	v := view{Page: "account", Title: "Account", Name: acc.Name, Email: acc.Email, SignedIn: true}
+	if r.Method == http.MethodPost {
+		name := strings.TrimSpace(r.FormValue("name"))
+		if name == "" {
+			v.Error = "Enter a name."
+			a.render(w, 422, v)
+			return
+		}
+		a.mu.Lock()
+		acc.Name = name
+		a.accounts[acc.Email] = acc
+		a.mu.Unlock()
+		log.Printf("%s renamed to %s", acc.Email, name)
+		v.Name, v.Saved = name, true
+	}
+	a.render(w, 200, v)
 }
 
 // users answers whether an account exists, for a workflow to check what the
@@ -167,6 +217,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("/", a.home)
 	mux.HandleFunc("/signup", a.signup)
 	mux.HandleFunc("/welcome", a.welcome)
+	mux.HandleFunc("/account", a.accountPage)
 	mux.HandleFunc("/api/users", a.users)
 	mux.HandleFunc("/notes/new", func(w http.ResponseWriter, r *http.Request) {
 		log.Print("the note page: failing as built")
