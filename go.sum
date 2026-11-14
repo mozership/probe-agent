@@ -96,8 +96,8 @@ github.com/mattn/go-isatty v0.0.24 h1:tGZZoVgT/KiqK1c8ocVLeDS8BSWMRd47J3Lbz7vsRe
 github.com/mattn/go-isatty v0.0.24/go.mod h1:nMCL3Zebbrt45jsMDgnfIwz6ydEQApk5oEI3HqDio6A=
 github.com/modelcontextprotocol/go-sdk v1.3.1 h1:TfqtNKOIWN4Z1oqmPAiWDC2Jq7K9OdJaooe0teoXASI=
 github.com/modelcontextprotocol/go-sdk v1.3.1/go.mod h1:DgVX498dMD8UJlseK1S5i1T4tFz2fkBk4xogC3D15nw=
-github.com/mozership/probe v1.30.0 h1:KCgn1JPG/oP+1JUt83Q5KsjuXJj6jAlQiP1xS9x8hZQ=
-github.com/mozership/probe v1.30.0/go.mod h1:UvNB9oQlU9YuRX8bxisAK7cDOEH+oYde3b07zEwr4k0=
+github.com/mozership/probe v1.33.0 h1:P15fVcWnD73SrExq1vqe8swU3psK1GPIfL1hlgLF/rs=
+github.com/mozership/probe v1.33.0/go.mod h1:yBcd7oahWEdEva6XVvN8KKf+fgauSZbYN4nZ4ACV9KU=
 github.com/mozership/probe-browser v0.6.1 h1:fVb1lpbiZ8j3SHr/z9uLxSjWvNDiBvYX8cxGMjTA74c=
 github.com/mozership/probe-browser v0.6.1/go.mod h1:7mk/VT6gra40zarpQHM6UemFX9iK5VltQBeq7+Nm46Q=
 github.com/oklog/run v1.1.0 h1:GEenZ1cK0+q0+wsJew9qUg/DyD8k3JzYsZAi5gYi2mA=

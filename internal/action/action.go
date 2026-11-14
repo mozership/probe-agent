@@ -169,6 +169,9 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 			"screenshot": o.FinalScreenshot,
 		},
 		"report": shortReport(r, o, f),
+		// The notes are for people, for a later step to post where they
+		// work, as on a pull request or in a chat.
+		"notes": notesOf(o),
 	}
 	if o.Mode == scenario.ModePersona {
 		res["findings"] = o.Findings
