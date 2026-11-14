@@ -130,6 +130,7 @@ A recording is of the steps, not of the model, so a test recorded with one model
 | `res.mode` | String | `scenario` or `persona` |
 | `res.verdict` | String | `pass`, `fail`, or `blocked` when the test could not be judged. In a persona test, whether the persona reached the goal |
 | `res.findings` | List | In a persona test, what is wrong with the application, the most severe first: `title`, `severity` (`high`, `medium` or `low`), `category` (`error`, `functional`, `usability`, `performance`, `content` or `accessibility`), `expected`, `observed`, `evidence`, `steps`, `url`, `screenshot`, and `verified`, whether any of the evidence was found in the record |
+| `res.notes` | List | The [notes](https://probe.linyo.ws/reference/yaml-configuration#notes) the test leaves for people, which later steps read as `notes`: one for each finding of a persona test, and one for a scenario test that failed or was blocked. See [Notes](#notes) |
 | `res.reason` | String | Why, in the judge's words |
 | `res.evidence` | List | What the judge quoted: `quote`, and `verified`, whether a page showed it |
 | `res.stopped` | String | How the tester stopped: `done`, `blocked`, `max_steps`, `timeout`, `no_finish`, `refused`, or `stale` for a recording that no longer matched under `cache_mode: strict` |
@@ -146,6 +147,67 @@ A recording is of the steps, not of the model, so a test recorded with one model
 | `status` | Integer | `0`; the verdict is for the step's `test` |
 
 `blocked` is kept apart from `fail`: it is what the tester could not get past, such as a CAPTCHA or information the task does not give, rather than what the application did wrong.
+
+## Notes
+
+The test leaves what people should know of it in `res.notes`, and later steps read it as the [`notes`](https://probe.linyo.ws/reference/yaml-configuration#notes) of the run, to post where people work. This needs Probe v1.32.0 or later. Probe itself posts the notes nowhere. Actions such as [probe-github-notes](https://github.com/mozership/probe-github-notes) and [probe-slack](https://github.com/mozership/probe-slack) post them.
+
+| Test | Notes |
+|---|---|
+| Persona | One for each finding, at the level of its severity: `critical` for `high`, `warning` for `medium` and `info` for `low` |
+| Scenario that failed | One `critical` note, `The expectation did not hold`, with the reason of the judge |
+| Scenario that was blocked | One `warning` note, `The test could not be carried out`, with why |
+| Scenario that passed | None |
+
+The title of a note of a finding is that of the finding. Its body gives:
+
+- what was expected and observed
+- the category, the steps and the URL
+- the quotes found in the record
+
+A finding none of whose evidence was found in the record is still a note. Its body says so, as the finding may be a misreading of the model. The quotes not found are left out of a note.
+
+A last job reads the notes of the others, and puts them on the pull request. Added to the sign-up workflow above, with the job given an `id` to name in `needs`:
+
+```yaml
+actions:
+  agent: github.com/mozership/probe-agent@<commit SHA>
+  github-notes: github.com/mozership/probe-github-notes@80357adece0113f73e9c8ad31b12350bd885ddec # v0.1.1
+secrets:
+  - ANTHROPIC_API_KEY
+  - TEST_PASSWORD
+  - GITHUB_TOKEN
+vars:
+  github_token: "{{GITHUB_TOKEN}}"
+jobs:
+- name: sign-up
+  id: sign-up
+  steps:
+  # The steps of the sign-up, as above.
+
+- name: Notes
+  needs: [sign-up]
+  always: true
+  steps:
+  - name: Put the notes on the pull request
+    uses: github-notes
+    with:
+      to: comment
+      token: "{{vars.github_token}}"
+      notes: "{{ notes }}"
+```
+
+A note of a finding:
+
+```markdown
+**Expected:** A form to write the note in.
+
+**Observed:** The page says "Something went wrong" after New note is clicked.
+
+error · step 9 · https://staging.example.com/notes/new
+
+> Something went wrong
+```
 
 ## Replay
 

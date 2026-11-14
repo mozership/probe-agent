@@ -62,7 +62,7 @@ jobs:
         uses: mozership/probe-action@831b8b6c6aa0c8a61aa75b58f36a08da5c579e83 # v1.3.0
         with:
           path: e2e/workflow.yml
-          version: v1.27.0
+          version: v1.33.0
       - name: Keep the evidence
         if: always() && env.ANTHROPIC_API_KEY != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

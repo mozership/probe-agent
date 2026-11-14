@@ -15,6 +15,8 @@
 # recording and blocks the test when the one committed no longer matches,
 # and checks that it is replayed whole.
 #
+# The notes context needs Probe v1.32.0 or later.
+#
 # The job Signed in signs Dave up with probe-browser, saves the login with
 # its save_storage_state, and has the tester change the name on the account
 # page, which sends anyone signed out to the sign-up, starting from that
@@ -47,6 +49,7 @@ vars:
 
 jobs:
 - name: Sign-up
+  id: signup
   defaults:
     agent:
       url: "{{vars.url}}/"
@@ -101,9 +104,12 @@ jobs:
         EMAIL: "bob+broken-{{vars.id}}@example.com"
         PASSWORD: "{{vars.password}}"
     timeout: 5m
-    test: res.verdict == "fail" && len(filter(res.network_errors, .status == 500)) > 0
+    test: |
+      res.verdict == "fail" && len(filter(res.network_errors, .status == 500)) > 0
+      && len(filter(res.notes, .level == "critical")) == 1
 
 - name: Persona
+  id: persona
   defaults:
     agent:
       url: "{{vars.url}}/"
@@ -135,9 +141,11 @@ jobs:
     test: |
       res.mode == "persona" && res.verdict == "fail"
       && len(filter(res.findings, .severity == "high" && .verified)) > 0
+      && len(filter(res.notes, .level == "critical")) > 0
       && len(filter(res.network_errors, .status == 500)) > 0
 
 - name: Signed in
+  id: signed-in
   defaults:
     agent:
       evidence_dir: out/agent
@@ -207,3 +215,19 @@ jobs:
       url: "{{vars.url}}"
       get: "/api/users?email=dave%2B{{vars.id}}%40example.com"
     test: res.code == 200 && res.body.exists == true && res.body.name == "Dave Renamed"
+
+# The notes the tests left, as a step that posts them would read them: the
+# critical one of the sign-up the server fails, and those of the findings of
+# Carol. The tests that passed left none.
+- name: Notes
+  needs: [signup, persona, signed-in]
+  always: true
+  steps:
+  - name: The notes of the tests that did not pass
+    uses: hello
+    with:
+      name: "{{ len(notes) }} notes"
+    test: |
+      len(filter(notes, .job_id == "signup" && .level == "critical")) == 1
+      && len(filter(notes, .job_id == "persona" && .level == "critical")) > 0
+      && len(filter(notes, .job_id == "signed-in")) == 0
