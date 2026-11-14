@@ -167,9 +167,24 @@ The title of a note of a finding is that of the finding. Its body gives:
 
 A finding none of whose evidence was found in the record is still a note. Its body says so, as the finding may be a misreading of the model. The quotes not found are left out of a note.
 
-A last job reads the notes of the others, and puts them on the pull request:
+A last job reads the notes of the others, and puts them on the pull request. Added to the sign-up workflow above, with the job given an `id` to name in `needs`:
 
 ```yaml
+actions:
+  agent: github.com/mozership/probe-agent@<commit SHA>
+  github-notes: github.com/mozership/probe-github-notes@80357adece0113f73e9c8ad31b12350bd885ddec # v0.1.1
+secrets:
+  - ANTHROPIC_API_KEY
+  - TEST_PASSWORD
+  - GITHUB_TOKEN
+vars:
+  github_token: "{{GITHUB_TOKEN}}"
+jobs:
+- name: sign-up
+  id: sign-up
+  steps:
+  # The steps of the sign-up, as above.
+
 - name: Notes
   needs: [sign-up]
   always: true
