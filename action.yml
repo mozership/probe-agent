@@ -6,9 +6,9 @@ description: Test a web application from a task, or a persona and a goal, writte
 params: [task, expect, persona, goal, url, allow_hosts, secrets, storage_state, cache, cache_mode, provider, model, effort, base_url, vision, max_steps, timeout, headless, window_w, window_h, evidence_dir]
 runs:
   using: binary
-  url: https://github.com/mozership/probe-agent/releases/download/v0.4.0/probe-agent_{os}_{arch}
+  url: https://github.com/mozership/probe-agent/releases/download/v0.4.1/probe-agent_{os}_{arch}
   checksums:
-    darwin_amd64: "401864d4b50d62848087509b202783366168afe46e3d20bbdddc7f6e56bb0e8e"
-    darwin_arm64: "c5c8f6d34e96b1572237b515d50fde75d27da666e9873b636b2bb37f59b5a4e2"
-    linux_amd64: "3911634f0526c3a6dc9126d596de071d03effd8f112fb58cc1c32e340b958265"
-    linux_arm64: "d477aefb067e6feee1d0142b3070e8b7039416d0155928c8b2e77dc3025e4625"
+    darwin_amd64: "c3f6b36344d7d0607fbeb5d4d4769532f3eac0e0a80a2a0b17a9677b9cbf450f"
+    darwin_arm64: "a260a3981b364d0488ddaa21e67029319a88ea53946d4cee67d398418a1814a9"
+    linux_amd64: "1c85a1850501f95a9bc70af69359c87097e0bcc630c80545324c14bed8d3c293"
+    linux_arm64: "2e61a43a7085ce590637c780deb5ffcd8e2cfade26d958cc783fe0f596ac7956"
