@@ -2,10 +2,16 @@
 
 A [Probe](https://github.com/mozership/probe) action that tests a web application from a task written in natural language. A model, the tester, uses the application through a real Chrome to carry out the task; another call of the model, the judge, then decides from what the pages showed whether the expectation holds.
 
+Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It needs Probe v1.21.0 or later, and v1.32.0 or later for later steps to read its [notes](#notes).
+
 It has two modes:
 
 - **Scenario**, with `task` and `expect`: the tester does the task, and the judge decides whether the expectation holds. For checks that should pass, as before a merge.
 - **Persona**, with `persona` and `goal`: the tester plays the persona pursuing the goal, and notes what is wrong on the way; the reviewer decides whether the persona got there, and which of the notes, and of what the browser recorded, are findings. For looking for what nobody wrote a test of, as on a staging environment again and again.
+
+It does not replace deterministic steps. Check what can be stated exactly, such as a status, a row or a mail, with them, and let them gate a merge. The agent action is for what they cannot state: whether a user gets through, or whether the application still holds up on staging once data and settings pile up. Run its persona tests with [`repeat`](https://probe.linyo.ws/reference/yaml-configuration#repeat) against staging, and they keep using the application as people do.
+
+A workflow pins the action by a full commit SHA. The notes of each [release](https://github.com/mozership/probe-agent/releases) start with the action and its commit to copy. The examples here give it a name once, under [`actions`](https://probe.linyo.ws/reference/yaml-configuration#actions), which needs Probe v1.24.0 or later; with an earlier one, write the action in full in each `uses`. A step reads an environment variable, such as a password, only through [`vars`](https://probe.linyo.ws/reference/yaml-configuration#vars).
 
 ```yaml
 name: Sign-up
@@ -14,6 +20,8 @@ actions:
 secrets:
   - ANTHROPIC_API_KEY
   - TEST_PASSWORD
+vars:
+  test_password: "{{TEST_PASSWORD}}"
 jobs:
 - name: sign-up
   steps:
@@ -28,7 +36,7 @@ jobs:
         The account is created, and the dashboard greets the user.
       secrets:
         EMAIL: "qa+{{random_str(8)}}@example.com"
-        PASSWORD: "{{TEST_PASSWORD}}"
+        PASSWORD: "{{vars.test_password}}"
     timeout: 5m
     test: res.verdict == "pass"
 ```
@@ -46,7 +54,7 @@ A persona test:
       goal: Create an account, and write a first note that says "Buy milk".
       secrets:
         EMAIL: "qa+{{random_str(8)}}@example.com"
-        PASSWORD: "{{TEST_PASSWORD}}"
+        PASSWORD: "{{vars.test_password}}"
     timeout: 5m
     test: len(filter(res.findings, .severity == "high" && .verified)) == 0
 ```
@@ -142,6 +150,7 @@ A recording is of the steps, not of the model, so a test recorded with one model
 | `res.cache` | Object | With `cache`, how the test used it: `path`, `mode`, `status` (`miss`, `hit` or `partial`), `replayed`, the steps replayed, `diverged_at` and `reason`, where and why the recording stopped, `stale`, whether it stopped because the application no longer matches it, and `saved`, whether the run was recorded |
 | `res.metrics` | Object | Measures that do not depend on the model, to compare runs by: `steps`, `duration_ms`, `requests`, `failed_requests`, `console_errors`, and `slowest_requests`, the ten requests that took longest, with `method`, `url`, `status` and `duration_ms` |
 | `res.usage` | Object | The `requests` made to the model and the tokens they used. `cache_write_tokens` is counted by `anthropic` alone |
+| `res.model` | String | The model's ID |
 | `res.filepaths` | Object | `report`, a Markdown report with a screenshot of each step; `trace`, the result as JSON; `screenshot`, the final page |
 | `res.report` | String | A few lines Probe prints under the step |
 | `status` | Integer | `0`; the verdict is for the step's `test` |
@@ -178,6 +187,7 @@ secrets:
   - TEST_PASSWORD
   - GITHUB_TOKEN
 vars:
+  test_password: "{{TEST_PASSWORD}}"
   github_token: "{{GITHUB_TOKEN}}"
 jobs:
 - name: sign-up
@@ -250,6 +260,13 @@ A test of what a signed-in user does need not have the tester sign in first. Sig
 actions:
   browser: github.com/mozership/probe-browser@<commit SHA>
   agent: github.com/mozership/probe-agent@<commit SHA>
+secrets:
+  - ANTHROPIC_API_KEY
+  - TEST_EMAIL
+  - TEST_PASSWORD
+vars:
+  email: "{{TEST_EMAIL}}"
+  password: "{{TEST_PASSWORD}}"
 jobs:
 - name: orders
   steps:
@@ -295,9 +312,16 @@ The model is not given the file: it sees only what the pages show. The cookies s
 
 The model reads `{secret:NAME}` where a secret is. When it types the placeholder, the browser is given the value; what the pages show the model, and what the action returns, have each value replaced with its placeholder again, in any case, as an application can show an email address in lower case. A placeholder of a secret that was not given is an error the model is told of, not text it types.
 
+## Running in CI
+
+- Install Chrome or Chromium on the runner, and keep `headless: true`.
+- Set the API key from a secret of the CI, and list it under `secrets` of the workflow.
+- Upload `evidence_dir` as an artifact, so that the report and the screenshots of a failed test can be read.
+- Run a test with a `cache` under `cache_mode: strict`, so that the model is asked only to judge while the recording matches.
+
 ## Guard
 
-The action keeps to no guard: it cannot tell what a page will do, nor what the model will click. Under `--read-only` or `--allow-host`, a step that uses it is refused unless `--allow-action` names it. The tester is kept to `allow_hosts`: a page on another host is not opened, and the browser goes back from one a click led to.
+The action keeps to no [guard](https://probe.linyo.ws/guide/concepts/guard): it cannot tell what a page will do, nor what the model will click. Under `--read-only` or `--allow-host`, a step that uses it is refused unless `--allow-action` names it. The tester is kept to `allow_hosts`: a page on another host is not opened, and the browser goes back from one a click led to.
 
 ## Development
 
