@@ -61,7 +61,7 @@ const (
 var browserParams = []string{"url", "allow_hosts", "storage_state", "headless", "window_w", "window_h"}
 
 // iosParams are the keys of targets.ios.
-var iosParams = []string{"app", "device"}
+var iosParams = []string{"app", "device", "timeout"}
 
 // laterTargets are the kinds of target the agent is to drive, but does not
 // yet.
@@ -113,6 +113,10 @@ type req struct {
 type iosReq struct {
 	App    string
 	Device string
+	// Timeout bounds the actions of each call of probe-ios, from the first
+	// to the last, as an action on an element that does not appear; zero
+	// for the 30 seconds of probe-ios.
+	Timeout time.Duration
 }
 
 // kinds are the kinds of the targets of r, in the order the agent drives
@@ -209,6 +213,14 @@ func parse(with map[string]any) (req, error) {
 			r.IOS = &iosReq{}
 			strIn(i, "targets.ios.", "app", &r.IOS.App)
 			strIn(i, "targets.ios.", "device", &r.IOS.Device)
+			if v, ok := i["timeout"]; ok {
+				d, err := actionrpc.ParseTimeout(v)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("targets.ios.timeout: %w", err))
+				} else {
+					r.IOS.Timeout = d
+				}
+			}
 			if r.IOS.App == "" {
 				errs = append(errs, errors.New("targets.ios.app is required"))
 			}

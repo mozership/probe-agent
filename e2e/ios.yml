@@ -42,6 +42,7 @@ jobs:
         ios:
           app: com.apple.Preferences
           device: "{{vars.device}}"
+          timeout: 10s
     test: res.verdict == "pass" && res.targets[0].kind == "ios"
 
   - name: A help page on the web names a section the app opens
@@ -56,6 +57,7 @@ jobs:
         ios:
           app: com.apple.Preferences
           device: "{{vars.device}}"
+          timeout: 10s
     test: |
       res.verdict == "pass" &&
       len(filter(res.steps, .target == "browser")) > 0 &&

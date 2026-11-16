@@ -107,7 +107,7 @@ The model is called with the API key of its provider, which the action takes fro
 | Key | Target | What goes in it | Driven by |
 |---|---|---|---|
 | `browser` | Chrome | `url` (required), `allow_hosts`, `storage_state`, `headless`, `window_w`, `window_h`, as in [Parameters](#parameters) | The agent itself |
-| `ios` | An app on an iOS simulator | `app` (required), the bundle identifier; `device`, the simulator by its name or UDID, which has to be given when more than one is booted | [probe-ios](https://github.com/mozership/probe-ios) |
+| `ios` | An app on an iOS simulator | `app` (required), the bundle identifier; `device`, the simulator by its name or UDID, which has to be given when more than one is booted; `timeout`, see below | [probe-ios](https://github.com/mozership/probe-ios) |
 
 Without `targets`, `url`, `allow_hosts`, `storage_state`, `headless`, `window_w` and `window_h` at the top of `with` are the short form of `targets.browser`, as before there were targets; the action warns that they move under it. A step with both `targets` and one of them is refused.
 
@@ -151,7 +151,9 @@ The tester reads the app by its accessibility tree, and names an element by a [s
 | `ios_launch`, `ios_activate`, `ios_terminate` | Launches the app afresh, brings it to the foreground, or ends it |
 | `ios_screenshot` | Sees the screen, for a model that sees images |
 
-Each tool is one call of probe-ios. The judge checks its quotes against the trees and the texts the app showed, and is given the last tree, and its screenshot when the model sees images. With images, each move keeps a screenshot as evidence, which `report.md` shows. A `cache` is refused: a recording is of the steps of a browser.
+Each tool is one call of probe-ios. `targets.ios.timeout`, as `5s` or a number of seconds, bounds the actions of each call, from the first to the last: a tap on an element that is not there fails once it runs out, and the tester reads the tree again. It is 30 seconds by default, as in probe-ios, which a guess of the model at a selector can spend whole; a few seconds are enough for an app that answers at once. It does not count building the runner, which the step's `timeout` bounds.
+
+The judge checks its quotes against the trees and the texts the app showed, and is given the last tree, and its screenshot when the model sees images. With images, each move keeps a screenshot as evidence, which `report.md` shows. A `cache` is refused: a recording is of the steps of a browser.
 
 ### A browser and an app
 

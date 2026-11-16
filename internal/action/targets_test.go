@@ -2,9 +2,11 @@ package action
 
 import (
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mozership/probe-agent/internal/scenario"
 )
@@ -96,6 +98,10 @@ func TestParse_RefusesTargets(t *testing.T) {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"browser": map[string]any{"url": "file:///etc/passwd"}}},
 			want: "targets.browser.url",
 		},
+		"a bad timeout of the app": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"ios": map[string]any{"app": "a", "timeout": "soon"}}},
+			want: "targets.ios.timeout",
+		},
 		"a cache with an app": {
 			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"ios": ios}},
 			want: "cache is for a test of a browser alone",
@@ -173,5 +179,33 @@ func TestEvidence_WritesTheFinalScreenOfTheApp(t *testing.T) {
 		if !strings.Contains(string(md), want) {
 			t.Errorf("the report lacks %q:\n%s", want, md)
 		}
+	}
+}
+
+func TestParse_TimeoutOfTheApp(t *testing.T) {
+	for _, v := range []any{"5s", 5.0, "5"} {
+		r, err := parse(map[string]any{
+			"task": "t", "expect": "e",
+			"targets": map[string]any{"ios": map[string]any{"app": "a", "timeout": v}},
+		})
+		if err != nil {
+			t.Fatalf("%v: %v", v, err)
+		}
+		if r.IOS.Timeout != 5*time.Second {
+			t.Errorf("%v: timeout %s, want 5s", v, r.IOS.Timeout)
+		}
+	}
+}
+
+func TestIOSWith(t *testing.T) {
+	actions := []map[string]any{{"name": "tap", "selector": "go"}, {"name": "tree"}}
+	got := iosWith(iosReq{App: "com.example.app"}, actions)
+	want := map[string]any{"app": "com.example.app", "actions": []any{actions[0], actions[1]}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("with %v, want %v without device and timeout", got, want)
+	}
+	got = iosWith(iosReq{App: "com.example.app", Device: "iPhone 17", Timeout: 5 * time.Second}, actions)
+	if got["device"] != "iPhone 17" || got["timeout"] != "5s" {
+		t.Errorf("with %v, want the device and the timeout", got)
 	}
 }

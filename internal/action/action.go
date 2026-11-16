@@ -166,15 +166,7 @@ func iosTarget(call actionrpc.Call, t iosReq) (*scenario.IOS, error) {
 		App:    t.App,
 		Device: t.Device,
 		Call: func(ctx context.Context, actions []map[string]any) (map[string]any, error) {
-			list := make([]any, len(actions))
-			for i, a := range actions {
-				list[i] = a
-			}
-			with := map[string]any{"app": t.App, "actions": list}
-			if t.Device != "" {
-				with["device"] = t.Device
-			}
-			cr, err := caller.Call(ctx, name, with)
+			cr, err := caller.Call(ctx, name, iosWith(t, actions))
 			if err != nil {
 				return nil, err
 			}
@@ -185,6 +177,23 @@ func iosTarget(call actionrpc.Call, t iosReq) (*scenario.IOS, error) {
 			return res, nil
 		},
 	}, nil
+}
+
+// iosWith is the with of a call of probe-ios that takes actions on the app
+// of t.
+func iosWith(t iosReq, actions []map[string]any) map[string]any {
+	list := make([]any, len(actions))
+	for i, a := range actions {
+		list[i] = a
+	}
+	with := map[string]any{"app": t.App, "actions": list}
+	if t.Device != "" {
+		with["device"] = t.Device
+	}
+	if t.Timeout > 0 {
+		with["timeout"] = t.Timeout.String()
+	}
+	return with
 }
 
 // iosAction returns the name actions give probe-ios.
