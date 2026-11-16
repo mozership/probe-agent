@@ -43,7 +43,6 @@ jobs:
           app: com.apple.Preferences
           device: "{{vars.device}}"
     test: res.verdict == "pass" && res.targets[0].kind == "ios"
-    echo: "{{res.report}}"
 
   - name: A help page on the web names a section the app opens
     uses: agent
@@ -61,4 +60,3 @@ jobs:
       res.verdict == "pass" &&
       len(filter(res.steps, .target == "browser")) > 0 &&
       len(filter(res.steps, .target == "ios")) > 0
-    echo: "{{res.report}}"
