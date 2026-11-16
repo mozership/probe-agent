@@ -210,7 +210,7 @@ func (r *run) writeRecord(b *strings.Builder, o Outcome, f final) {
 // shown them.
 func (r *run) consoleLines() []string {
 	var lines []string
-	errs := r.page.ConsoleErrors()
+	errs := r.web.page.ConsoleErrors()
 	for _, e := range errs[:min(len(errs), maxListed)] {
 		lines = append(lines, fmt.Sprintf("- %s: %s (%s)", e.Type, r.secrets.mask(e.Text), r.secrets.mask(e.URL)))
 	}
@@ -221,7 +221,7 @@ func (r *run) consoleLines() []string {
 // shown them.
 func (r *run) failedLines() []string {
 	var lines []string
-	errs := r.page.NetworkErrors()
+	errs := r.web.page.NetworkErrors()
 	for _, e := range errs[:min(len(errs), maxListed)] {
 		if e.Status > 0 {
 			lines = append(lines, fmt.Sprintf("- %s %s -> %d", e.Method, r.secrets.mask(e.URL), e.Status))

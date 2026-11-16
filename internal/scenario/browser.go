@@ -21,6 +21,59 @@ var Disabled = []string{
 	"javascript_exec", "file_upload", "read_console", "read_network",
 }
 
+// browserDriver is the browser as a target: the one tab the tester drives
+// through the browser toolset.
+type browserDriver struct {
+	*ledger
+	page  page.Page
+	hosts hosts
+
+	// shot is the URL of the page the tester last took a screenshot of.
+	shot string
+	// landing is where the page the test opened first landed.
+	landing string
+	// url and title are of the page as the model was last told it.
+	url, title string
+	// recorded are the steps that changed the page, for the recording.
+	recorded []Recorded
+}
+
+// newBrowserDriver returns the browser of the test l keeps, which drives
+// p. The tester may open the pages of the hosts of the test, or of the
+// host of its start URL when it names none.
+func newBrowserDriver(l *ledger, p page.Page) *browserDriver {
+	d := &browserDriver{ledger: l, page: p, hosts: hosts(l.cfg.Hosts)}
+	if len(d.hosts) == 0 {
+		d.hosts = hosts{hostOf(l.cfg.StartURL)}
+	}
+	return d
+}
+
+var _ Driver = (*browserDriver)(nil)
+
+// Kind is browser.
+func (d *browserDriver) Kind() string { return "browser" }
+
+// Open opens the start URL of the test.
+func (d *browserDriver) Open(ctx context.Context) error {
+	if err := d.page.Navigate(ctx, d.cfg.StartURL); err != nil {
+		return fmt.Errorf("opening %s: %w", d.cfg.StartURL, err)
+	}
+	d.url, d.title, _ = d.page.State(ctx)
+	d.landing = d.relative(d.url)
+	return nil
+}
+
+// Offer offers the browser toolset, but for the members in Disabled.
+func (d *browserDriver) Offer(opts *llm.ChatOptions) {
+	opts.Browser = &llm.BrowserToolset{Disabled: Disabled}
+}
+
+// Handles says whether call is of a member of the browser toolset.
+func (d *browserDriver) Handles(call llm.Call) bool {
+	return call.Toolset == llm.ToolsetBrowser
+}
+
 // tabID is the ID of the one tab, as the model is told it.
 const tabID = "tab-1"
 
@@ -98,15 +151,15 @@ var actions = map[string]bool{
 	"hover": true, "scroll": true, "scroll_to": true, "type": true, "key": true, "form_input": true, "wait": true,
 }
 
-// browser runs a call of a member of the browser toolset, and returns its
+// Do runs a call of a member of the browser toolset, and returns its
 // result and the step that records it.
-func (r *run) browser(ctx context.Context, call llm.Call) (llm.Result, Step) {
+func (d *browserDriver) Do(ctx context.Context, call llm.Call) (llm.Result, Step) {
 	step := Step{Tool: call.Name}
 	// The tester had a screenshot of the page the step acts on.
-	pixels := r.shot != "" && r.shot == r.url
+	pixels := d.shot != "" && d.shot == d.url
 	var raw map[string]any
 	if json.Unmarshal(call.Input, &raw) == nil && len(raw) > 0 {
-		step.Input, _ = r.secrets.maskAny(raw).(map[string]any)
+		step.Input, _ = d.secrets.maskAny(raw).(map[string]any)
 	}
 	res := llm.Result{CallID: call.ID}
 
@@ -115,45 +168,45 @@ func (r *run) browser(ctx context.Context, call llm.Call) (llm.Result, Step) {
 	// The element a step acts on is described before the step, which can
 	// take it off the page, for the recording.
 	var loc *page.Locator
-	if err == nil && r.cfg.Record && targeted[call.Name] {
+	if err == nil && d.cfg.Record && targeted[call.Name] {
 		if t, terr := in.Target.page(); terr == nil {
-			loc, _ = r.page.Locator(ctx, t)
+			loc, _ = d.page.Locator(ctx, t)
 		}
 	}
 	if err == nil {
-		text, images, err = r.member(ctx, call.Name, in)
+		text, images, err = d.member(ctx, call.Name, in)
 	}
 	if err != nil {
 		// What the model reads is masked, since an error of the page can
 		// quote what was typed.
-		res.Text = "Error: " + r.secrets.mask(err.Error())
+		res.Text = "Error: " + d.secrets.mask(err.Error())
 		res.IsError = true
 		step.Error = res.Text
 	} else {
-		res.Text = r.secrets.mask(text)
+		res.Text = d.secrets.mask(text)
 		res.Images = images
 		step.Result = summary(res.Text)
 	}
 
 	if actions[call.Name] {
-		if msg := r.keepToHosts(ctx); msg != "" {
+		if msg := d.keepToHosts(ctx); msg != "" {
 			res.Text = strings.TrimSpace(res.Text + "\n" + msg)
 			res.IsError = true
 			step.Error = msg
 		}
-		if img, err := r.page.Screenshot(ctx); err == nil {
-			step.Screenshot = r.save(fmt.Sprintf("step-%02d.jpg", len(r.steps)+1), img)
+		if img, err := d.page.Screenshot(ctx); err == nil {
+			step.Screenshot = d.save(fmt.Sprintf("step-%02d.jpg", len(d.steps)+1), img)
 		}
 	}
-	if url, title, err := r.page.State(ctx); err == nil {
+	if url, title, err := d.page.State(ctx); err == nil {
 		step.URL = url
-		if !res.IsError && (url != r.url || title != r.title) {
-			res.Tabs = []llm.Tab{{ID: tabID, Title: r.secrets.mask(title), URL: r.secrets.mask(url), Active: true}}
+		if !res.IsError && (url != d.url || title != d.title) {
+			res.Tabs = []llm.Tab{{ID: tabID, Title: d.secrets.mask(title), URL: d.secrets.mask(url), Active: true}}
 		}
-		r.url, r.title = url, title
+		d.url, d.title = url, title
 	}
-	if r.cfg.Record && actions[call.Name] && !res.IsError {
-		r.record(ctx, call.Name, step.Input, loc, step.URL, pixels)
+	if d.cfg.Record && actions[call.Name] && !res.IsError {
+		d.record(ctx, call.Name, step.Input, loc, step.URL, pixels)
 	}
 	return res, step
 }
@@ -166,15 +219,15 @@ var targeted = map[string]bool{
 
 // member runs the member name with in, and returns the text and the images
 // of its result.
-func (r *run) member(ctx context.Context, name string, in browserInput) (string, []llm.Image, error) {
-	p := r.page
+func (d *browserDriver) member(ctx context.Context, name string, in browserInput) (string, []llm.Image, error) {
+	p := d.page
 	switch name {
 	case "navigate":
 		switch in.URL {
 		case "back", "forward", "reload":
 		default:
-			if !r.hosts.allows(in.URL) {
-				return "", nil, fmt.Errorf("%s is not on a host this test may open; the hosts are %s", in.URL, strings.Join(r.hosts, ", "))
+			if !d.hosts.allows(in.URL) {
+				return "", nil, fmt.Errorf("%s is not on a host this test may open; the hosts are %s", in.URL, strings.Join(d.hosts, ", "))
 			}
 		}
 		if err := p.Navigate(ctx, in.URL); err != nil {
@@ -187,7 +240,7 @@ func (r *run) member(ctx context.Context, name string, in browserInput) (string,
 		if err != nil {
 			return "", nil, err
 		}
-		r.shot = r.url
+		d.shot = d.url
 		return "", []llm.Image{{MediaType: "image/jpeg", Data: img}}, nil
 
 	case "zoom":
@@ -198,7 +251,7 @@ func (r *run) member(ctx context.Context, name string, in browserInput) (string,
 		if err != nil {
 			return "", nil, err
 		}
-		r.shot = r.url
+		d.shot = d.url
 		return "", []llm.Image{{MediaType: "image/jpeg", Data: img}}, nil
 
 	case "left_click", "right_click", "double_click", "triple_click":
@@ -250,7 +303,7 @@ func (r *run) member(ctx context.Context, name string, in browserInput) (string,
 		return "Scrolled to " + in.Target.Ref + ".", nil, nil
 
 	case "type":
-		text, err := r.secrets.fill(in.Text)
+		text, err := d.secrets.fill(in.Text)
 		if err != nil {
 			return "", nil, err
 		}
@@ -279,7 +332,7 @@ func (r *run) member(ctx context.Context, name string, in browserInput) (string,
 		if err != nil {
 			return "", nil, err
 		}
-		r.seen(text)
+		d.seen(text)
 		if text == "" {
 			return "The page shows nothing.", nil, nil
 		}
@@ -294,7 +347,7 @@ func (r *run) member(ctx context.Context, name string, in browserInput) (string,
 		if len(found) == 0 {
 			return "Nothing on the page matches " + quote(in.Query) + ".", nil, nil
 		}
-		r.seen(strings.Join(found, "\n"))
+		d.seen(strings.Join(found, "\n"))
 		return strings.Join(found, "\n"), nil, nil
 
 	case "get_page_text":
@@ -303,7 +356,7 @@ func (r *run) member(ctx context.Context, name string, in browserInput) (string,
 			return "", nil, err
 		}
 		text = truncate(text, maxText)
-		r.seen(text)
+		d.seen(text)
 		return text, nil, nil
 
 	case "form_input":
@@ -312,7 +365,7 @@ func (r *run) member(ctx context.Context, name string, in browserInput) (string,
 		}
 		value := in.Value
 		if s, ok := value.(string); ok {
-			filled, err := r.secrets.fill(s)
+			filled, err := d.secrets.fill(s)
 			if err != nil {
 				return "", nil, err
 			}
@@ -326,13 +379,13 @@ func (r *run) member(ctx context.Context, name string, in browserInput) (string,
 
 // keepToHosts goes back from a page on a host the test may not open, and
 // says so; it returns "" when the page is on one it may.
-func (r *run) keepToHosts(ctx context.Context) string {
-	url, _, err := r.page.State(ctx)
-	if err != nil || r.hosts.allows(url) {
+func (d *browserDriver) keepToHosts(ctx context.Context) string {
+	url, _, err := d.page.State(ctx)
+	if err != nil || d.hosts.allows(url) {
 		return ""
 	}
 	msg := fmt.Sprintf("The page went to %s, which is not on a host this test may open, so the browser went back.", url)
-	if err := r.page.Navigate(ctx, "back"); err != nil {
+	if err := d.page.Navigate(ctx, "back"); err != nil {
 		msg += " Going back failed: " + err.Error()
 	}
 	return msg
@@ -362,4 +415,24 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "…"
+}
+
+func (d *browserDriver) final(ctx context.Context, vision bool) final {
+	var f final
+	f.url, f.title, _ = d.page.State(ctx)
+	if text, err := d.page.Text(ctx); err == nil {
+		f.text = truncate(d.secrets.mask(text), 20000)
+	}
+	if els, err := d.page.Read(ctx, "all", 0, ""); err == nil {
+		f.elements = truncate(d.secrets.mask(els), 20000)
+	}
+	if img, err := d.page.Screenshot(ctx); err == nil {
+		// The judge is shown the screenshot when the model sees images; it
+		// is kept as evidence either way.
+		if vision {
+			f.image = img
+		}
+		f.screenshot = d.save("final.jpg", img)
+	}
+	return f
 }

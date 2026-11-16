@@ -102,9 +102,9 @@ type Replay struct {
 
 // record keeps a step that changed the page, for the recording of the run.
 // pixels is whether the tester had a screenshot of the page.
-func (r *run) record(ctx context.Context, name string, input map[string]any, loc *page.Locator, at string, pixels bool) {
+func (d *browserDriver) record(ctx context.Context, name string, input map[string]any, loc *page.Locator, at string, pixels bool) {
 	in := maps.Clone(input)
-	rec := Recorded{Tool: name, Input: in, Locator: loc, Path: r.relative(at), Alerts: r.alerts(ctx)}
+	rec := Recorded{Tool: name, Input: in, Locator: loc, Path: d.relative(at), Alerts: d.alerts(ctx)}
 	if loc != nil {
 		// The replay finds the element by its locator, and the ref the
 		// model gave means nothing to a later page.
@@ -115,12 +115,12 @@ func (r *run) record(ctx context.Context, name string, input map[string]any, loc
 		}
 	}
 	if u, ok := in["url"].(string); ok && name == "navigate" {
-		in["url"] = r.relative(u)
+		in["url"] = d.relative(u)
 	}
 	for _, k := range []string{"text", "value"} {
 		if v, ok := in[k].(string); ok && (name == "type" || name == "form_input") {
-			instruction := r.secrets.mask(r.cfg.Task) + "\n" + r.secrets.mask(r.cfg.Expect)
-			if why := derived(v, instruction, r.shown, pixels); why != "" {
+			instruction := d.secrets.mask(d.cfg.Task) + "\n" + d.secrets.mask(d.cfg.Expect)
+			if why := derived(v, instruction, d.shown, pixels); why != "" {
 				// The value is never replayed, and is this run's data, so it
 				// is not kept.
 				delete(in, k)
@@ -128,21 +128,21 @@ func (r *run) record(ctx context.Context, name string, input map[string]any, loc
 			}
 		}
 	}
-	r.recorded = append(r.recorded, rec)
+	d.recorded = append(d.recorded, rec)
 }
 
 var digitRun = regexp.MustCompile(`\d+`)
 
 // alerts returns the alerts the page shows, masked, and with their numbers
 // as #, which change from run to run.
-func (r *run) alerts(ctx context.Context) []string {
-	texts, err := r.page.Alerts(ctx)
+func (d *browserDriver) alerts(ctx context.Context) []string {
+	texts, err := d.page.Alerts(ctx)
 	if err != nil {
 		return nil
 	}
 	var out []string
 	for _, t := range texts {
-		t = digitRun.ReplaceAllString(r.secrets.mask(strings.Join(strings.Fields(t), " ")), "#")
+		t = digitRun.ReplaceAllString(d.secrets.mask(strings.Join(strings.Fields(t), " ")), "#")
 		if !slices.Contains(out, t) {
 			out = append(out, t)
 		}
@@ -151,9 +151,9 @@ func (r *run) alerts(ctx context.Context) []string {
 }
 
 // relative returns raw as a path when it is on the host of the start URL.
-func (r *run) relative(raw string) string {
+func (d *browserDriver) relative(raw string) string {
 	u, err := url.Parse(raw)
-	if err != nil || !u.IsAbs() || u.Host != hostOf(r.cfg.StartURL) {
+	if err != nil || !u.IsAbs() || u.Host != hostOf(d.cfg.StartURL) {
 		return raw
 	}
 	u.Scheme, u.Host, u.User = "", "", nil
@@ -164,12 +164,12 @@ func (r *run) relative(raw string) string {
 }
 
 // absolute resolves a path of a recording against the start URL.
-func (r *run) absolute(raw string) string {
+func (d *browserDriver) absolute(raw string) string {
 	switch raw {
 	case "back", "forward", "reload":
 		return raw
 	}
-	base, err := url.Parse(r.cfg.StartURL)
+	base, err := url.Parse(d.cfg.StartURL)
 	if err != nil {
 		return raw
 	}
@@ -181,13 +181,13 @@ func (r *run) absolute(raw string) string {
 }
 
 // usable says why the recording is not for this test, or "" when it is.
-func (r *run) usable(rec *Recording) string {
+func (d *browserDriver) usable(rec *Recording) string {
 	switch {
 	case rec.Version != recordingVersion:
 		return fmt.Sprintf("the recording is of version %d, not %d", rec.Version, recordingVersion)
-	case rec.Task != r.secrets.mask(r.cfg.Task) || rec.Expect != r.secrets.mask(r.cfg.Expect):
+	case rec.Task != d.secrets.mask(d.cfg.Task) || rec.Expect != d.secrets.mask(d.cfg.Expect):
 		return "the task or the expectation changed since the recording"
-	case !sameRoute(rec.Start, r.relative(r.cfg.StartURL)):
+	case !sameRoute(rec.Start, d.relative(d.cfg.StartURL)):
 		return "the start URL changed since the recording"
 	case len(rec.Steps) == 0:
 		return "the recording has no steps"
@@ -199,8 +199,8 @@ func (r *run) usable(rec *Recording) string {
 // on the page the recording began on, and stops at the first step that
 // cannot be replayed, that does not reach the route it reached when
 // recorded, or after which the page shows an alert it did not.
-func (r *run) replay(ctx context.Context, rec *Recording) Replay {
-	if at := r.relative(r.url); !sameRoute(rec.Landing, at) {
+func (d *browserDriver) replay(ctx context.Context, rec *Recording) Replay {
+	if at := d.relative(d.url); !sameRoute(rec.Landing, at) {
 		return Replay{Status: ReplayMiss, Stale: true, Reason: fmt.Sprintf("the test began on %s, where the recording began on %s", at, rec.Landing)}
 	}
 	rp := Replay{Status: ReplayHit}
@@ -212,41 +212,41 @@ func (r *run) replay(ctx context.Context, rec *Recording) Replay {
 		switch {
 		case s.Gap != "":
 			return diverge(false, s.Gap)
-		case len(r.steps) >= r.cfg.MaxSteps:
+		case len(d.steps) >= d.cfg.MaxSteps:
 			return diverge(false, "the test ran out of steps")
-		case s.Locator == nil && targeted[s.Tool] && rec.Viewport != r.cfg.Viewport:
+		case s.Locator == nil && targeted[s.Tool] && rec.Viewport != d.cfg.Viewport:
 			return diverge(true, fmt.Sprintf("the step is at a point of a viewport of %dx%d, and this one is %dx%d",
-				rec.Viewport.Width, rec.Viewport.Height, r.cfg.Viewport.Width, r.cfg.Viewport.Height))
+				rec.Viewport.Width, rec.Viewport.Height, d.cfg.Viewport.Width, d.cfg.Viewport.Height))
 		}
 		input := maps.Clone(s.Input)
 		if input == nil {
 			input = map[string]any{}
 		}
 		if s.Locator != nil {
-			ref, err := r.page.Locate(ctx, *s.Locator)
+			ref, err := d.page.Locate(ctx, *s.Locator)
 			if err != nil {
 				return diverge(true, err.Error())
 			}
 			input["target"] = map[string]any{"type": "ref", "ref": ref}
 		}
 		if u, ok := input["url"].(string); ok && s.Tool == "navigate" {
-			input["url"] = r.absolute(u)
+			input["url"] = d.absolute(u)
 		}
 		raw, err := json.Marshal(input)
 		if err != nil {
 			return diverge(false, err.Error())
 		}
-		res, step := r.browser(ctx, llm.Call{ID: fmt.Sprintf("replay_%d", i+1), Name: s.Tool, Toolset: llm.ToolsetBrowser, Input: raw})
-		step.Index = len(r.steps) + 1
+		res, step := d.Do(ctx, llm.Call{ID: fmt.Sprintf("replay_%d", i+1), Name: s.Tool, Toolset: llm.ToolsetBrowser, Input: raw})
+		step.Index = len(d.steps) + 1
 		step.Notes = []string{fmt.Sprintf("Replayed step %d of the recording.", i+1)}
-		r.steps = append(r.steps, step)
+		d.steps = append(d.steps, step)
 		if res.IsError {
 			return diverge(true, fmt.Sprintf("%s failed: %s", s.Tool, strings.TrimPrefix(res.Text, "Error: ")))
 		}
-		if at := r.reach(ctx, s.Path); !sameRoute(s.Path, at) {
+		if at := d.reach(ctx, s.Path); !sameRoute(s.Path, at) {
 			return diverge(true, fmt.Sprintf("the page went to %s, where the recording went to %s", at, s.Path))
 		}
-		for _, a := range r.alerts(ctx) {
+		for _, a := range d.alerts(ctx) {
 			if !slices.Contains(s.Alerts, a) {
 				return diverge(true, fmt.Sprintf("the page shows an alert the recording did not: %s", quote(a)))
 			}
@@ -261,13 +261,13 @@ func (r *run) replay(ctx context.Context, rec *Recording) Replay {
 
 // reach waits a while for the page to be on the route of path, and
 // returns the location it is at.
-func (r *run) reach(ctx context.Context, path string) string {
+func (d *browserDriver) reach(ctx context.Context, path string) string {
 	deadline := time.Now().Add(pathWait)
 	for {
-		u, title, err := r.page.State(ctx)
-		at := r.relative(u)
+		u, title, err := d.page.State(ctx)
+		at := d.relative(u)
 		if err == nil {
-			r.url, r.title = u, title
+			d.url, d.title = u, title
 		}
 		if sameRoute(path, at) || time.Now().After(deadline) || ctx.Err() != nil {
 			return at
@@ -277,15 +277,15 @@ func (r *run) reach(ctx context.Context, path string) string {
 }
 
 // recording returns the recording of the run.
-func (r *run) recording() *Recording {
+func (d *browserDriver) recording() *Recording {
 	return &Recording{
 		Version:  recordingVersion,
-		Task:     r.secrets.mask(r.cfg.Task),
-		Expect:   r.secrets.mask(r.cfg.Expect),
-		Start:    r.relative(r.cfg.StartURL),
-		Landing:  r.landing,
-		Viewport: r.cfg.Viewport,
-		Steps:    r.recorded,
+		Task:     d.secrets.mask(d.cfg.Task),
+		Expect:   d.secrets.mask(d.cfg.Expect),
+		Start:    d.relative(d.cfg.StartURL),
+		Landing:  d.landing,
+		Viewport: d.cfg.Viewport,
+		Steps:    d.recorded,
 	}
 }
 
@@ -299,7 +299,7 @@ func sameRecording(a, b *Recording) bool {
 
 // handoff tells the tester what was replayed, and where the recording
 // stopped, for it to carry on from there.
-func (r *run) handoff(rp Replay, rec *Recording) string {
+func (d *browserDriver) handoff(rp Replay, rec *Recording) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n\nThe first %d steps of the task were replayed from a recording of an earlier run:\n", rp.Replayed)
 	for i, s := range rec.Steps[:rp.Replayed] {
@@ -310,7 +310,7 @@ func (r *run) handoff(rp Replay, rec *Recording) string {
 	if rp.Stale {
 		b.WriteString(" The application may have changed.")
 	}
-	fmt.Fprintf(&b, " Carry on with the task from the page the browser is on, %s; read it first.", r.secrets.mask(r.url))
+	fmt.Fprintf(&b, " Carry on with the task from the page the browser is on, %s; read it first.", d.secrets.mask(d.url))
 	return b.String()
 }
 
