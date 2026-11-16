@@ -1,6 +1,6 @@
 # probe-agent
 
-A [Probe](https://github.com/mozership/probe) action that tests a web application from a task written in natural language. A model, the tester, uses the application through a real Chrome to carry out the task; another call of the model, the judge, then decides from what the pages showed whether the expectation holds.
+A [Probe](https://github.com/mozership/probe) action that tests an application from a task written in natural language. A model, the tester, uses the application through a real Chrome, an app on an iOS simulator, or both, to carry out the task; another call of the model, the judge, then decides from what they showed whether the expectation holds. See [Targets](#targets) for an iOS app.
 
 Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It needs Probe v1.21.0 or later, and v1.32.0 or later for later steps to read its [notes](#notes).
 
@@ -76,28 +76,100 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `url` | String | Yes | - | The page the browser opens first, `http` or `https` |
+| `targets` | Object | No | the browser of `url` | What the test drives: a browser, an iOS app, or both; see [Targets](#targets) |
+| `url` | String | Without `targets` | - | The page the browser opens first, `http` or `https`. The short form of `targets.browser.url` |
 | `task` | String | Scenario | - | What the tester does, in natural language |
 | `expect` | String | Scenario | - | What has to hold afterwards, in natural language |
 | `persona` | String | Persona | - | Who the tester plays, in natural language: what they know, and how they go about things |
 | `goal` | String | Persona | - | What the persona sets out to do, in natural language |
 | `secrets` | Object | No | - | Values the model never sees, by name. Write them as `{secret:NAME}` in `task` or `persona`; see [Secrets](#secrets) |
 | `storage_state` | String | No | - | A file of cookies and localStorage the browser starts with, as the browser action's `save_storage_state` writes; see [Starting signed in](#starting-signed-in) |
-| `allow_hosts` | List or string | No | the host of `url` | The hosts the tester may open pages of: `host`, `host:port`, or `*.domain`. A list, or a string apart by commas |
+| `allow_hosts` | List or string | No | the host of `url` | The hosts the tester may open pages of: `host`, `host:port`, or `*.domain`. A list, or a string apart by commas. The short form of `targets.browser.allow_hosts` |
 | `provider` | String | No | `anthropic` | `anthropic`, `openai`, `xai`, `gemini` or `sakura`; see [Models](#models) |
 | `model` | String | Not with `anthropic` | `claude-opus-5-5` with `anthropic` | The model's ID |
 | `effort` | String | No | `medium` | `low`, `medium`, `high`, `xhigh` or `max` |
 | `base_url` | String | No | the provider's | The URL the provider's API is under, as for a proxy, or another API compatible with OpenAI's Responses API under `openai` |
 | `vision` | Boolean | No | `false` with `sakura`, else `true` | Whether the model sees images. Not with `anthropic` |
-| `max_steps` | Integer | No | `40` | The calls the tester may make to the browser |
+| `max_steps` | Integer | No | `40` | The calls the tester may make to the targets |
 | `timeout` | Duration | No | `4m` | Limit for the whole test, the judge included, as `90s` or a number of seconds. Keep it below the step's `timeout`, which is `5m` unless set |
-| `headless` | Boolean | No | `true` | Run Chrome without a window |
-| `window_w`, `window_h` | Integer | No | `1280`, `800` | The viewport, in pixels |
+| `headless` | Boolean | No | `true` | Run Chrome without a window. The short form of `targets.browser.headless` |
+| `window_w`, `window_h` | Integer | No | `1280`, `800` | The viewport, in pixels. The short form of `targets.browser.window_w` and `window_h` |
 | `cache` | String | No | - | A file to keep the steps of a scenario test that passed in, and to replay them from; see [Replay](#replay) |
 | `cache_mode` | String | No | `auto` | `auto`, `read`, `strict` or `refresh`; see [Replay](#replay) |
 | `evidence_dir` | String | No | the temporary directory | Where the screenshots and the report are written, each test in a directory of its own |
 
 The model is called with the API key of its provider, which the action takes from Probe's environment. List it under `secrets` of the workflow so that Probe hides it in its output.
+
+## Targets
+
+`targets` names what the test drives, by kind, with what the workflow fixes for each. A test drives one target or more:
+
+| Key | Target | What goes in it | Driven by |
+|---|---|---|---|
+| `browser` | Chrome | `url` (required), `allow_hosts`, `storage_state`, `headless`, `window_w`, `window_h`, as in [Parameters](#parameters) | The agent itself |
+| `ios` | An app on an iOS simulator | `app` (required), the bundle identifier; `device`, the simulator by its name or UDID, which has to be given when more than one is booted | [probe-ios](https://github.com/mozership/probe-ios) |
+
+Without `targets`, `url`, `allow_hosts`, `storage_state`, `headless`, `window_w` and `window_h` at the top of `with` are the short form of `targets.browser`, as before there were targets; the action warns that they move under it. A step with both `targets` and one of them is refused.
+
+### An iOS app
+
+The agent drives the app through probe-ios, which it calls as a step of the run would, under the guard of the run. Name probe-ios under `actions` of the workflow, by any name; the agent finds it by its reference, and the workflow pins its version as it pins every action. It needs Probe v1.37.0 or later, and macOS with what [probe-ios needs](https://github.com/mozership/probe-ios#requirements): Xcode, a booted simulator, and the app installed on it, which an earlier step sees to.
+
+```yaml
+actions:
+  agent: github.com/mozership/probe-agent@<commit SHA>
+  iphone: github.com/mozership/probe-ios@<commit SHA>
+jobs:
+- name: settings
+  steps:
+  - name: Boot the simulator
+    uses: shell
+    with:
+      cmd: xcrun simctl boot "iPhone 17" || true
+  - name: A user turns on dark mode
+    uses: agent
+    timeout: 15m
+    with:
+      task: Turn on dark mode
+      expect: The appearance is dark
+      targets:
+        ios:
+          app: com.apple.Preferences
+          device: iPhone 17
+    test: res.verdict == "pass"
+```
+
+probe-ios builds its runner the first time, which takes minutes: the agent opens the app before the model starts, within the step, so give the step `timeout: 15m`, beside a `with.timeout` that leaves the test the time it needs.
+
+The tester reads the app by its accessibility tree, and names an element by a [selector](https://github.com/mozership/probe-ios#selectors) of it:
+
+| Tool | What it does |
+|---|---|
+| `ios_tree` | Reads the accessibility tree |
+| `ios_tap`, `ios_type` | Taps an element, or taps a field and types into it, and returns the tree after it |
+| `ios_wait`, `ios_text` | Waits for an element, or reads its label or value |
+| `ios_launch`, `ios_activate`, `ios_terminate` | Launches the app afresh, brings it to the foreground, or ends it |
+| `ios_screenshot` | Sees the screen, for a model that sees images |
+
+Each tool is one call of probe-ios. The judge checks its quotes against the trees and the texts the app showed, and is given the last tree, and its screenshot when the model sees images. With images, each move keeps a screenshot as evidence, which `report.md` shows. A `cache` is refused: a recording is of the steps of a browser.
+
+### A browser and an app
+
+```yaml
+  - name: A code shown on the web signs in the app
+    uses: agent
+    timeout: 15m
+    with:
+      task: Get a sign-in code on the web account page, and sign in to the app with it
+      expect: The app shows the account name
+      targets:
+        browser:
+          url: https://staging.example.com/account
+        ios:
+          app: com.example.app
+```
+
+The tester is offered the tools of both, and acts on one at a time; each step says which target it used. What passes from one to the other is what the model reads on one and enters on the other: Chrome on the Mac and Safari on the simulator are two browsers, so a link on the web does not open the app.
 
 ## Models
 
@@ -143,8 +215,9 @@ A recording is of the steps, not of the model, so a test recorded with one model
 | `res.evidence` | List | What the judge quoted: `quote`, and `verified`, whether a page showed it |
 | `res.stopped` | String | How the tester stopped: `done`, `blocked`, `max_steps`, `timeout`, `no_finish`, `refused`, or `stale` for a recording that no longer matched under `cache_mode: strict` |
 | `res.summary` | String | What the tester said it did and saw |
-| `res.steps` | List | Each call to the browser: `index`, `tool`, `input`, `result` or `error`, `url`, `screenshot` and the tester's `notes` |
-| `res.url`, `res.title` | String | The page the tester left the browser on |
+| `res.steps` | List | Each call to a target: `index`, `tool`, `target` (`browser` or `ios`), `input`, `result` or `error`, `url`, `screenshot` and the tester's `notes` |
+| `res.targets` | List | The last state of each target: `kind`; `url` and `title` of the browser; `app` and `device` of the app; and `screenshot` |
+| `res.url`, `res.title` | String | The page the tester left the browser on, empty without a browser |
 | `res.console_errors` | List | The errors the pages wrote to their console, as the browser action reports them |
 | `res.network_errors` | List | The requests that failed or were answered with 400 or more: `method`, `url`, `status`, `error` |
 | `res.cache` | Object | With `cache`, how the test used it: `path`, `mode`, `status` (`miss`, `hit` or `partial`), `replayed`, the steps replayed, `diverged_at` and `reason`, where and why the recording stopped, `stale`, whether it stopped because the application no longer matches it, and `saved`, whether the run was recorded |
@@ -322,6 +395,8 @@ The model reads `{secret:NAME}` where a secret is. When it types the placeholder
 ## Guard
 
 The action keeps to no [guard](https://probe.linyo.ws/guide/concepts/guard): it cannot tell what a page will do, nor what the model will click. Under `--read-only` or `--allow-host`, a step that uses it is refused unless `--allow-action` names it. The tester is kept to `allow_hosts`: a page on another host is not opened, and the browser goes back from one a click led to.
+
+probe-ios keeps to no guard either, and the agent calls it under the guard of the run: under `--read-only` or `--allow-host`, `--allow-action` has to name both. When it names the agent alone, the call of probe-ios is refused, and so is the step.
 
 ## Development
 

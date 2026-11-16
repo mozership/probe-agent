@@ -1,6 +1,8 @@
 // Package action serves the agent as a Probe action: it reads the step's
-// with, starts a browser and the model, runs the test, and returns how it
-// came out, with its evidence written to files.
+// with, readies the targets and the model, runs the test, and returns how
+// it came out, with its evidence written to files. The browser is driven
+// by the agent itself, and an iOS app through probe-ios, which the agent
+// calls as a step of the run would.
 package action
 
 import (
@@ -9,13 +11,16 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/go-hclog"
+	"github.com/mozership/probe"
 	"github.com/mozership/probe-browser/storagestate"
+	"github.com/mozership/probe/actionref"
 	"github.com/mozership/probe/actionrpc"
 	"github.com/mozership/probe/style"
 
@@ -41,19 +46,37 @@ func Serve() {
 	})
 }
 
-// Run runs the test the step asks for.
+// Run runs the test the step asks for, under a Probe that tells the
+// action nothing of the step: it can drive no target through an action.
 func (a *Action) Run(with map[string]any) (map[string]any, error) {
-	actionrpc.LogParams(a.log, "received agent action request", forLog(with))
-	ret, err := a.run(with)
-	actionrpc.LogOutcome(a.log, "agent test", ret, err)
+	ret, _, err := a.RunStep(actionrpc.Call{With: with})
 	return ret, err
 }
 
-func (a *Action) run(with map[string]any) (map[string]any, error) {
+// RunStep runs the test the step asks for. An iOS app is driven through
+// probe-ios, by the name the workflow gives it under actions, as a step
+// of the run would call it.
+func (a *Action) RunStep(call actionrpc.Call) (map[string]any, map[string]any, error) {
+	actionrpc.LogParams(a.log, "received agent action request", forLog(call.With))
+	ret, err := a.run(call)
+	actionrpc.LogOutcome(a.log, "agent test", ret, err)
+	return ret, nil, err
+}
+
+func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	start := time.Now()
-	r, err := parse(with)
+	r, err := parse(call.With)
 	if err != nil {
 		return nil, err
+	}
+	if r.ShortForm {
+		a.log.Warn("url, allow_hosts, storage_state, headless, window_w and window_h move under targets.browser; give them there, as the short form at the top of with is to go")
+	}
+	var ios *scenario.IOS
+	if r.IOS != nil {
+		if ios, err = iosTarget(call, *r.IOS); err != nil {
+			return nil, err
+		}
 	}
 	// The storage state is read before the browser starts, so that a
 	// missing file, as when the step that writes it failed, fails the step
@@ -78,11 +101,15 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	chrome, err := page.Start(a.ctx, page.Options{Headless: r.Headless, Width: r.Width, Height: r.Height, StorageState: state})
-	if err != nil {
-		return nil, err
+	targets := scenario.Targets{IOS: ios}
+	if r.Browser {
+		chrome, err := page.Start(a.ctx, page.Options{Headless: r.Headless, Width: r.Width, Height: r.Height, StorageState: state})
+		if err != nil {
+			return nil, err
+		}
+		defer chrome.Close()
+		targets.Browser = chrome
 	}
-	defer chrome.Close()
 
 	cfg := scenario.Config{
 		Task:     r.Task,
@@ -102,7 +129,7 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 		Strict:    r.Cache != "" && r.CacheMode == cacheStrict,
 		Viewport:  scenario.Viewport{Width: r.Width, Height: r.Height},
 	}
-	o, err := scenario.Run(a.ctx, cfg, chrome, model)
+	o, err := scenario.Run(a.ctx, cfg, targets, model)
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +147,63 @@ func (a *Action) run(with map[string]any) (map[string]any, error) {
 		a.log.Info("recorded the test", "cache", r.Cache, "steps", len(o.Recording.Steps))
 	}
 	return result(r, o, f, time.Since(start))
+}
+
+// probeIOS is the repository of probe-ios, by which the agent finds the
+// name the workflow gives it.
+const probeIOS = "github.com/mozership/probe-ios"
+
+// iosTarget returns the app of t, driven through probe-ios: the action the
+// workflow names under actions whose reference is github.com/mozership/probe-ios,
+// whatever its name.
+func iosTarget(call actionrpc.Call, t iosReq) (*scenario.IOS, error) {
+	name, err := iosAction(call.Actions)
+	if err != nil {
+		return nil, err
+	}
+	caller := probe.NewActionCaller(call, "")
+	return &scenario.IOS{
+		App:    t.App,
+		Device: t.Device,
+		Call: func(ctx context.Context, actions []map[string]any) (map[string]any, error) {
+			list := make([]any, len(actions))
+			for i, a := range actions {
+				list[i] = a
+			}
+			with := map[string]any{"app": t.App, "actions": list}
+			if t.Device != "" {
+				with["device"] = t.Device
+			}
+			cr, err := caller.Call(ctx, name, with)
+			if err != nil {
+				return nil, err
+			}
+			res, ok := cr.Result["res"].(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("%s returned no res", name)
+			}
+			return res, nil
+		},
+	}, nil
+}
+
+// iosAction returns the name actions give probe-ios.
+func iosAction(actions map[string]string) (string, error) {
+	var names []string
+	for name, uses := range actions {
+		ref, err := actionref.Parse(uses)
+		if err == nil && ref.Local == "" && ref.Owner+"/"+ref.Repo == "mozership/probe-ios" && ref.Dir == "" {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	switch len(names) {
+	case 0:
+		return "", fmt.Errorf("targets.ios drives the app through probe-ios: name it under actions of the workflow, as ios: %s@<commit SHA>", probeIOS)
+	case 1:
+		return names[0], nil
+	}
+	return "", fmt.Errorf("targets.ios cannot tell which of %s under actions to drive the app through: each names %s", strings.Join(names, " and "), probeIOS)
 }
 
 // newModel returns the model of the provider r names. The API key of a
@@ -159,6 +243,7 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 		"steps":          o.Steps,
 		"url":            o.URL,
 		"title":          o.Title,
+		"targets":        o.Targets,
 		"console_errors": o.ConsoleErrors,
 		"network_errors": o.NetworkErrors,
 		"metrics":        o.Metrics,
@@ -181,12 +266,21 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 		res["cache"] = c
 	}
 	reqMap := map[string]any{
-		"url":       r.URL,
+		"targets":   r.kinds(),
 		"provider":  r.Provider,
 		"model":     r.Model,
 		"effort":    r.Effort,
 		"max_steps": r.MaxSteps,
 		"timeout":   r.Timeout.String(),
+	}
+	if r.Browser {
+		reqMap["url"] = r.URL
+	}
+	if r.IOS != nil {
+		reqMap["app"] = r.IOS.App
+		if r.IOS.Device != "" {
+			reqMap["device"] = r.IOS.Device
+		}
 	}
 	if o.Mode == scenario.ModePersona {
 		reqMap["persona"], reqMap["goal"] = r.Persona, r.Goal

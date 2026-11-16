@@ -1,0 +1,64 @@
+# The end-to-end tests of an iOS app: probe-agent drives the Settings app
+# of an iOS simulator through probe-ios, alone and beside a browser on the
+# help page of e2e/server. Run it from the repository root on macOS, with
+# Xcode, a booted simulator, the server listening, Chrome installed and
+# ANTHROPIC_API_KEY set, and the action built first:
+#
+#   xcrun simctl boot "iPhone 17"
+#   go -C e2e/server run . &
+#   go build -o e2e/action/probe-agent . && probe e2e/ios.yml
+#
+# DEVICE names the simulator when more than one is booted. probe-ios builds
+# its runner the first time, which takes minutes, so the steps have a
+# timeout of 15 minutes. The calls of probe-ios need Probe v1.37.0 or
+# later.
+name: probe-agent against an iOS app
+
+actions:
+  agent: ./action
+  ios: github.com/mozership/probe-ios@836056e3b6a1f9d164ff5674c35b774423647bcc # v0.2.1
+
+secrets:
+- ANTHROPIC_API_KEY
+
+vars:
+  device: "{{DEVICE ?? ''}}"
+  server: "{{SERVER ?? 'http://127.0.0.1:18090'}}"
+
+jobs:
+- name: Settings
+  defaults:
+    agent:
+      evidence_dir: out/agent
+      timeout: 12m
+  steps:
+  - name: A user finds the version of iOS
+    uses: agent
+    timeout: 15m
+    with:
+      task: Find which version of iOS the iPhone runs.
+      expect: The screen shows the version of iOS.
+      targets:
+        ios:
+          app: com.apple.Preferences
+          device: "{{vars.device}}"
+    test: res.verdict == "pass" && res.targets[0].kind == "ios"
+    echo: "{{res.report}}"
+
+  - name: A help page on the web names a section the app opens
+    uses: agent
+    timeout: 15m
+    with:
+      task: Read on the help page which section of the Settings app to open, and open it in the Settings app.
+      expect: The Settings app shows the section the help page names.
+      targets:
+        browser:
+          url: "{{vars.server}}/help"
+        ios:
+          app: com.apple.Preferences
+          device: "{{vars.device}}"
+    test: |
+      res.verdict == "pass" &&
+      len(filter(res.steps, .target == "browser")) > 0 &&
+      len(filter(res.steps, .target == "ios")) > 0
+    echo: "{{res.report}}"

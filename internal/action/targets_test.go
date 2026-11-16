@@ -1,0 +1,177 @@
+package action
+
+import (
+	"os"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/mozership/probe-agent/internal/scenario"
+)
+
+func TestParse_Targets(t *testing.T) {
+	r, err := parse(map[string]any{
+		"task": "t", "expect": "e",
+		"targets": map[string]any{
+			"browser": map[string]any{"url": "https://app.test/", "allow_hosts": []any{"app.test", "auth.test"}, "headless": "false", "window_w": 1024.0},
+			"ios":     map[string]any{"app": "com.example.app", "device": "iPhone 17"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Browser || r.ShortForm || r.URL != "https://app.test/" || r.Headless || r.Width != 1024 {
+		t.Errorf("browser %+v", r)
+	}
+	if !slices.Equal(r.AllowHosts, []string{"app.test", "auth.test"}) {
+		t.Errorf("allow_hosts %v", r.AllowHosts)
+	}
+	if r.IOS == nil || r.IOS.App != "com.example.app" || r.IOS.Device != "iPhone 17" {
+		t.Errorf("ios %+v", r.IOS)
+	}
+	if got := r.kinds(); !slices.Equal(got, []string{"browser", "ios"}) {
+		t.Errorf("kinds %v", got)
+	}
+}
+
+func TestParse_TargetsIOSAlone(t *testing.T) {
+	r, err := parse(map[string]any{
+		"task": "t", "expect": "e",
+		"targets": map[string]any{"ios": map[string]any{"app": "com.apple.Preferences"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Browser || r.URL != "" || r.IOS == nil || r.IOS.App != "com.apple.Preferences" {
+		t.Errorf("parsed %+v", r)
+	}
+}
+
+// The parameters of the browser at the top of with are the short form of
+// targets.browser, as before there were targets.
+func TestParse_ShortFormOfTheBrowser(t *testing.T) {
+	r, err := parse(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Browser || !r.ShortForm || r.IOS != nil || r.URL != "http://a.test/" {
+		t.Errorf("parsed %+v", r)
+	}
+}
+
+func TestParse_RefusesTargets(t *testing.T) {
+	ios := map[string]any{"app": "com.example.app"}
+	for name, tt := range map[string]struct {
+		with map[string]any
+		want string
+	}{
+		"both forms": {
+			with: map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "targets": map[string]any{"ios": ios}},
+			want: "url goes under targets.browser",
+		},
+		"not a map":      {with: map[string]any{"task": "t", "expect": "e", "targets": "ios"}, want: "targets must be a map"},
+		"no target":      {with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{}}, want: "names no target"},
+		"a later target": {with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"url": "http://a.test/"}}}, want: "targets.http is not driven yet"},
+		"an unknown target": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"android": map[string]any{}}},
+			want: "unknown target android",
+		},
+		"an unknown key of a target": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"ios": map[string]any{"app": "a", "bundle": "b"}}},
+			want: "unknown parameter targets.ios.bundle",
+		},
+		"no app": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"ios": map[string]any{"device": "iPhone 17"}}},
+			want: "targets.ios.app is required",
+		},
+		"an ios with nothing under it": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"ios": nil}},
+			want: "targets.ios.app is required",
+		},
+		"no url of the browser": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"browser": map[string]any{"headless": true}}},
+			want: "targets.browser.url is required",
+		},
+		"a bad url of the browser": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"browser": map[string]any{"url": "file:///etc/passwd"}}},
+			want: "targets.browser.url",
+		},
+		"a cache with an app": {
+			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"ios": ios}},
+			want: "cache is for a test of a browser alone",
+		},
+	} {
+		_, err := parse(tt.with)
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: err %v, want it to say %q", name, err, tt.want)
+		}
+	}
+}
+
+func TestIOSAction(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	tests := []struct {
+		name    string
+		actions map[string]string
+		want    string
+		err     string
+	}{
+		{name: "by any name", actions: map[string]string{"iphone": "github.com/mozership/probe-ios@" + sha, "agent": "github.com/mozership/probe-agent@" + sha}, want: "iphone"},
+		{name: "none", actions: map[string]string{"agent": "github.com/mozership/probe-agent@" + sha}, err: "name it under actions"},
+		{name: "a local action is not it", actions: map[string]string{"ios": "/src/probe-ios"}, err: "name it under actions"},
+		{name: "two", actions: map[string]string{"a": "github.com/mozership/probe-ios@" + sha, "b": "github.com/mozership/probe-ios@" + strings.Repeat("b", 40)}, err: "cannot tell which of a and b"},
+	}
+	for _, tt := range tests {
+		got, err := iosAction(tt.actions)
+		switch {
+		case tt.err != "" && (err == nil || !strings.Contains(err.Error(), tt.err)):
+			t.Errorf("%s: err %v, want %q", tt.name, err, tt.err)
+		case tt.err == "" && (err != nil || got != tt.want):
+			t.Errorf("%s: %q, %v, want %q", tt.name, got, err, tt.want)
+		}
+	}
+}
+
+func TestResult_Targets(t *testing.T) {
+	r := req{Task: "t", Expect: "e", IOS: &iosReq{App: "com.example.app", Device: "iPhone 17"}, Model: "claude-opus-5-5", Effort: "medium", MaxSteps: 40}
+	o := outcome()
+	o.URL, o.Title = "", ""
+	o.Targets = []scenario.TargetState{{Kind: "ios", App: "com.example.app", Device: "UDID-1"}}
+	ret, err := result(r, o, files{Report: "/tmp/x/report.md"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := ret["req"].(map[string]any)
+	if _, ok := req["url"]; ok || req["app"] != "com.example.app" || req["device"] != "iPhone 17" {
+		t.Errorf("req %v", req)
+	}
+	if kinds := req["targets"].([]any); len(kinds) != 1 || kinds[0] != "ios" {
+		t.Errorf("req.targets %v", req["targets"])
+	}
+	targets := ret["res"].(map[string]any)["targets"].([]any)
+	if len(targets) != 1 || targets[0].(map[string]any)["device"] != "UDID-1" {
+		t.Errorf("res.targets %v", targets)
+	}
+}
+
+func TestEvidence_WritesTheFinalScreenOfTheApp(t *testing.T) {
+	ev, err := newEvidence(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := outcome()
+	o.Targets = []scenario.TargetState{
+		{Kind: "browser", URL: "http://a.test/dashboard", Title: "Dashboard", Screenshot: ev.save("final.jpg", []byte{0xff, 0xd8})},
+		{Kind: "ios", App: "com.example.app", Device: "UDID-1", Screenshot: ev.save("final-ios.png", []byte{0x89, 'P'})},
+	}
+	f, err := ev.write(req{Task: "t", Expect: "e"}, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	md, _ := os.ReadFile(f.Report)
+	for _, want := range []string{"## Final page\n\nDashboard (<http://a.test/dashboard>)", "![final page](final.jpg)", "## Final screen of the app\n\ncom.example.app on UDID-1", "![final screen](final-ios.png)"} {
+		if !strings.Contains(string(md), want) {
+			t.Errorf("the report lacks %q:\n%s", want, md)
+		}
+	}
+}

@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/hashicorp/go-hclog"
 	"github.com/mozership/probe/actionref"
+	"github.com/mozership/probe/actionrpc"
 	"github.com/mozership/probe/style"
 
 	"github.com/mozership/probe-agent/internal/llm"
@@ -400,11 +402,11 @@ func TestParse_StorageState(t *testing.T) {
 // TestRun_MissingStorageState fails the step before the browser starts, as
 // when the step that saves the login failed.
 func TestRun_MissingStorageState(t *testing.T) {
-	a := &Action{ctx: t.Context()}
-	_, err := a.run(map[string]any{
+	a := &Action{ctx: t.Context(), log: hclog.NewNullLogger()}
+	_, err := a.run(actionrpc.Call{With: map[string]any{
 		"task": "t", "expect": "e", "url": "http://a.test/",
 		"storage_state": filepath.Join(t.TempDir(), "missing.json"),
-	})
+	}})
 	if err == nil || !strings.Contains(err.Error(), "storage_state: open") {
 		t.Errorf("error %v, want the file refused", err)
 	}
@@ -418,8 +420,8 @@ func TestRun_StorageStateOfAnotherShape(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"passkeys": []}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	a := &Action{ctx: t.Context()}
-	_, err := a.run(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "storage_state": path})
+	a := &Action{ctx: t.Context(), log: hclog.NewNullLogger()}
+	_, err := a.run(actionrpc.Call{With: map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "storage_state": path}})
 	if err == nil || !strings.Contains(err.Error(), "storage_state: "+path+" is not a storage state: it has no list of cookies") {
 		t.Errorf("error %v, want the file refused", err)
 	}

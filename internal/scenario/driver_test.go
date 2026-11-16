@@ -24,6 +24,11 @@ func (d *stubDriver) Offer(opts *llm.ChatOptions) {
 func (d *stubDriver) Handles(call llm.Call) bool {
 	return call.Toolset == "" && call.Name == d.kind+"_do"
 }
+func (d *stubDriver) Brief() string   { return "The " + d.kind + ":" }
+func (d *stubDriver) Opening() string { return "The " + d.kind + " is open." }
+func (d *stubDriver) Final(context.Context, bool) observation {
+	return observation{heading: "The " + d.kind + " at the end:", state: TargetState{Kind: d.kind}}
+}
 func (d *stubDriver) Do(_ context.Context, call llm.Call) (llm.Result, Step) {
 	d.ran = append(d.ran, call.ID)
 	return llm.Result{CallID: call.ID, Text: "done on " + d.kind}, Step{Tool: call.Name, Result: "done on " + d.kind}

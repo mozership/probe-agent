@@ -45,7 +45,7 @@ func recorded(t *testing.T) *Recording {
 	}}
 	cfg := config()
 	cfg.Record = true
-	o, err := Run(t.Context(), cfg, p, m)
+	o, err := Run(t.Context(), cfg, Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestRun_ReplaysAllWithoutTheTester(t *testing.T) {
 	cfg := config()
 	cfg.StartURL = "http://staging.test/"
 	cfg.Recording, cfg.Record = rec, true
-	o, err := Run(t.Context(), cfg, p, m)
+	o, err := Run(t.Context(), cfg, Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestRun_HandsOffWhereTheRecordingStopsMatching(t *testing.T) {
 	}}
 	cfg := config()
 	cfg.Recording, cfg.Record = rec, true
-	o, err := Run(t.Context(), cfg, p, m)
+	o, err := Run(t.Context(), cfg, Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestRun_ReplayChecksWhereStepsLead(t *testing.T) {
 	}}
 	cfg := config()
 	cfg.Recording, cfg.Record = rec, true
-	o, err := Run(t.Context(), cfg, p, m)
+	o, err := Run(t.Context(), cfg, Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestRun_ReplayOnlyForTheSameTask(t *testing.T) {
 	cfg := config()
 	cfg.Task = "Sign up with a Google account."
 	cfg.Recording = rec
-	o, err := Run(t.Context(), cfg, p, m)
+	o, err := Run(t.Context(), cfg, Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func codeRecording(t *testing.T) *Recording {
 	}}
 	cfg := config()
 	cfg.Record = true
-	o, err := Run(t.Context(), cfg, p, m)
+	o, err := Run(t.Context(), cfg, Targets{Browser: p}, m)
 	if err != nil || o.Recording == nil {
 		t.Fatalf("recording %v, %v", o.Recording, err)
 	}
@@ -324,7 +324,7 @@ func TestRun_ValuesReadOffTheScreenAreGaps(t *testing.T) {
 	}}
 	cfg := config()
 	cfg.Recording, cfg.Record, cfg.Strict = rec, true, true
-	o, err := Run(t.Context(), cfg, p, m)
+	o, err := Run(t.Context(), cfg, Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestRun_StrictStopsAStaleReplay(t *testing.T) {
 	m := &fakeModel{}
 	cfg := config()
 	cfg.Recording, cfg.Strict = rec, true
-	o, err := Run(t.Context(), cfg, p, m)
+	o, err := Run(t.Context(), cfg, Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestRun_ReplayStopsAtAnAlertItDidNotSee(t *testing.T) {
 	m := &fakeModel{}
 	cfg := config()
 	cfg.Recording, cfg.Strict = rec, true
-	o, err := Run(t.Context(), cfg, p, m)
+	o, err := Run(t.Context(), cfg, Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +381,7 @@ func TestRun_ReplayBeginsOnlyWhereTheRecordingBegan(t *testing.T) {
 	m := &fakeModel{}
 	cfg := config()
 	cfg.Recording, cfg.Strict = rec, true
-	o, err := Run(t.Context(), cfg, p, m)
+	o, err := Run(t.Context(), cfg, Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,13 +401,13 @@ func TestRun_PointStepsNeedTheSameViewport(t *testing.T) {
 	}}
 	cfg := config()
 	cfg.Record, cfg.Viewport = true, Viewport{Width: 1280, Height: 800}
-	o, err := Run(t.Context(), cfg, p, m)
+	o, err := Run(t.Context(), cfg, Targets{Browser: p}, m)
 	if err != nil || o.Recording == nil || o.Recording.Steps[0].Gap != "" {
 		t.Fatalf("recording %+v, %v", o.Recording, err)
 	}
 
 	cfg.Recording, cfg.Strict, cfg.Viewport = o.Recording, true, Viewport{Width: 390, Height: 844}
-	o, err = Run(t.Context(), cfg, &fakePage{url: "http://app.test:8080/"}, &fakeModel{})
+	o, err = Run(t.Context(), cfg, Targets{Browser: &fakePage{url: "http://app.test:8080/"}}, &fakeModel{})
 	if err != nil {
 		t.Fatal(err)
 	}

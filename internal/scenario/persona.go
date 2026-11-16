@@ -98,7 +98,7 @@ func (r *run) noted(input json.RawMessage) llm.Result {
 		return llm.Result{Text: "Error: give at least a title, a severity and what you observed.", IsError: true}
 	}
 	r.notes = append(r.notes, note{
-		step: len(r.steps), url: r.web.url,
+		step: len(r.steps), url: r.where(),
 		title: in.Title, severity: in.Severity, expected: in.Expected, observed: in.Observed,
 	})
 	return llm.Result{Text: fmt.Sprintf("Noted N%d. Carry on toward the goal if you can, or call finish.", len(r.notes))}
@@ -120,15 +120,17 @@ func personaSystem(h hosts) string {
 - Write the notes and the summary in English, unless the text in <goal> is written in another language; then write them in that language.`
 }
 
-func personaPrompt(persona, goal, startURL string, s secrets) string {
+// personaPrompt is the prompt of the tester of a persona test, with seenIn
+// and opening as testerPrompt takes them.
+func personaPrompt(persona, goal, seenIn, opening string, s secrets) string {
 	var b strings.Builder
 	b.WriteString("You are:\n<persona>\n" + persona + "\n</persona>\n\n")
 	b.WriteString("Your goal:\n<goal>\n" + goal + "\n</goal>\n\n")
-	b.WriteString("Afterwards, someone will check whether you reached the goal, so end where it can be seen in the browser.\n\n")
+	b.WriteString("Afterwards, someone will check whether you reached the goal, so end where it can be seen " + seenIn + ".\n\n")
 	if len(s.values) > 0 {
 		b.WriteString("The secrets you can use are " + s.list() + ".\n\n")
 	}
-	b.WriteString("The browser has opened " + startURL + ".")
+	b.WriteString(opening)
 	return b.String()
 }
 
@@ -192,7 +194,7 @@ type review struct {
 
 // review has the reviewer decide whether the persona reached the goal, and
 // what is wrong with the application.
-func (r *run) review(ctx context.Context, o Outcome, f final) (review, error) {
+func (r *run) review(ctx context.Context, o Outcome, f []observation) (review, error) {
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
 	w("<persona>\n%s\n</persona>\n\n", r.secrets.mask(r.cfg.Persona))
@@ -285,6 +287,9 @@ func (r *run) review(ctx context.Context, o Outcome, f final) (review, error) {
 
 // slowLines are the slowest requests as the reviewer is shown them.
 func (r *run) slowLines() []string {
+	if r.web == nil {
+		return nil
+	}
 	var lines []string
 	for _, q := range r.web.page.Requests().Slowest {
 		lines = append(lines, fmt.Sprintf("- %s %s -> %d in %d ms", q.Method, r.secrets.mask(q.URL), q.Status, q.DurationMS))

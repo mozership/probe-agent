@@ -113,10 +113,13 @@ type Outcome struct {
 	// Summary is what the tester said it did and saw.
 	Summary string `json:"summary"`
 	Steps   []Step `json:"steps"`
-	// URL and Title are of the page the tester left the browser on.
+	// URL and Title are of the page the tester left the browser on, and
+	// empty for a test without a browser.
 	URL             string `json:"url"`
 	Title           string `json:"title"`
 	FinalScreenshot string `json:"final_screenshot,omitempty"`
+	// Targets are the last state of each target of the test.
+	Targets []TargetState `json:"targets"`
 	// ConsoleErrors and NetworkErrors are what the pages reported while the
 	// tester used them.
 	ConsoleErrors []page.ConsoleError `json:"console_errors"`
@@ -154,10 +157,12 @@ type Evidence struct {
 	Verified bool   `json:"verified"`
 }
 
-// Step is a call the tester made to the browser.
+// Step is a call the tester made to a target.
 type Step struct {
 	Index int    `json:"index"`
 	Tool  string `json:"tool"`
+	// Target is the kind of the target the step used, browser or ios.
+	Target string `json:"target"`
 	// Notes are what the tester wrote before the call.
 	Notes      []string       `json:"notes,omitempty"`
 	Input      map[string]any `json:"input,omitempty"`
@@ -182,6 +187,15 @@ type run struct {
 	handoffNote string
 }
 
+// where is the page the browser is on, for a note of the tester to say
+// where it was taken, or "" for a test without a browser.
+func (r *run) where() string {
+	if r.web == nil {
+		return ""
+	}
+	return r.web.url
+}
+
 // driverOf returns the driver whose tool call calls, or nil when none has
 // it.
 func (r *run) driverOf(call llm.Call) Driver {
@@ -193,14 +207,31 @@ func (r *run) driverOf(call llm.Call) Driver {
 	return nil
 }
 
-// Run runs the test of cfg on p with m. It returns an error only for what
-// makes the test not run as written, such as a request the model's API
-// refused; how the application behaved is in the outcome.
-func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, error) {
+// Targets are what a test drives: a browser, an iOS app, or both.
+type Targets struct {
+	// Browser is the tab of the browser, driven from Config.StartURL.
+	Browser page.Page
+	// IOS is an app on an iOS simulator.
+	IOS *IOS
+}
+
+// Run runs the test of cfg on the targets t with m. It returns an error
+// only for what makes the test not run as written, such as a request the
+// model's API refused, or a target that cannot be opened; how the
+// application behaved is in the outcome.
+func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, error) {
 	start := time.Now()
 	r := &run{ledger: newLedger(cfg), model: m}
-	r.web = newBrowserDriver(r.ledger, p)
-	r.drivers = []Driver{r.web}
+	if t.Browser != nil {
+		r.web = newBrowserDriver(r.ledger, t.Browser)
+		r.drivers = append(r.drivers, r.web)
+	}
+	if t.IOS != nil {
+		r.drivers = append(r.drivers, newIOSDriver(r.ledger, *t.IOS, m.Vision()))
+	}
+	if len(r.drivers) == 0 {
+		return Outcome{}, errors.New("the test has no target")
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
@@ -217,7 +248,8 @@ func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, er
 
 	o := Outcome{Mode: cfg.Mode(), Model: m.Name()}
 	var stopped, summary string
-	if rec := cfg.Recording; rec != nil && o.Mode == ModeScenario {
+	// A recording is of the steps of a browser, the one target of its test.
+	if rec := cfg.Recording; rec != nil && o.Mode == ModeScenario && r.browserOnly() {
 		o.Replay = &Replay{Status: ReplayMiss, Reason: r.web.usable(rec)}
 		if o.Replay.Reason == "" {
 			*o.Replay = r.web.replay(testerCtx, rec)
@@ -242,11 +274,21 @@ func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, er
 	}
 	o.Stopped, o.Summary = stopped, summary
 
-	// The last page is read on the test's context, which the tester's
-	// running out of time leaves some of.
-	final := r.web.final(ctx, r.model.Vision())
-	o.URL, o.Title = r.secrets.mask(final.url), r.secrets.mask(final.title)
-	o.FinalScreenshot = final.screenshot
+	// What the targets show last is read on the test's context, which the
+	// tester's running out of time leaves some of.
+	var final []observation
+	for _, d := range r.drivers {
+		obs := d.Final(ctx, r.model.Vision())
+		obs.state.Screenshot = obs.screenshot
+		final = append(final, obs)
+		o.Targets = append(o.Targets, obs.state)
+		if o.FinalScreenshot == "" {
+			o.FinalScreenshot = obs.screenshot
+		}
+	}
+	if r.web != nil {
+		o.URL, o.Title = final[0].state.URL, final[0].state.Title
+	}
 
 	switch {
 	case stopped == StoppedStale:
@@ -277,7 +319,7 @@ func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, er
 		}
 		o.Verdict, o.Reason, o.Evidence = v.verdict, v.reason, v.evidence
 	}
-	if cfg.Record && o.Mode == ModeScenario && o.Verdict == Pass && stopped == StoppedDone &&
+	if cfg.Record && r.browserOnly() && o.Mode == ModeScenario && o.Verdict == Pass && stopped == StoppedDone &&
 		(o.Replay == nil || o.Replay.Status != ReplayHit) {
 		if rec := r.web.recording(); cfg.Recording == nil || !sameRecording(rec, cfg.Recording) {
 			o.Recording = rec
@@ -285,17 +327,21 @@ func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, er
 	}
 
 	o.Steps = r.steps
-	o.ConsoleErrors = r.web.page.ConsoleErrors()
-	for i := range o.ConsoleErrors {
-		o.ConsoleErrors[i].Text = r.secrets.mask(o.ConsoleErrors[i].Text)
-	}
-	o.NetworkErrors = r.web.page.NetworkErrors()
-	for i := range o.NetworkErrors {
-		o.NetworkErrors[i].URL = r.secrets.mask(o.NetworkErrors[i].URL)
-	}
-	reqs := r.web.page.Requests()
-	for i := range reqs.Slowest {
-		reqs.Slowest[i].URL = r.secrets.mask(reqs.Slowest[i].URL)
+	// The console, the requests and their errors are of the browser.
+	var reqs page.Requests
+	if r.web != nil {
+		o.ConsoleErrors = r.web.page.ConsoleErrors()
+		for i := range o.ConsoleErrors {
+			o.ConsoleErrors[i].Text = r.secrets.mask(o.ConsoleErrors[i].Text)
+		}
+		o.NetworkErrors = r.web.page.NetworkErrors()
+		for i := range o.NetworkErrors {
+			o.NetworkErrors[i].URL = r.secrets.mask(o.NetworkErrors[i].URL)
+		}
+		reqs = r.web.page.Requests()
+		for i := range reqs.Slowest {
+			reqs.Slowest[i].URL = r.secrets.mask(reqs.Slowest[i].URL)
+		}
 	}
 	o.Usage = m.Usage()
 	o.Duration = time.Since(start)
@@ -319,13 +365,12 @@ func judgeReserve(timeout time.Duration) time.Duration {
 // what it said it did.
 func (r *run) test(ctx context.Context) (stopped, summary string, err error) {
 	opts := llm.ChatOptions{
-		System: testerSystem(r.web.hosts),
-		Prompt: testerPrompt(r.secrets.mask(r.cfg.Task), r.secrets.mask(r.cfg.Expect), r.cfg.StartURL, r.secrets) + r.handoffNote,
+		System: r.system(),
+		Prompt: testerPrompt(r.secrets.mask(r.cfg.Task), r.secrets.mask(r.cfg.Expect), r.seenIn(), r.opening(), r.secrets) + r.handoffNote,
 		Tools:  []llm.Tool{finishTool},
 	}
 	if r.cfg.Mode() == ModePersona {
-		opts.System = personaSystem(r.web.hosts)
-		opts.Prompt = personaPrompt(r.secrets.mask(r.cfg.Persona), r.secrets.mask(r.cfg.Goal), r.cfg.StartURL, r.secrets)
+		opts.Prompt = personaPrompt(r.secrets.mask(r.cfg.Persona), r.secrets.mask(r.cfg.Goal), r.seenIn(), r.opening(), r.secrets)
 		opts.Tools = []llm.Tool{noteTool, finishTool}
 	}
 	for _, d := range r.drivers {
@@ -418,13 +463,44 @@ func nonEmpty(s string) []string {
 	return []string{s}
 }
 
-// final is the page the tester left the browser on.
-type final struct {
-	url, title string
-	text       string
-	elements   string
+// observation is what a target shows once the tester is done, for the
+// judge or the reviewer.
+type observation struct {
+	// heading introduces it in the record, such as the page the tester
+	// left the browser on.
+	heading string
+	// sections are what it shows, each in a tag of its own.
+	sections []section
+	// image is a screenshot of it, of mediaType, which the judge is shown
+	// when the model sees images, after imageNote in the record.
+	image     []byte
+	mediaType string
+	imageNote string
+	// screenshot is where the screenshot was kept as evidence.
 	screenshot string
-	image      []byte
+	// state is the last state of the target, for the outcome.
+	state TargetState
+}
+
+// section is a text a target shows, in a tag of its own in the record.
+type section struct {
+	tag, text string
+}
+
+// TargetState is the last state of a target of a test.
+type TargetState struct {
+	// Kind is browser or ios.
+	Kind string `json:"kind"`
+	// URL and Title are of the page the browser was left on.
+	URL   string `json:"url,omitempty"`
+	Title string `json:"title,omitempty"`
+	// App and Device are of the app the tester drove, and the simulator
+	// it ran on.
+	App    string `json:"app,omitempty"`
+	Device string `json:"device,omitempty"`
+	// Screenshot is where the screenshot of the target at the end was
+	// kept.
+	Screenshot string `json:"screenshot,omitempty"`
 }
 
 var finishTool = llm.Tool{
@@ -458,14 +534,17 @@ func testerSystem(h hosts) string {
 - Write the summary in English, unless the text in <task> is written in another language; then write it in that language.`
 }
 
-func testerPrompt(task, expect, startURL string, s secrets) string {
+// testerPrompt is the prompt of the tester of a scenario test. seenIn says
+// where the tester ends for what it did to be seen, as in the browser, and
+// opening what the targets show as it starts.
+func testerPrompt(task, expect, seenIn, opening string, s secrets) string {
 	var b strings.Builder
 	b.WriteString("Your task:\n<task>\n" + task + "\n</task>\n\n")
-	b.WriteString("Afterwards, someone will check the following, so end the task where it can be seen in the browser:\n<expect>\n" + expect + "\n</expect>\n\n")
+	b.WriteString("Afterwards, someone will check the following, so end the task where it can be seen " + seenIn + ":\n<expect>\n" + expect + "\n</expect>\n\n")
 	if len(s.values) > 0 {
 		b.WriteString("The secrets you can use are " + s.list() + ".\n\n")
 	}
-	b.WriteString("The browser has opened " + startURL + ".")
+	b.WriteString(opening)
 	return b.String()
 }
 

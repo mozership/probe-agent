@@ -22,6 +22,15 @@ type Driver interface {
 	// Do runs a call of a tool of the target, and returns its result and
 	// the step that records it, for Index and Notes to be filled in.
 	Do(ctx context.Context, call llm.Call) (llm.Result, Step)
+	// Brief tells the tester of a test of more than one target, or of
+	// another target than the browser, what the target is and how to use
+	// it, under a line naming it.
+	Brief() string
+	// Opening says what the target shows as the tester starts.
+	Opening() string
+	// Final is what the target shows once the tester is done, for the
+	// judge or the reviewer, with vision whether the model sees images.
+	Final(ctx context.Context, vision bool) observation
 }
 
 // ledger is what a test keeps of what the tester did and what its targets

@@ -72,3 +72,64 @@ jobs:
       - name: What the server logged
         if: always() && env.ANTHROPIC_API_KEY != ''
         run: cat "$RUNNER_TEMP/server.txt"
+
+  # The action driving the Settings app of an iOS simulator through
+  # probe-ios, alone and beside a browser, with a real model. It needs
+  # macOS for Xcode and the simulator, and the key of the Claude API.
+  e2e-ios:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      PROBE_IOS_CACHE_DIR: ${{ github.workspace }}/.probe-ios
+    steps:
+      - name: Skip without a key
+        if: env.ANTHROPIC_API_KEY == ''
+        run: echo "ANTHROPIC_API_KEY is not set; the iOS e2e workflow is skipped." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: env.ANTHROPIC_API_KEY != ''
+      - name: Setup Chrome
+        if: env.ANTHROPIC_API_KEY != ''
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: env.ANTHROPIC_API_KEY != ''
+        with:
+          go-version-file: go.mod
+      # probe-action installs probe on Linux alone. The agent calls
+      # probe-ios with ActionCaller, which needs v1.37.0 or later.
+      - if: env.ANTHROPIC_API_KEY != ''
+        run: go install github.com/mozership/probe/cmd/probe@v1.37.0
+      # probe-ios builds its runner the first time, which takes minutes;
+      # its own key changes with Xcode, so a stale entry is only built over.
+      - uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
+        if: env.ANTHROPIC_API_KEY != ''
+        with:
+          path: .probe-ios/runner
+          key: probe-ios-runner-${{ runner.os }}-${{ hashFiles('e2e/ios.yml') }}
+      # As in the e2e tests of probe-ios: a simulator on a named runtime,
+      # booted by its UDID, and left to settle before XCUITest queries it.
+      - name: Boot a simulator
+        if: env.ANTHROPIC_API_KEY != ''
+        run: |
+          UDID=$(xcrun simctl create e2e "iPhone 17" com.apple.CoreSimulator.SimRuntime.iOS-26-5)
+          xcrun simctl bootstatus "$UDID" -b
+          echo "DEVICE=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl launch "$UDID" com.apple.Preferences
+          sleep 60
+          xcrun simctl terminate "$UDID" com.apple.Preferences
+      - if: env.ANTHROPIC_API_KEY != ''
+        run: go build -o e2e/action/probe-agent .
+      - name: Start the server
+        if: env.ANTHROPIC_API_KEY != ''
+        run: |
+          go -C e2e/server build -o server .
+          e2e/server/server > "$RUNNER_TEMP/server.txt" 2>&1 &
+      - name: Run the iOS e2e workflow
+        if: env.ANTHROPIC_API_KEY != ''
+        run: probe e2e/ios.yml
+      - name: Keep the evidence
+        if: always() && env.ANTHROPIC_API_KEY != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agent-ios-evidence
+          path: out/agent

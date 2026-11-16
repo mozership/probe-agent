@@ -178,3 +178,17 @@ func header(t *testing.T, c *http.Client, url, want, unwanted string) {
 		t.Errorf("the header of %s is %s; want %s and no %s", url, h, want, unwanted)
 	}
 }
+
+func TestHelp(t *testing.T) {
+	s := httptest.NewServer(newMux())
+	defer s.Close()
+	res, err := http.Get(s.URL + "/help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || !strings.Contains(string(body), "the section named Accessibility") {
+		t.Fatalf("%d %s", res.StatusCode, body)
+	}
+}
