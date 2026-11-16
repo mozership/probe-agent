@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/mozership/probe/actionref"
+	"github.com/mozership/probe/style"
 
 	"github.com/mozership/probe-agent/internal/llm"
 	"github.com/mozership/probe-agent/internal/page"
@@ -420,5 +422,66 @@ func TestRun_StorageStateOfAnotherShape(t *testing.T) {
 	_, err := a.run(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "storage_state": path})
 	if err == nil || !strings.Contains(err.Error(), "storage_state: "+path+" is not a storage state: it has no list of cookies") {
 		t.Errorf("error %v, want the file refused", err)
+	}
+}
+
+// plainMarks runs the test as Probe runs the action when it does not print
+// to a terminal, so that a mark is its icon alone.
+func plainMarks(t *testing.T) {
+	t.Helper()
+	t.Setenv("PROBE_TTY", "")
+	t.Setenv("FORCE_COLOR", "")
+	was := color.NoColor
+	color.NoColor = true
+	t.Cleanup(func() { color.NoColor = was })
+}
+
+// What Probe prints under the step marks the verdict and the findings as
+// Probe marks a step, not by the emoji of report.md.
+func TestShortReport_MarksAsProbe(t *testing.T) {
+	plainMarks(t)
+	o := outcome()
+	o.Mode = scenario.ModePersona
+	o.Verdict = scenario.Fail
+	o.Findings = []scenario.Finding{
+		{Severity: "high", Title: "Broken", Verified: true},
+		{Severity: "medium", Title: "Slow", Verified: true},
+		{Severity: "low", Title: "Typo", Verified: true},
+	}
+	report := shortReport(req{Persona: "p", Goal: "g"}, o, files{})
+	for _, want := range []string{"✗ fail: ", "  ✗ high: Broken", "  ⚠︎ medium: Slow", "  ⏺ low: Typo"} {
+		if !strings.Contains(report, want) {
+			t.Errorf("report lacks %q:\n%s", want, report)
+		}
+	}
+	for _, emoji := range []string{"❌", "🔴", "🟠", "🟡"} {
+		if strings.Contains(report, emoji) {
+			t.Errorf("report has %q:\n%s", emoji, report)
+		}
+	}
+}
+
+func TestVerdictMark(t *testing.T) {
+	tests := map[string]style.Mark{
+		scenario.Pass:    style.Success,
+		scenario.Fail:    style.Failure,
+		scenario.Blocked: style.Warning,
+		"":               style.Warning,
+	}
+	for verdict, want := range tests {
+		if got := verdictMark(verdict); got != want {
+			t.Errorf("verdictMark(%q) = %d, want %d", verdict, got, want)
+		}
+	}
+}
+
+// When Probe prints to a terminal, it sets PROBE_TTY, and the marks are
+// colored as Probe colors its own.
+func TestShortReport_ColoredUnderATerminal(t *testing.T) {
+	plainMarks(t)
+	t.Setenv("PROBE_TTY", "1")
+	report := shortReport(req{Task: "t", Expect: "e"}, outcome(), files{})
+	if !strings.HasPrefix(report, style.Success.String()+" pass: ") || !strings.Contains(report, "\x1b[") {
+		t.Errorf("report %q", report)
 	}
 }

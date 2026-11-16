@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/mozership/probe-browser/storagestate"
 	"github.com/mozership/probe/actionrpc"
+	"github.com/mozership/probe/style"
 
 	"github.com/mozership/probe-agent/internal/llm"
 	"github.com/mozership/probe-agent/internal/page"
@@ -204,11 +205,33 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 	return out, nil
 }
 
+// verdictMark is the mark of verdict in what Probe prints under the step,
+// as Probe marks a step: a test that passed as one that passed, one that
+// failed as one that failed, and one that could not be carried out, or a
+// verdict of no other kind, as a warning.
+func verdictMark(verdict string) style.Mark {
+	switch verdict {
+	case scenario.Pass:
+		return style.Success
+	case scenario.Fail:
+		return style.Failure
+	default:
+		return style.Warning
+	}
+}
+
+// severityMark is the mark of a finding of severity in what Probe prints
+// under the step: the mark of the level of its note.
+func severityMark(severity string) style.Mark {
+	return style.NoteLevel(levels[severity])
+}
+
 // shortReport is what Probe prints under the step: the verdict, why, and
-// where the full report is.
+// where the full report is. It is marked as Probe marks a step, in color
+// when Probe prints to a terminal.
 func shortReport(r req, o scenario.Outcome, f files) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s: %s\n", verdictMarks[o.Verdict], o.Verdict, oneLine(o.Reason))
+	fmt.Fprintf(&b, "%s %s: %s\n", verdictMark(o.Verdict), o.Verdict, oneLine(o.Reason))
 	for _, e := range o.Evidence {
 		if e.Verified {
 			fmt.Fprintf(&b, "  evidence: %q\n", e.Quote)
@@ -221,7 +244,7 @@ func shortReport(r req, o scenario.Outcome, f files) string {
 			if !f.Verified {
 				unverified = " (unverified)"
 			}
-			fmt.Fprintf(&b, "  %s %s: %s%s\n", severityMarks[f.Severity], f.Severity, oneLine(f.Title), unverified)
+			fmt.Fprintf(&b, "  %s %s: %s%s\n", severityMark(f.Severity), f.Severity, oneLine(f.Title), unverified)
 		}
 	}
 	if c := cacheOf(r, o, f.Recording != ""); c != nil {
