@@ -6,9 +6,10 @@
 // reviewer, in place of the judge, decides whether it got there and what
 // of the notes, and of what the browser recorded, are findings.
 //
-// It knows the browser and the model only through page.Page and llm.Model,
-// so that it can be tested with a page and a model that answer from a
-// script.
+// The tester uses each target of a test through a Driver, as it uses the
+// browser through the one that drives a page.Page, and the model through
+// llm.Model, so that it can be tested with a page and a model that answer
+// from a script.
 package scenario
 
 import (
@@ -168,46 +169,28 @@ type Step struct {
 
 // run is the state of a test while it runs.
 type run struct {
-	cfg     Config
-	page    page.Page
-	model   llm.Model
-	secrets secrets
-	hosts   hosts
+	*ledger
+	model llm.Model
+	// drivers are the targets of the test, and web is the browser among
+	// them.
+	drivers []Driver
+	web     *browserDriver
 
-	steps []Step
 	// notes are the findings the tester noted in a persona test.
 	notes []note
-	// recorded are the steps that changed the page, for the recording.
-	recorded []Recorded
 	// handoffNote tells the tester what was replayed before it took over.
 	handoffNote string
-	// shown are the texts of the elements the pages showed the tester,
-	// which a value it typed may have been read off.
-	shown []string
-	// shot is the URL of the page the tester last took a screenshot of.
-	shot string
-	// landing is where the page the test opened first landed.
-	landing string
-	// texts are what the pages showed the tester, which the judge's
-	// quotes are checked against.
-	texts []string
-	// url and title are of the page as the model was last told it.
-	url, title string
 }
 
-// seen keeps text as a page showed it to the tester, masked as the model
-// read it.
-func (r *run) seen(text string) {
-	masked := r.secrets.mask(text)
-	r.texts = append(r.texts, masked)
-	r.shown = append(r.shown, shownTexts(masked)...)
-}
-
-func (r *run) save(name string, data []byte) string {
-	if r.cfg.Save == nil {
-		return ""
+// driverOf returns the driver whose tool call calls, or nil when none has
+// it.
+func (r *run) driverOf(call llm.Call) Driver {
+	for _, d := range r.drivers {
+		if d.Handles(call) {
+			return d
+		}
 	}
-	return r.cfg.Save(name, data)
+	return nil
 }
 
 // Run runs the test of cfg on p with m. It returns an error only for what
@@ -215,10 +198,9 @@ func (r *run) save(name string, data []byte) string {
 // refused; how the application behaved is in the outcome.
 func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, error) {
 	start := time.Now()
-	r := &run{cfg: cfg, page: p, model: m, secrets: newSecrets(cfg.Secrets), hosts: hosts(cfg.Hosts)}
-	if len(r.hosts) == 0 {
-		r.hosts = hosts{hostOf(cfg.StartURL)}
-	}
+	r := &run{ledger: newLedger(cfg), model: m}
+	r.web = newBrowserDriver(r.ledger, p)
+	r.drivers = []Driver{r.web}
 
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
@@ -227,25 +209,25 @@ func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, er
 	testerCtx, cancelTester := context.WithTimeout(ctx, cfg.Timeout-judgeReserve(cfg.Timeout))
 	defer cancelTester()
 
-	if err := p.Navigate(testerCtx, cfg.StartURL); err != nil {
-		return Outcome{}, fmt.Errorf("opening %s: %w", cfg.StartURL, err)
+	for _, d := range r.drivers {
+		if err := d.Open(testerCtx); err != nil {
+			return Outcome{}, err
+		}
 	}
-	r.url, r.title, _ = p.State(testerCtx)
-	r.landing = r.relative(r.url)
 
 	o := Outcome{Mode: cfg.Mode(), Model: m.Name()}
 	var stopped, summary string
 	if rec := cfg.Recording; rec != nil && o.Mode == ModeScenario {
-		o.Replay = &Replay{Status: ReplayMiss, Reason: r.usable(rec)}
+		o.Replay = &Replay{Status: ReplayMiss, Reason: r.web.usable(rec)}
 		if o.Replay.Reason == "" {
-			*o.Replay = r.replay(testerCtx, rec)
+			*o.Replay = r.web.replay(testerCtx, rec)
 		}
 		switch o.Replay.Status {
 		case ReplayHit:
 			stopped = StoppedDone
 			summary = fmt.Sprintf("All %d steps were replayed from a recording of an earlier run; the model was not asked to act.", o.Replay.Replayed)
 		case ReplayPartial:
-			r.handoffNote = r.handoff(*o.Replay, rec)
+			r.handoffNote = r.web.handoff(*o.Replay, rec)
 		}
 		if cfg.Strict && o.Replay.Stale {
 			stopped, summary = StoppedStale, o.Replay.Reason
@@ -262,7 +244,7 @@ func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, er
 
 	// The last page is read on the test's context, which the tester's
 	// running out of time leaves some of.
-	final := r.final(ctx)
+	final := r.web.final(ctx, r.model.Vision())
 	o.URL, o.Title = r.secrets.mask(final.url), r.secrets.mask(final.title)
 	o.FinalScreenshot = final.screenshot
 
@@ -297,21 +279,21 @@ func Run(ctx context.Context, cfg Config, p page.Page, m llm.Model) (Outcome, er
 	}
 	if cfg.Record && o.Mode == ModeScenario && o.Verdict == Pass && stopped == StoppedDone &&
 		(o.Replay == nil || o.Replay.Status != ReplayHit) {
-		if rec := r.recording(); cfg.Recording == nil || !sameRecording(rec, cfg.Recording) {
+		if rec := r.web.recording(); cfg.Recording == nil || !sameRecording(rec, cfg.Recording) {
 			o.Recording = rec
 		}
 	}
 
 	o.Steps = r.steps
-	o.ConsoleErrors = p.ConsoleErrors()
+	o.ConsoleErrors = r.web.page.ConsoleErrors()
 	for i := range o.ConsoleErrors {
 		o.ConsoleErrors[i].Text = r.secrets.mask(o.ConsoleErrors[i].Text)
 	}
-	o.NetworkErrors = p.NetworkErrors()
+	o.NetworkErrors = r.web.page.NetworkErrors()
 	for i := range o.NetworkErrors {
 		o.NetworkErrors[i].URL = r.secrets.mask(o.NetworkErrors[i].URL)
 	}
-	reqs := p.Requests()
+	reqs := r.web.page.Requests()
 	for i := range reqs.Slowest {
 		reqs.Slowest[i].URL = r.secrets.mask(reqs.Slowest[i].URL)
 	}
@@ -337,15 +319,17 @@ func judgeReserve(timeout time.Duration) time.Duration {
 // what it said it did.
 func (r *run) test(ctx context.Context) (stopped, summary string, err error) {
 	opts := llm.ChatOptions{
-		System:  testerSystem(r.hosts),
-		Prompt:  testerPrompt(r.secrets.mask(r.cfg.Task), r.secrets.mask(r.cfg.Expect), r.cfg.StartURL, r.secrets) + r.handoffNote,
-		Tools:   []llm.Tool{finishTool},
-		Browser: &llm.BrowserToolset{Disabled: Disabled},
+		System: testerSystem(r.web.hosts),
+		Prompt: testerPrompt(r.secrets.mask(r.cfg.Task), r.secrets.mask(r.cfg.Expect), r.cfg.StartURL, r.secrets) + r.handoffNote,
+		Tools:  []llm.Tool{finishTool},
 	}
 	if r.cfg.Mode() == ModePersona {
-		opts.System = personaSystem(r.hosts)
+		opts.System = personaSystem(r.web.hosts)
 		opts.Prompt = personaPrompt(r.secrets.mask(r.cfg.Persona), r.secrets.mask(r.cfg.Goal), r.cfg.StartURL, r.secrets)
 		opts.Tools = []llm.Tool{noteTool, finishTool}
+	}
+	for _, d := range r.drivers {
+		d.Offer(&opts)
 	}
 	chat := r.model.Chat(opts)
 	turn := llm.Turn{}
@@ -398,7 +382,8 @@ func (r *run) test(ctx context.Context) (stopped, summary string, err error) {
 				results = append(results, res)
 				continue
 			}
-			if call.Toolset != llm.ToolsetBrowser {
+			d := r.driverOf(call)
+			if d == nil {
 				results = append(results, llm.Result{CallID: call.ID, Text: "Error: there is no tool " + call.Name, IsError: true})
 				continue
 			}
@@ -406,7 +391,7 @@ func (r *run) test(ctx context.Context) (stopped, summary string, err error) {
 				results = append(results, llm.Result{CallID: call.ID, Text: "Error: the test has run out of steps", IsError: true})
 				continue
 			}
-			res, step := r.browser(ctx, call)
+			res, step := d.Do(ctx, call)
 			step.Index = len(r.steps) + 1
 			step.Notes, notes = notes, nil
 			r.steps = append(r.steps, step)
@@ -440,26 +425,6 @@ type final struct {
 	elements   string
 	screenshot string
 	image      []byte
-}
-
-func (r *run) final(ctx context.Context) final {
-	var f final
-	f.url, f.title, _ = r.page.State(ctx)
-	if text, err := r.page.Text(ctx); err == nil {
-		f.text = truncate(r.secrets.mask(text), 20000)
-	}
-	if els, err := r.page.Read(ctx, "all", 0, ""); err == nil {
-		f.elements = truncate(r.secrets.mask(els), 20000)
-	}
-	if img, err := r.page.Screenshot(ctx); err == nil {
-		// The judge is shown the screenshot when the model sees images; it
-		// is kept as evidence either way.
-		if r.model.Vision() {
-			f.image = img
-		}
-		f.screenshot = r.save("final.jpg", img)
-	}
-	return f
 }
 
 var finishTool = llm.Tool{

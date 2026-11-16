@@ -98,7 +98,7 @@ func (r *run) noted(input json.RawMessage) llm.Result {
 		return llm.Result{Text: "Error: give at least a title, a severity and what you observed.", IsError: true}
 	}
 	r.notes = append(r.notes, note{
-		step: len(r.steps), url: r.url,
+		step: len(r.steps), url: r.web.url,
 		title: in.Title, severity: in.Severity, expected: in.Expected, observed: in.Observed,
 	})
 	return llm.Result{Text: fmt.Sprintf("Noted N%d. Carry on toward the goal if you can, or call finish.", len(r.notes))}
@@ -286,7 +286,7 @@ func (r *run) review(ctx context.Context, o Outcome, f final) (review, error) {
 // slowLines are the slowest requests as the reviewer is shown them.
 func (r *run) slowLines() []string {
 	var lines []string
-	for _, q := range r.page.Requests().Slowest {
+	for _, q := range r.web.page.Requests().Slowest {
 		lines = append(lines, fmt.Sprintf("- %s %s -> %d in %d ms", q.Method, r.secrets.mask(q.URL), q.Status, q.DurationMS))
 	}
 	return lines
