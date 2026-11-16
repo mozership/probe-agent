@@ -69,6 +69,9 @@ func (e *evidence) write(r req, o scenario.Outcome) (files, error) {
 	return f, nil
 }
 
+// severityMarks and verdictMarks are the marks of report.md, which is read
+// as Markdown, where only an emoji shows a color. What Probe prints under
+// the step marks them as Probe does; see shortReport.
 var severityMarks = map[string]string{"high": "🔴", "medium": "🟠", "low": "🟡"}
 
 var verdictMarks = map[string]string{scenario.Pass: "✅", scenario.Fail: "❌", scenario.Blocked: "⚠️"}
