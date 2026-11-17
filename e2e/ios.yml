@@ -32,6 +32,19 @@ jobs:
       evidence_dir: out/agent
       timeout: 12m
   steps:
+  # The first launch of a fresh runner on a simulator just booted takes
+  # longer than the 10 seconds the tests give each call of probe-ios, so
+  # it is done here, with the timeout of probe-ios by default.
+  - name: The runner of probe-ios launches the app
+    uses: ios
+    timeout: 15m
+    with:
+      app: com.apple.Preferences
+      device: "{{vars.device}}"
+      actions:
+      - name: launch
+    test: res.code == 0
+
   - name: A user finds the version of iOS
     uses: agent
     timeout: 15m
