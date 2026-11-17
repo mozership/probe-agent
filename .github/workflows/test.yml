@@ -26,86 +26,99 @@ jobs:
       - run: go -C e2e/server test ./...
 
   # The action run through Probe against the sign-up of e2e/server, with a
-  # real model. It calls the Claude API, so it runs only where the
-  # repository has the key, and not for pull requests from forks.
+  # real model. It calls the Claude API with the OIDC token of the job, so
+  # it does not run for pull requests from forks, which have none.
   e2e:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # The Claude API is called with the OIDC token of the job, through
+      # workload identity federation, rather than an API key.
+      ANTHROPIC_FEDERATION_RULE_ID: fdrl_01LLJkzfYqamUwaAeerrnZMb
+      ANTHROPIC_ORGANIZATION_ID: 58f3ed17-7b9b-46e4-b827-dac67024964c
+      ANTHROPIC_SERVICE_ACCOUNT_ID: svac_01TXGJqXGordksx5PMkWCSeN
+      ANTHROPIC_WORKSPACE_ID: wrkspc_01FWywmW8kRVkfcsLzAsry6X
       # CI replays the recording committed, writes none, and fails when it
       # no longer matches rather than paying the tester to carry on.
       CACHE_MODE: strict
     steps:
-      - name: Skip without a key
-        if: env.ANTHROPIC_API_KEY == ''
-        run: echo "ANTHROPIC_API_KEY is not set; the e2e workflow is skipped." >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        if: env.ANTHROPIC_API_KEY != ''
+      - name: Keep an OIDC token for the Claude API
+        run: .github/anthropic-identity-token.sh
       - name: Setup Chrome
-        if: env.ANTHROPIC_API_KEY != ''
+        if: env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: env.ANTHROPIC_API_KEY != ''
+        if: env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         with:
           go-version-file: go.mod
       # Probe resolves the action before the first job of a workflow, so it
       # is built first.
-      - if: env.ANTHROPIC_API_KEY != ''
+      - if: env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         run: go build -o e2e/action/probe-agent .
       - name: Start the sign-up server
-        if: env.ANTHROPIC_API_KEY != ''
+        if: env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         run: |
           go -C e2e/server build -o server .
           e2e/server/server > "$RUNNER_TEMP/server.txt" 2>&1 &
       - name: Run the e2e workflow
-        if: env.ANTHROPIC_API_KEY != ''
+        if: env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         uses: mozership/probe-action@831b8b6c6aa0c8a61aa75b58f36a08da5c579e83 # v1.3.0
         with:
           path: e2e/workflow.yml
           version: v1.33.0
       - name: Keep the evidence
-        if: always() && env.ANTHROPIC_API_KEY != ''
+        if: always() && env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-evidence
           path: out/agent
       - name: What the server logged
-        if: always() && env.ANTHROPIC_API_KEY != ''
+        if: always() && env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         run: cat "$RUNNER_TEMP/server.txt"
 
   # The action driving the Settings app of an iOS simulator through
   # probe-ios, alone and beside a browser, with a real model. It needs
-  # macOS for Xcode and the simulator, and the key of the Claude API.
+  # macOS for Xcode and the simulator, and the OIDC token of the job for
+  # the Claude API.
   e2e-ios:
     runs-on: macos-26
     timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
     env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # The Claude API is called with the OIDC token of the job, through
+      # workload identity federation, rather than an API key.
+      ANTHROPIC_FEDERATION_RULE_ID: fdrl_01LLJkzfYqamUwaAeerrnZMb
+      ANTHROPIC_ORGANIZATION_ID: 58f3ed17-7b9b-46e4-b827-dac67024964c
+      ANTHROPIC_SERVICE_ACCOUNT_ID: svac_01TXGJqXGordksx5PMkWCSeN
+      ANTHROPIC_WORKSPACE_ID: wrkspc_01FWywmW8kRVkfcsLzAsry6X
       PROBE_IOS_CACHE_DIR: ${{ github.workspace }}/.probe-ios
     steps:
-      - name: Skip without a key
-        if: env.ANTHROPIC_API_KEY == ''
-        run: echo "ANTHROPIC_API_KEY is not set; the iOS e2e workflow is skipped." >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        if: env.ANTHROPIC_API_KEY != ''
+      - name: Keep an OIDC token for the Claude API
+        run: .github/anthropic-identity-token.sh
       - name: Setup Chrome
-        if: env.ANTHROPIC_API_KEY != ''
+        if: env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: env.ANTHROPIC_API_KEY != ''
+        if: env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         with:
           go-version-file: go.mod
       # probe-ios builds its runner the first time, which takes minutes;
       # its own key changes with Xcode, so a stale entry is only built over.
       - uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
-        if: env.ANTHROPIC_API_KEY != ''
+        if: env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         with:
           path: .probe-ios/runner
           key: probe-ios-runner-${{ runner.os }}-${{ hashFiles('e2e/ios.yml') }}
       # As in the e2e tests of probe-ios: a simulator on a named runtime,
       # booted by its UDID, and left to settle before XCUITest queries it.
       - name: Boot a simulator
-        if: env.ANTHROPIC_API_KEY != ''
+        if: env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         run: |
           UDID=$(xcrun simctl create e2e "iPhone 17" com.apple.CoreSimulator.SimRuntime.iOS-26-5)
           xcrun simctl bootstatus "$UDID" -b
@@ -113,23 +126,23 @@ jobs:
           xcrun simctl launch "$UDID" com.apple.Preferences
           sleep 60
           xcrun simctl terminate "$UDID" com.apple.Preferences
-      - if: env.ANTHROPIC_API_KEY != ''
+      - if: env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         run: go build -o e2e/action/probe-agent .
       - name: Start the server
-        if: env.ANTHROPIC_API_KEY != ''
+        if: env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         run: |
           go -C e2e/server build -o server .
           e2e/server/server > "$RUNNER_TEMP/server.txt" 2>&1 &
       # The agent calls probe-ios with ActionCaller, which needs probe
       # v1.37.0 or later; probe-action installs it on macOS from v1.4.0.
       - name: Run the iOS e2e workflow
-        if: env.ANTHROPIC_API_KEY != ''
+        if: env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         uses: mozership/probe-action@5bf9b862f45a719fbc97b240c82b74e73ff5f2de # v1.4.0
         with:
           path: e2e/ios.yml
           version: v1.37.0
       - name: Keep the evidence
-        if: always() && env.ANTHROPIC_API_KEY != ''
+        if: always() && env.ANTHROPIC_IDENTITY_TOKEN_FILE != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-ios-evidence

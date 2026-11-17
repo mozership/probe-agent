@@ -179,11 +179,13 @@ The agent is built for Claude, which is trained to use a browser through the bro
 
 | `provider` | API key | Notes |
 |---|---|---|
-| `anthropic` | `ANTHROPIC_API_KEY`, or what else the [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-go) finds | The default |
+| `anthropic` | `ANTHROPIC_API_KEY`, or what else the [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-go) finds, such as the OIDC token of a job of GitHub Actions through workload identity federation | The default |
 | `openai` | `OPENAI_API_KEY` | The Responses API, keeping nothing on OpenAI's side. `max` is sent as `xhigh` |
 | `xai` | `XAI_API_KEY` | `max` is sent as `xhigh` |
 | `gemini` | `GEMINI_API_KEY` | `xhigh` and `max` are sent as `high` |
 | `sakura` | `SAKURA_AI_ENGINE_TOKEN` | The Sakura AI Engine. Its models differ in what they take, so `effort` is not sent, and they see no images unless `vision` is `true`. Choose one that calls tools, such as `gpt-oss-120b` |
+
+In GitHub Actions, the Claude API can be called without an API key, with the OIDC token of the job, through workload identity federation. Give the job `id-token: write`, set `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID` of the federation rule, and name a file holding the token, requested for the audience `https://api.anthropic.com`, in `ANTHROPIC_IDENTITY_TOKEN_FILE`; the SDK exchanges it for an access token. A token of GitHub Actions lasts 5 minutes and each step starts the agent anew, so write the file again while Probe runs, as [.github/anthropic-identity-token.sh](.github/anthropic-identity-token.sh) does for the e2e workflows of this repository.
 
 A model that sees no images reads the pages by their elements and text alone: it is not offered `screenshot` or `zoom`, acts on elements rather than points, and the judge is not shown the final page as an image. The screenshots are still kept as evidence.
 
