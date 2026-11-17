@@ -95,10 +95,6 @@ jobs:
         if: env.ANTHROPIC_API_KEY != ''
         with:
           go-version-file: go.mod
-      # probe-action installs probe on Linux alone. The agent calls
-      # probe-ios with ActionCaller, which needs v1.37.0 or later.
-      - if: env.ANTHROPIC_API_KEY != ''
-        run: go install github.com/mozership/probe/cmd/probe@v1.37.0
       # probe-ios builds its runner the first time, which takes minutes;
       # its own key changes with Xcode, so a stale entry is only built over.
       - uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
@@ -124,9 +120,14 @@ jobs:
         run: |
           go -C e2e/server build -o server .
           e2e/server/server > "$RUNNER_TEMP/server.txt" 2>&1 &
+      # The agent calls probe-ios with ActionCaller, which needs probe
+      # v1.37.0 or later; probe-action installs it on macOS from v1.4.0.
       - name: Run the iOS e2e workflow
         if: env.ANTHROPIC_API_KEY != ''
-        run: probe e2e/ios.yml
+        uses: mozership/probe-action@5bf9b862f45a719fbc97b240c82b74e73ff5f2de # v1.4.0
+        with:
+          path: e2e/ios.yml
+          version: v1.37.0
       - name: Keep the evidence
         if: always() && env.ANTHROPIC_API_KEY != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
