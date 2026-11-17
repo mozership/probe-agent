@@ -211,3 +211,18 @@ func TestIOSWith(t *testing.T) {
 		t.Errorf("with %v, want the device and the timeout", got)
 	}
 }
+
+func TestSecretsHidden(t *testing.T) {
+	var b strings.Builder
+	w := secretsHidden(&b, map[string]string{"EMAIL": "dave@example.test", "OTP": "123456"})
+	if _, err := w.Write([]byte(`{"actions":[{"value":"dave@example.test"},{"value":"say \"dave@example.test\""},{"value":"123456"}]}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	got := b.String()
+	if strings.Contains(got, "dave@example.test") || strings.Contains(got, "123456") {
+		t.Errorf("a secret is in %s", got)
+	}
+	if !strings.Contains(got, "<secret:EMAIL>") {
+		t.Errorf("the secret is not named in %s", got)
+	}
+}

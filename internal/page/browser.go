@@ -35,8 +35,10 @@ const (
 	maxErrors = 200
 	// locateTimeout bounds waiting for an element a locator describes.
 	locateTimeout = 5 * time.Second
-	// maxSlowest is how many of the slowest requests are kept.
-	maxSlowest = 10
+	// maxSlowest is how many of the slowest requests are kept: as many as
+	// probe-browser gives of each call, so that those of all the calls,
+	// the slowest of each kept, are the slowest of the whole.
+	maxSlowest = 5
 )
 
 // Call runs a step of probe-browser with with, and returns its res.

@@ -9,6 +9,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
@@ -23,6 +25,7 @@ import (
 	"github.com/mozership/probe-browser/storagestate"
 	"github.com/mozership/probe/actionref"
 	"github.com/mozership/probe/actionrpc"
+	"github.com/mozership/probe/mask"
 	"github.com/mozership/probe/style"
 
 	"github.com/mozership/probe-agent/internal/llm"
@@ -76,7 +79,10 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	// The targets are driven through actions, probe-ios and probe-browser,
 	// which one caller calls, so that each keeps its state from one call to
 	// the next, and is cleaned up once the run is over.
-	caller := probe.NewActionCaller(call, "")
+	// The records of the actions called hide the secrets of the agent,
+	// which the tester types into them, under whatever names they have:
+	// the caller hides only the credentials it recognizes.
+	caller := probe.NewActionCaller(call, "", probe.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
 	var ios *scenario.IOS
 	if r.IOS != nil {
 		if ios, err = iosTarget(caller, call.Actions, *r.IOS); err != nil {
@@ -406,4 +412,11 @@ func shortReport(r req, o scenario.Outcome, f files) string {
 
 func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// secretsHidden returns a writer to w that hides the values of secrets,
+// each as <secret:NAME>.
+func secretsHidden(w io.Writer, secrets map[string]string) io.Writer {
+	names := slices.Sorted(maps.Keys(secrets))
+	return mask.New(names, secrets).Writer(w)
 }
