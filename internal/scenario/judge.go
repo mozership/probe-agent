@@ -50,7 +50,7 @@ const judgeSystem = `You judge an end-to-end test of a web application. A tester
 - Write the reason in English, unless the text in <task> is written in another language; then write it in that language.`
 
 // judge has the judge decide whether the expectation holds.
-func (r *run) judge(ctx context.Context, o Outcome, f final) (verdict, error) {
+func (r *run) judge(ctx context.Context, o Outcome, f []observation) (verdict, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<task>\n%s\n</task>\n\n", r.secrets.mask(r.cfg.Task))
 	fmt.Fprintf(&b, "<expect>\n%s\n</expect>\n\n", r.secrets.mask(r.cfg.Expect))
@@ -115,17 +115,22 @@ func (r *run) ask(ctx context.Context, role string, opts llm.ChatOptions, name s
 	return fmt.Sprintf("The %s gave no answer.", role), nil
 }
 
-func finalImage(f final) []llm.Image {
-	if f.image == nil {
-		return nil
+// finalImage are the screenshots of the targets the judge is shown, in
+// the order the record tells of them.
+func finalImage(f []observation) []llm.Image {
+	var images []llm.Image
+	for _, o := range f {
+		if o.image != nil {
+			images = append(images, llm.Image{MediaType: o.mediaType, Data: o.image})
+		}
 	}
-	return []llm.Image{{MediaType: "image/jpeg", Data: f.image}}
+	return images
 }
 
 // checked returns the verdict with each quote checked against what the
 // pages showed. A pass that quotes nothing the pages showed rests on
 // nothing, and is taken as no verdict.
-func (r *run) checked(v, reason string, quotes []string, f final) verdict {
+func (r *run) checked(v, reason string, quotes []string, f []observation) verdict {
 	evidence, verified := verify(quotes, r.pages(f))
 	out := verdict{verdict: v, reason: reason, evidence: evidence}
 	if v == Pass && verified == 0 {
@@ -136,8 +141,14 @@ func (r *run) checked(v, reason string, quotes []string, f final) verdict {
 }
 
 // pages is all the pages showed the tester, normalized.
-func (r *run) pages(f final) string {
-	return normalize(strings.Join(append(append([]string{}, r.texts...), f.text, f.elements), "\n"))
+func (r *run) pages(f []observation) string {
+	texts := append([]string{}, r.texts...)
+	for _, o := range f {
+		for _, s := range o.sections {
+			texts = append(texts, s.text)
+		}
+	}
+	return normalize(strings.Join(texts, "\n"))
 }
 
 // verify checks each quote against seen, a normalized text, and returns
@@ -164,7 +175,7 @@ func normalize(s string) string {
 
 // writeRecord writes what the tester did and what the pages showed, for the
 // judge or the reviewer.
-func (r *run) writeRecord(b *strings.Builder, o Outcome, f final) {
+func (r *run) writeRecord(b *strings.Builder, o Outcome, f []observation) {
 	w := func(format string, args ...any) { fmt.Fprintf(b, format, args...) }
 	w("<tester_report stopped=%q>\n%s\n</tester_report>\n\n", o.Stopped, o.Summary)
 
@@ -198,17 +209,25 @@ func (r *run) writeRecord(b *strings.Builder, o Outcome, f final) {
 	for i, t := range r.texts {
 		w("<page_read n=\"%d\">\n%s\n</page_read>\n", i+1, truncate(t, 4000))
 	}
-	w("\nThe page the tester left the browser on, %s (%q):\n", r.secrets.mask(f.url), r.secrets.mask(f.title))
-	w("<final_page_text>\n%s\n</final_page_text>\n", f.text)
-	w("<final_page_elements>\n%s\n</final_page_elements>\n", f.elements)
-	if f.image != nil {
-		w("\nA screenshot of the final page follows.\n")
+	for _, obs := range f {
+		w("\n%s\n", obs.heading)
+		for _, s := range obs.sections {
+			w("<%s>\n%s\n</%s>\n", s.tag, s.text, s.tag)
+		}
+	}
+	for _, obs := range f {
+		if obs.image != nil {
+			w("\n%s\n", obs.imageNote)
+		}
 	}
 }
 
 // consoleLines are the console errors as the judge and the reviewer are
 // shown them.
 func (r *run) consoleLines() []string {
+	if r.web == nil {
+		return nil
+	}
 	var lines []string
 	errs := r.web.page.ConsoleErrors()
 	for _, e := range errs[:min(len(errs), maxListed)] {
@@ -220,6 +239,9 @@ func (r *run) consoleLines() []string {
 // failedLines are the failed requests as the judge and the reviewer are
 // shown them.
 func (r *run) failedLines() []string {
+	if r.web == nil {
+		return nil
+	}
 	var lines []string
 	errs := r.web.page.NetworkErrors()
 	for _, e := range errs[:min(len(errs), maxListed)] {

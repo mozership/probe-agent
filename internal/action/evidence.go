@@ -212,11 +212,25 @@ func markdown(r req, o scenario.Outcome, dir string) string {
 		w("\n")
 	}
 
-	w("## Final page\n\n%s (<%s>)\n\n", o.Title, o.URL)
-	if o.FinalScreenshot != "" {
-		w("![final page](%s)\n", rel(o.FinalScreenshot))
+	for _, t := range o.Targets {
+		switch t.Kind {
+		case "browser":
+			w("## Final page\n\n%s (<%s>)\n\n", t.Title, t.URL)
+			if t.Screenshot != "" {
+				w("![final page](%s)\n\n", rel(t.Screenshot))
+			}
+		case "ios":
+			w("## Final screen of the app\n\n%s", t.App)
+			if t.Device != "" {
+				w(" on %s", t.Device)
+			}
+			w("\n\n")
+			if t.Screenshot != "" {
+				w("![final screen](%s)\n\n", rel(t.Screenshot))
+			}
+		}
 	}
-	return b.String()
+	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
 func quoteBlock(s string) string {

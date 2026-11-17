@@ -1,0 +1,102 @@
+# The end-to-end tests of an iOS app: probe-agent drives the Settings app
+# of an iOS simulator through probe-ios, alone and beside a browser on the
+# help page of e2e/server. Run it from the repository root on macOS, with
+# Xcode, a booted simulator, the server listening, Chrome installed and
+# ANTHROPIC_API_KEY set, and the action built first:
+#
+#   xcrun simctl boot "iPhone 17"
+#   go -C e2e/server run . &
+#   go build -o e2e/action/probe-agent . && probe e2e/ios.yml
+#
+# DEVICE names the simulator when more than one is booted. probe-ios builds
+# its runner the first time, which takes minutes, so the steps have a
+# timeout of 15 minutes. The calls of probe-ios need Probe v1.37.0 or
+# later.
+name: probe-agent against an iOS app
+
+actions:
+  agent: ./action
+  ios: github.com/mozership/probe-ios@836056e3b6a1f9d164ff5674c35b774423647bcc # v0.2.1
+  github-notes: github.com/mozership/probe-github-notes@d2df0b2dbbbffd3e368d156e571bf9bf2f784b76 # v0.1.3
+
+secrets:
+- ANTHROPIC_API_KEY
+- GITHUB_TOKEN
+
+vars:
+  device: "{{DEVICE ?? ''}}"
+  server: "{{SERVER ?? 'http://127.0.0.1:18090'}}"
+  github_token: "{{GITHUB_TOKEN ?? ''}}"
+
+jobs:
+- name: Settings
+  id: settings
+  defaults:
+    agent:
+      evidence_dir: out/agent
+      timeout: 12m
+  steps:
+  # On CI, the first launch of a fresh runner on a simulator just booted,
+  # and the first query of the app after it, run out of the 30 seconds of
+  # probe-ios, as XCUITest waits for the app to settle, so both are done
+  # here, with minutes for them, before the agent opens the app. The calls
+  # of the tests keep that timeout: on CI, activating the app took longer
+  # than 10 seconds even after a launch.
+  - name: The runner of probe-ios launches the app and reads it
+    uses: ios
+    timeout: 15m
+    with:
+      app: com.apple.Preferences
+      device: "{{vars.device}}"
+      timeout: 3m
+      actions:
+      - name: launch
+      - name: tree
+    test: res.code == 0
+
+  - name: A user finds the version of iOS
+    uses: agent
+    timeout: 15m
+    with:
+      task: Find which version of iOS the iPhone runs.
+      expect: The screen shows the version of iOS.
+      targets:
+        ios:
+          app: com.apple.Preferences
+          device: "{{vars.device}}"
+    test: res.verdict == "pass" && res.targets[0].kind == "ios"
+
+  - name: A help page on the web names a section the app opens
+    uses: agent
+    timeout: 15m
+    with:
+      task: Read on the help page which section of the Settings app to open, and open it in the Settings app.
+      expect: The Settings app shows the section the help page names.
+      targets:
+        browser:
+          url: "{{vars.server}}/help"
+        ios:
+          app: com.apple.Preferences
+          device: "{{vars.device}}"
+    test: |
+      res.verdict == "pass" &&
+      len(filter(res.steps, .target == "browser")) > 0 &&
+      len(filter(res.steps, .target == "ios")) > 0
+
+# The notes the agent left, as when a test did not pass, go in a comment on
+# the pull request in CI, with probe-github-notes, which needs GITHUB_TOKEN;
+# without one, as run by hand, the step is skipped.
+- name: Notes
+  needs: [settings]
+  always: true
+  steps:
+  - name: Put the notes on the pull request
+    uses: github-notes
+    skipif: vars.github_token == ""
+    with:
+      to: comment
+      key: e2e-ios
+      token: "{{vars.github_token}}"
+      notes: "{{ notes }}"
+      body: The notes probe-agent left in e2e/ios.yml, driving the Settings app of an iOS simulator.
+    test: res.code < 300

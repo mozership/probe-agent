@@ -44,11 +44,28 @@ const (
 
 // params are the keys the action takes in with.
 var params = []string{
-	"task", "expect", "persona", "goal", "url", "allow_hosts", "secrets", "storage_state",
+	"task", "expect", "persona", "goal", "targets", "url", "allow_hosts", "secrets", "storage_state",
 	"cache", "cache_mode",
 	"provider", "model", "effort", "base_url", "vision", "max_steps", "timeout",
 	"headless", "window_w", "window_h", "evidence_dir",
 }
+
+// The kinds of target, as the keys of targets.
+const (
+	targetBrowser = "browser"
+	targetIOS     = "ios"
+)
+
+// browserParams are the keys of targets.browser, which a step without
+// targets gives at the top of with, as the short form of targets.browser.
+var browserParams = []string{"url", "allow_hosts", "storage_state", "headless", "window_w", "window_h"}
+
+// iosParams are the keys of targets.ios.
+var iosParams = []string{"app", "device", "timeout"}
+
+// laterTargets are the kinds of target the agent is to drive, but does not
+// yet.
+var laterTargets = []string{"http", "grpc"}
 
 // Params returns the keys the action takes in with.
 func Params() []string {
@@ -57,12 +74,18 @@ func Params() []string {
 
 // req is what a step asks of the action.
 type req struct {
-	Task       string
-	Expect     string
-	Persona    string
-	Goal       string
-	Cache      string
-	CacheMode  string
+	Task      string
+	Expect    string
+	Persona   string
+	Goal      string
+	Cache     string
+	CacheMode string
+	// Browser says whether the test drives a browser, of URL and the
+	// fields after it.
+	Browser bool
+	// ShortForm says that the browser was given at the top of with rather
+	// than under targets.browser.
+	ShortForm  bool
 	URL        string
 	AllowHosts []string
 	Secrets    map[string]string
@@ -82,6 +105,31 @@ type req struct {
 	Width       int
 	Height      int
 	EvidenceDir string
+	// IOS is the app the test drives on an iOS simulator, if any.
+	IOS *iosReq
+}
+
+// iosReq is targets.ios.
+type iosReq struct {
+	App    string
+	Device string
+	// Timeout bounds the actions of each call of probe-ios, from the first
+	// to the last, as an action on an element that does not appear; zero
+	// for the 30 seconds of probe-ios.
+	Timeout time.Duration
+}
+
+// kinds are the kinds of the targets of r, in the order the agent drives
+// them.
+func (r req) kinds() []string {
+	var k []string
+	if r.Browser {
+		k = append(k, targetBrowser)
+	}
+	if r.IOS != nil {
+		k = append(k, targetIOS)
+	}
+	return k
 }
 
 // parse reads with. A value a template rendered comes as a string, so the
@@ -98,30 +146,34 @@ func parse(with map[string]any) (req, error) {
 		Height:    defaultHeight,
 	}
 	var errs []error
-	str := func(key string, dst *string) {
-		v, ok := with[key]
+	// strIn and numIn read key of src, which prefix names in an error, as
+	// targets.browser. for a key under targets.
+	strIn := func(src map[string]any, prefix, key string, dst *string) {
+		v, ok := src[key]
 		if !ok {
 			return
 		}
 		s, ok := v.(string)
 		if !ok {
-			errs = append(errs, fmt.Errorf("%s must be a string", key))
+			errs = append(errs, fmt.Errorf("%s%s must be a string", prefix, key))
 			return
 		}
 		*dst = strings.TrimSpace(s)
 	}
-	num := func(key string, dst *int) {
-		v, ok := with[key]
+	numIn := func(src map[string]any, prefix, key string, dst *int) {
+		v, ok := src[key]
 		if !ok {
 			return
 		}
 		n, err := toInt(v)
 		if err != nil || n < 1 {
-			errs = append(errs, fmt.Errorf("%s must be a whole number of 1 or more", key))
+			errs = append(errs, fmt.Errorf("%s%s must be a whole number of 1 or more", prefix, key))
 			return
 		}
 		*dst = n
 	}
+	str := func(key string, dst *string) { strIn(with, "", key, dst) }
+	num := func(key string, dst *int) { numIn(with, "", key, dst) }
 
 	for _, k := range slices.Sorted(maps.Keys(with)) {
 		if !slices.Contains(params, k) {
@@ -133,24 +185,64 @@ func parse(with map[string]any) (req, error) {
 	str("expect", &r.Expect)
 	str("persona", &r.Persona)
 	str("goal", &r.Goal)
-	str("url", &r.URL)
 	str("provider", &r.Provider)
 	str("model", &r.Model)
 	str("effort", &r.Effort)
 	str("base_url", &r.BaseURL)
 	str("evidence_dir", &r.EvidenceDir)
-	str("storage_state", &r.StorageState)
 	str("cache", &r.Cache)
 	str("cache_mode", &r.CacheMode)
 	num("max_steps", &r.MaxSteps)
-	num("window_w", &r.Width)
-	num("window_h", &r.Height)
+
+	// The browser is given under targets.browser, or, without targets, at
+	// the top of with.
+	browser, prefix := with, ""
+	if v, ok := with["targets"]; ok {
+		targets, terrs := readTargets(v)
+		errs = append(errs, terrs...)
+		for _, k := range browserParams {
+			if _, ok := with[k]; ok {
+				errs = append(errs, fmt.Errorf("%s goes under targets.browser when targets is given", k))
+			}
+		}
+		browser, prefix = nil, "targets.browser."
+		if b, ok := targets[targetBrowser]; ok {
+			r.Browser, browser = true, b
+		}
+		if i, ok := targets[targetIOS]; ok {
+			r.IOS = &iosReq{}
+			strIn(i, "targets.ios.", "app", &r.IOS.App)
+			strIn(i, "targets.ios.", "device", &r.IOS.Device)
+			if v, ok := i["timeout"]; ok {
+				d, err := actionrpc.ParseTimeout(v)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("targets.ios.timeout: %w", err))
+				} else {
+					r.IOS.Timeout = d
+				}
+			}
+			if r.IOS.App == "" {
+				errs = append(errs, errors.New("targets.ios.app is required"))
+			}
+		}
+	} else {
+		r.Browser = true
+		for _, k := range browserParams {
+			if _, ok := with[k]; ok {
+				r.ShortForm = true
+			}
+		}
+	}
+	strIn(browser, prefix, "url", &r.URL)
+	strIn(browser, prefix, "storage_state", &r.StorageState)
+	numIn(browser, prefix, "window_w", &r.Width)
+	numIn(browser, prefix, "window_h", &r.Height)
 
 	// A step is a scenario test of task and expect, or a persona test of
 	// persona and goal.
 	scenario := r.Task != "" || r.Expect != ""
 	persona := r.Persona != "" || r.Goal != ""
-	required := []string{"url"}
+	var required []string
 	switch {
 	case scenario && persona:
 		errs = append(errs, errors.New("give task and expect for a scenario test, or persona and goal for a persona test, not both"))
@@ -164,9 +256,12 @@ func parse(with map[string]any) (req, error) {
 			errs = append(errs, fmt.Errorf("%s is required", k))
 		}
 	}
+	if r.Browser && r.URL == "" {
+		errs = append(errs, fmt.Errorf("%surl is required", prefix))
+	}
 	if r.URL != "" {
 		if u, err := url.Parse(r.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			errs = append(errs, fmt.Errorf("url %q must be an http or https URL", r.URL))
+			errs = append(errs, fmt.Errorf("%surl %q must be an http or https URL", prefix, r.URL))
 		}
 	}
 	switch r.CacheMode {
@@ -176,6 +271,9 @@ func parse(with map[string]any) (req, error) {
 	}
 	if r.Cache != "" && persona {
 		errs = append(errs, errors.New("cache is for scenario tests; a persona test takes another way each run"))
+	}
+	if r.Cache != "" && r.IOS != nil {
+		errs = append(errs, errors.New("cache is for a test of a browser alone; a recording holds the steps of a browser"))
 	}
 
 	r.Provider = strings.ToLower(r.Provider)
@@ -225,18 +323,18 @@ func parse(with map[string]any) (req, error) {
 			r.Timeout = d
 		}
 	}
-	if v, ok := with["headless"]; ok {
+	if v, ok := browser["headless"]; ok {
 		b, err := toBool(v)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("headless must be true or false"))
+			errs = append(errs, fmt.Errorf("%sheadless must be true or false", prefix))
 		} else {
 			r.Headless = b
 		}
 	}
-	if v, ok := with["allow_hosts"]; ok {
+	if v, ok := browser["allow_hosts"]; ok {
 		hosts, err := toStrings(v)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("allow_hosts: %w", err))
+			errs = append(errs, fmt.Errorf("%sallow_hosts: %w", prefix, err))
 		}
 		r.AllowHosts = hosts
 	}
@@ -259,6 +357,53 @@ func parse(with map[string]any) (req, error) {
 		}
 	}
 	return r, errors.Join(errs...)
+}
+
+// readTargets reads with.targets: a map from the kind of each target to a
+// map of what the workflow fixes for it. A kind the agent does not drive,
+// a key a kind does not take, and a target that is not a map are errors.
+func readTargets(v any) (map[string]map[string]any, []error) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil, []error{errors.New("targets must be a map from the kind of each target, browser or ios, to what the workflow fixes for it")}
+	}
+	if len(m) == 0 {
+		return nil, []error{errors.New("targets names no target; name browser, ios or both")}
+	}
+	var errs []error
+	out := map[string]map[string]any{}
+	for _, kind := range slices.Sorted(maps.Keys(m)) {
+		var keys []string
+		switch kind {
+		case targetBrowser:
+			keys = browserParams
+		case targetIOS:
+			keys = iosParams
+		default:
+			if slices.Contains(laterTargets, kind) {
+				errs = append(errs, fmt.Errorf("targets.%s is not driven yet; the agent drives browser and ios", kind))
+			} else {
+				errs = append(errs, fmt.Errorf("unknown target %s; the targets are browser and ios", kind))
+			}
+			continue
+		}
+		t, ok := m[kind].(map[string]any)
+		if !ok {
+			// targets.ios: with nothing under it comes as nil.
+			if m[kind] != nil {
+				errs = append(errs, fmt.Errorf("targets.%s must be a map of %s", kind, strings.Join(keys, ", ")))
+				continue
+			}
+			t = map[string]any{}
+		}
+		for _, k := range slices.Sorted(maps.Keys(t)) {
+			if !slices.Contains(keys, k) {
+				errs = append(errs, fmt.Errorf("unknown parameter targets.%s.%s; the parameters of %s are %s", kind, k, kind, strings.Join(keys, ", ")))
+			}
+		}
+		out[kind] = t
+	}
+	return out, errs
 }
 
 // anthropic is the provider of the Claude API, which the agent uses unless

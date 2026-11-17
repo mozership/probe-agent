@@ -54,7 +54,7 @@ func TestRun_PersonaReportsFindings(t *testing.T) {
 			}),
 		},
 	}}
-	o, err := Run(t.Context(), personaConfig(), p, m)
+	o, err := Run(t.Context(), personaConfig(), Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestRun_PersonaBlockedKeepsFindings(t *testing.T) {
 			"findings": []map[string]any{{"title": "A CAPTCHA on the first page", "severity": "medium", "category": "usability", "observed": "x", "evidence": []string{"Prove you are human"}, "steps": []int{}}},
 		})},
 	}}
-	o, err := Run(t.Context(), personaConfig(), p, m)
+	o, err := Run(t.Context(), personaConfig(), Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestRun_PersonaWithNothingWrong(t *testing.T) {
 		{toolCall("1", "finish", map[string]any{"status": "done", "summary": "Saved."})},
 		{toolCall("r1", "review", map[string]any{"verdict": "pass", "reason": "Saved.", "evidence": []string{"Your note is saved."}, "findings": []any{}})},
 	}}
-	o, err := Run(t.Context(), personaConfig(), p, m)
+	o, err := Run(t.Context(), personaConfig(), Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestRun_ScenarioHasNoNoteTool(t *testing.T) {
 		},
 		{toolCall("j1", "verdict", map[string]any{"verdict": "pass", "reason": "ok", "evidence": []string{"Welcome"}})},
 	}}
-	o, err := Run(t.Context(), config(), p, m)
+	o, err := Run(t.Context(), config(), Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}

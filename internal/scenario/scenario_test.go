@@ -175,7 +175,7 @@ func TestRun_PassesWithEvidenceThePagesShowed(t *testing.T) {
 		},
 	}}
 
-	o, err := Run(context.Background(), config(), p, m)
+	o, err := Run(context.Background(), config(), Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestRun_APassThatQuotesNothingSeenIsBlocked(t *testing.T) {
 		{toolCall("1", "finish", map[string]any{"status": "done", "summary": "Done."})},
 		{toolCall("j1", "verdict", map[string]any{"verdict": "pass", "reason": "Looks fine.", "evidence": []string{"Welcome back"}})},
 	}}
-	o, err := Run(context.Background(), config(), p, m)
+	o, err := Run(context.Background(), config(), Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestRun_TheJudgeSeesTheFinalPageWhenTheModelSeesImages(t *testing.T) {
 			saved = append(saved, name)
 			return name
 		}
-		o, err := Run(context.Background(), cfg, p, m)
+		o, err := Run(context.Background(), cfg, Targets{Browser: p}, m)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -266,7 +266,7 @@ func TestRun_AFailNeedsNoEvidence(t *testing.T) {
 		{toolCall("1", "finish", map[string]any{"status": "done", "summary": "An error page."})},
 		{toolCall("j1", "verdict", map[string]any{"verdict": "fail", "reason": "No dashboard.", "evidence": []string{}})},
 	}}
-	o, err := Run(context.Background(), config(), p, m)
+	o, err := Run(context.Background(), config(), Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestRun_BlockedIsNotJudged(t *testing.T) {
 	m := &fakeModel{scripts: [][]llm.Reply{
 		{toolCall("1", "finish", map[string]any{"status": "blocked", "summary": "A CAPTCHA."})},
 	}}
-	o, err := Run(context.Background(), config(), p, m)
+	o, err := Run(context.Background(), config(), Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestRun_StopsAtMaxStepsAndIsStillJudged(t *testing.T) {
 	}}
 	cfg := config()
 	cfg.MaxSteps = 3
-	o, err := Run(context.Background(), cfg, p, m)
+	o, err := Run(context.Background(), cfg, Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestRun_KeepsToTheHosts(t *testing.T) {
 			toolCall("3", "finish", map[string]any{"status": "blocked", "summary": "Left the site."}),
 		},
 	}}
-	o, err := Run(context.Background(), config(), p, m)
+	o, err := Run(context.Background(), config(), Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestRun_AnUnknownSecretIsNotTyped(t *testing.T) {
 			toolCall("2", "finish", map[string]any{"status": "blocked", "summary": "No token."}),
 		},
 	}}
-	if _, err := Run(context.Background(), config(), p, m); err != nil {
+	if _, err := Run(context.Background(), config(), Targets{Browser: p}, m); err != nil {
 		t.Fatal(err)
 	}
 	if len(p.typed) != 0 {
@@ -375,7 +375,7 @@ func TestRun_NudgesATesterThatStopsWithoutFinishing(t *testing.T) {
 		},
 		{toolCall("j1", "verdict", map[string]any{"verdict": "pass", "reason": "ok", "evidence": []string{"Welcome"}})},
 	}}
-	o, err := Run(context.Background(), config(), p, m)
+	o, err := Run(context.Background(), config(), Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +393,7 @@ func TestRun_TellsTheModelOfANewPage(t *testing.T) {
 			toolCall("3", "finish", map[string]any{"status": "blocked", "summary": "x"}),
 		},
 	}}
-	if _, err := Run(context.Background(), config(), p, m); err != nil {
+	if _, err := Run(context.Background(), config(), Targets{Browser: p}, m); err != nil {
 		t.Fatal(err)
 	}
 	click := m.chats[0].turns[1].Results[0]
@@ -407,7 +407,7 @@ func TestRun_TellsTheModelOfANewPage(t *testing.T) {
 
 func TestRun_TheTesterIsNotOfferedDisabledMembers(t *testing.T) {
 	m := &fakeModel{scripts: [][]llm.Reply{{toolCall("1", "finish", map[string]any{"status": "blocked", "summary": "x"})}}}
-	if _, err := Run(context.Background(), config(), &fakePage{}, m); err != nil {
+	if _, err := Run(context.Background(), config(), Targets{Browser: &fakePage{}}, m); err != nil {
 		t.Fatal(err)
 	}
 	b := m.chats[0].opts.Browser

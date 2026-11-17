@@ -69,6 +69,20 @@ func (d *browserDriver) Offer(opts *llm.ChatOptions) {
 	opts.Browser = &llm.BrowserToolset{Disabled: Disabled}
 }
 
+// Brief tells the tester of the browser among other targets.
+func (d *browserDriver) Brief() string {
+	return `The browser, through the browser toolset:
+- It has a single tab. A link that would open another window opens in it.
+- Open only pages on these hosts: ` + strings.Join(d.hosts, ", ") + `.
+- Do not guess URLs to skip a step unless the task tells you to.
+- Read the page before you act on it, and again after an action changed it: refs read before a change may be stale.`
+}
+
+// Opening says which page the browser opened.
+func (d *browserDriver) Opening() string {
+	return "The browser has opened " + d.cfg.StartURL + "."
+}
+
 // Handles says whether call is of a member of the browser toolset.
 func (d *browserDriver) Handles(call llm.Call) bool {
 	return call.Toolset == llm.ToolsetBrowser
@@ -154,7 +168,7 @@ var actions = map[string]bool{
 // Do runs a call of a member of the browser toolset, and returns its
 // result and the step that records it.
 func (d *browserDriver) Do(ctx context.Context, call llm.Call) (llm.Result, Step) {
-	step := Step{Tool: call.Name}
+	step := Step{Tool: call.Name, Target: d.Kind()}
 	// The tester had a screenshot of the page the step acts on.
 	pixels := d.shot != "" && d.shot == d.url
 	var raw map[string]any
@@ -417,22 +431,31 @@ func truncate(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
-func (d *browserDriver) final(ctx context.Context, vision bool) final {
-	var f final
-	f.url, f.title, _ = d.page.State(ctx)
-	if text, err := d.page.Text(ctx); err == nil {
-		f.text = truncate(d.secrets.mask(text), 20000)
+// Final is the page the tester left the browser on.
+func (d *browserDriver) Final(ctx context.Context, vision bool) observation {
+	url, title, _ := d.page.State(ctx)
+	url, title = d.secrets.mask(url), d.secrets.mask(title)
+	o := observation{
+		heading:   fmt.Sprintf("The page the tester left the browser on, %s (%q):", url, title),
+		mediaType: "image/jpeg",
+		imageNote: "A screenshot of the final page follows.",
+		state:     TargetState{Kind: d.Kind(), URL: url, Title: title},
+	}
+	var text, elements string
+	if t, err := d.page.Text(ctx); err == nil {
+		text = truncate(d.secrets.mask(t), 20000)
 	}
 	if els, err := d.page.Read(ctx, "all", 0, ""); err == nil {
-		f.elements = truncate(d.secrets.mask(els), 20000)
+		elements = truncate(d.secrets.mask(els), 20000)
 	}
+	o.sections = []section{{"final_page_text", text}, {"final_page_elements", elements}}
 	if img, err := d.page.Screenshot(ctx); err == nil {
 		// The judge is shown the screenshot when the model sees images; it
 		// is kept as evidence either way.
 		if vision {
-			f.image = img
+			o.image = img
 		}
-		f.screenshot = d.save("final.jpg", img)
+		o.screenshot = d.save("final.jpg", img)
 	}
-	return f
+	return o
 }
