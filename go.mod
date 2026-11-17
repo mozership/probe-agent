@@ -7,7 +7,7 @@ require (
 	github.com/fatih/color v1.19.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/mozership/probe v1.37.0
-	github.com/mozership/probe-browser v0.10.0
+	github.com/mozership/probe-browser v0.10.1
 )
 
 require (

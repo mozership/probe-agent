@@ -114,7 +114,7 @@ Without `targets`, `url`, `allow_hosts`, `storage_state`, `headless`, `window_w`
 
 ### A browser
 
-The agent drives Chrome through probe-browser, which it calls as a step of the run would, under the guard of the run, one call for each tool the tester uses, keeping the browser open from one to the next. Name probe-browser under `actions` of the workflow, by any name; the agent finds it by its reference, and the workflow pins its version as it pins every action. It needs probe-browser v0.10.0 or later, and Probe v1.37.0 or later.
+The agent drives Chrome through probe-browser, which it calls as a step of the run would, under the guard of the run, one call for each tool the tester uses, keeping the browser open from one to the next. Name probe-browser under `actions` of the workflow, by any name; the agent finds it by its reference, and the workflow pins its version as it pins every action. It needs probe-browser v0.10.1 or later, which counts the requests that end between its calls, and Probe v1.37.0 or later.
 
 ```yaml
 actions:

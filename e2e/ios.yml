@@ -17,7 +17,7 @@ name: probe-agent against an iOS app
 
 actions:
   agent: ./action
-  browser: github.com/mozership/probe-browser@5d06f87a238d52e2144f1332b347172bbe873f32 # v0.10.0
+  browser: github.com/mozership/probe-browser@d6e362cd24135ed205c20d1e0489dbcbb78c3b25 # v0.10.1
   ios: github.com/mozership/probe-ios@836056e3b6a1f9d164ff5674c35b774423647bcc # v0.2.1
   github-notes: github.com/mozership/probe-github-notes@d2df0b2dbbbffd3e368d156e571bf9bf2f784b76 # v0.1.3
 
