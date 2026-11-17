@@ -3,79 +3,62 @@ package page
 import (
 	"fmt"
 	"strings"
-
-	"github.com/chromedp/chromedp"
-	"github.com/chromedp/chromedp/kb"
 )
 
-// chord is a key and the modifiers held with it.
-type chord struct {
-	key       string
-	modifiers []chromedp.Modifier
+// keyNamesOf are the names the model may give a key, as the key member
+// takes them, with the name of KeyboardEvent.key probe-browser presses it
+// by.
+var keyNamesOf = map[string]string{
+	"enter": "Enter", "return": "Enter", "tab": "Tab", "escape": "Escape", "esc": "Escape",
+	"backspace": "Backspace", "delete": "Delete", "space": "Space",
+	"arrowup": "ArrowUp", "up": "ArrowUp", "arrowdown": "ArrowDown", "down": "ArrowDown",
+	"arrowleft": "ArrowLeft", "left": "ArrowLeft", "arrowright": "ArrowRight", "right": "ArrowRight",
+	"home": "Home", "end": "End", "pageup": "PageUp", "pagedown": "PageDown",
 }
 
-var keyNames = map[string]string{
-	"enter": kb.Enter, "return": kb.Enter, "tab": kb.Tab, "escape": kb.Escape, "esc": kb.Escape,
-	"backspace": kb.Backspace, "delete": kb.Delete, "space": " ",
-	"arrowup": kb.ArrowUp, "up": kb.ArrowUp, "arrowdown": kb.ArrowDown, "down": kb.ArrowDown,
-	"arrowleft": kb.ArrowLeft, "left": kb.ArrowLeft, "arrowright": kb.ArrowRight, "right": kb.ArrowRight,
-	"home": kb.Home, "end": kb.End, "pageup": kb.PageUp, "pagedown": kb.PageDown,
+// modifierNamesOf are the names the model may give a modifier, with the
+// name probe-browser takes.
+var modifierNamesOf = map[string]string{
+	"ctrl": "Control", "control": "Control",
+	"shift": "Shift",
+	"alt":   "Alt", "option": "Alt",
+	"meta": "Meta", "cmd": "Meta", "command": "Meta", "super": "Meta",
 }
 
-var modifierNames = map[string]chromedp.Modifier{
-	"ctrl": chromedp.ModifierCtrl, "control": chromedp.ModifierCtrl,
-	"shift": chromedp.ModifierShift,
-	"alt":   chromedp.ModifierAlt, "option": chromedp.ModifierAlt,
-	"meta": chromedp.ModifierMeta, "cmd": chromedp.ModifierMeta, "command": chromedp.ModifierMeta, "super": chromedp.ModifierMeta,
-}
-
-// parseKeys reads keys as the key member takes them: chords apart by
+// keyNames reads keys as the key member takes them, chords apart by
 // spaces, each a key with the modifiers before it joined by +, such as
-// "ctrl+a Delete".
-func parseKeys(keys string) ([]chord, error) {
-	var chords []chord
+// "ctrl+a Delete", and returns them as probe-browser's press takes them,
+// as "Control+a Delete".
+func keyNames(keys string) (string, error) {
+	var chords []string
 	for _, field := range strings.Fields(keys) {
 		parts := strings.Split(field, "+")
-		var c chord
+		var names []string
 		for _, m := range parts[:len(parts)-1] {
-			mod, ok := modifierNames[strings.ToLower(m)]
+			mod, ok := modifierNamesOf[strings.ToLower(m)]
 			if !ok {
-				return nil, fmt.Errorf("unknown modifier %q in %q", m, field)
+				return "", fmt.Errorf("unknown modifier %q in %q", m, field)
 			}
-			c.modifiers = append(c.modifiers, mod)
+			names = append(names, mod)
 		}
 		name := parts[len(parts)-1]
 		switch {
-		case keyNames[strings.ToLower(name)] != "":
-			c.key = keyNames[strings.ToLower(name)]
+		case keyNamesOf[strings.ToLower(name)] != "":
+			name = keyNamesOf[strings.ToLower(name)]
 		case len([]rune(name)) == 1:
-			c.key = name
 		case len(name) >= 2 && (name[0] == 'F' || name[0] == 'f'):
 			var n int
-			if _, err := fmt.Sscanf(name[1:], "%d", &n); err != nil || n < 1 || n > 12 {
-				return nil, fmt.Errorf("unknown key %q", name)
+			if _, err := fmt.Sscanf(name[1:], "%d", &n); err != nil || n < 1 || n > 12 || fmt.Sprint(n) != name[1:] {
+				return "", fmt.Errorf("unknown key %q", name)
 			}
-			c.key = string(rune(0x800 + n))
+			name = fmt.Sprintf("F%d", n)
 		default:
-			return nil, fmt.Errorf("unknown key %q", name)
+			return "", fmt.Errorf("unknown key %q", name)
 		}
-		chords = append(chords, c)
+		chords = append(chords, strings.Join(append(names, name), "+"))
 	}
 	if len(chords) == 0 {
-		return nil, fmt.Errorf("no key to press")
+		return "", fmt.Errorf("no key to press")
 	}
-	return chords, nil
-}
-
-// buttonModifiers returns the modifiers named, such as ctrl and shift.
-func buttonModifiers(names []string) ([]chromedp.Modifier, error) {
-	var mods []chromedp.Modifier
-	for _, n := range names {
-		m, ok := modifierNames[strings.ToLower(n)]
-		if !ok {
-			return nil, fmt.Errorf("unknown modifier %q", n)
-		}
-		mods = append(mods, m)
-	}
-	return mods, nil
+	return strings.Join(chords, " "), nil
 }

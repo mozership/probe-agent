@@ -114,21 +114,23 @@ func TestParse_RefusesTargets(t *testing.T) {
 	}
 }
 
-func TestIOSAction(t *testing.T) {
+func TestActionNamed(t *testing.T) {
 	sha := strings.Repeat("a", 40)
 	tests := []struct {
 		name    string
+		repo    string
 		actions map[string]string
 		want    string
 		err     string
 	}{
-		{name: "by any name", actions: map[string]string{"iphone": "github.com/mozership/probe-ios@" + sha, "agent": "github.com/mozership/probe-agent@" + sha}, want: "iphone"},
-		{name: "none", actions: map[string]string{"agent": "github.com/mozership/probe-agent@" + sha}, err: "name it under actions"},
-		{name: "a local action is not it", actions: map[string]string{"ios": "/src/probe-ios"}, err: "name it under actions"},
-		{name: "two", actions: map[string]string{"a": "github.com/mozership/probe-ios@" + sha, "b": "github.com/mozership/probe-ios@" + strings.Repeat("b", 40)}, err: "cannot tell which of a and b"},
+		{name: "by any name", repo: probeIOS, actions: map[string]string{"iphone": "github.com/mozership/probe-ios@" + sha, "agent": "github.com/mozership/probe-agent@" + sha}, want: "iphone"},
+		{name: "the browser", repo: probeBrowser, actions: map[string]string{"web": "github.com/mozership/probe-browser@" + sha, "ios": "github.com/mozership/probe-ios@" + sha}, want: "web"},
+		{name: "none", repo: probeBrowser, actions: map[string]string{"agent": "github.com/mozership/probe-agent@" + sha}, err: "through probe-browser: name it under actions of the workflow, as browser: github.com/mozership/probe-browser@<commit SHA>"},
+		{name: "a local action is not it", repo: probeIOS, actions: map[string]string{"ios": "/src/probe-ios"}, err: "name it under actions"},
+		{name: "two", repo: probeIOS, actions: map[string]string{"a": "github.com/mozership/probe-ios@" + sha, "b": "github.com/mozership/probe-ios@" + strings.Repeat("b", 40)}, err: "but a and b under actions each name github.com/mozership/probe-ios"},
 	}
 	for _, tt := range tests {
-		got, err := iosAction(tt.actions)
+		got, err := actionNamed(tt.actions, tt.repo, "it drives its target", "browser")
 		switch {
 		case tt.err != "" && (err == nil || !strings.Contains(err.Error(), tt.err)):
 			t.Errorf("%s: err %v, want %q", tt.name, err, tt.err)

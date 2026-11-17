@@ -1,8 +1,8 @@
 # The end-to-end tests: probe-agent run through Probe against the sign-up of
-# e2e/server, with a real Chrome and a real model. Run it from the
-# repository root, with the server listening, Chrome installed and
-# ANTHROPIC_API_KEY set, and the action built first, as Probe resolves it
-# before the first job:
+# e2e/server, with a real Chrome, driven through probe-browser, and a real
+# model. Run it from the repository root, with the server listening, Chrome
+# installed and ANTHROPIC_API_KEY set, and the action built first, as Probe
+# resolves it before the first job:
 #
 #   go -C e2e/server run . &
 #   go build -o e2e/action/probe-agent . && probe e2e/workflow.yml
@@ -15,7 +15,7 @@
 # recording and blocks the test when the one committed no longer matches,
 # and checks that it is replayed whole.
 #
-# The notes context needs Probe v1.32.0 or later.
+# The calls of probe-browser need Probe v1.37.0 or later.
 #
 # The job Signed in signs Dave up with probe-browser, saves the login with
 # its save_storage_state, and has the tester change the name on the account
@@ -30,7 +30,7 @@ name: probe-agent against a sign-up
 
 actions:
   agent: ./action
-  browser: github.com/mozership/probe-browser@5e0ee79cb660e5c855414935f51ad3eeb7c6ad6e # v0.6.1
+  browser: github.com/mozership/probe-browser@5d06f87a238d52e2144f1332b347172bbe873f32 # v0.10.0
   github-notes: github.com/mozership/probe-github-notes@d2df0b2dbbbffd3e368d156e571bf9bf2f784b76 # v0.1.3
 
 secrets:

@@ -2,7 +2,7 @@
 
 A [Probe](https://github.com/mozership/probe) action that tests an application from a task written in natural language. A model, the tester, uses the application through a real Chrome, an app on an iOS simulator, or both, to carry out the task; another call of the model, the judge, then decides from what they showed whether the expectation holds. See [Targets](#targets) for an iOS app.
 
-Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It needs Probe v1.21.0 or later, and v1.32.0 or later for later steps to read its [notes](#notes).
+Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It drives Chrome through [probe-browser](https://github.com/mozership/probe-browser), and an iOS app through [probe-ios](https://github.com/mozership/probe-ios), which the workflow names under `actions` as it names the agent; it calls them as a step of the run would, which needs Probe v1.37.0 or later.
 
 It has two modes:
 
@@ -17,6 +17,7 @@ A workflow pins the action by a full commit SHA. The notes of each [release](htt
 name: Sign-up
 actions:
   agent: github.com/mozership/probe-agent@<commit SHA>
+  browser: github.com/mozership/probe-browser@<commit SHA>
 secrets:
   - ANTHROPIC_API_KEY
   - TEST_PASSWORD
@@ -106,10 +107,22 @@ The model is called with the API key of its provider, which the action takes fro
 
 | Key | Target | What goes in it | Driven by |
 |---|---|---|---|
-| `browser` | Chrome | `url` (required), `allow_hosts`, `storage_state`, `headless`, `window_w`, `window_h`, as in [Parameters](#parameters) | The agent itself |
+| `browser` | Chrome | `url` (required), `allow_hosts`, `storage_state`, `headless`, `window_w`, `window_h`, as in [Parameters](#parameters) | [probe-browser](https://github.com/mozership/probe-browser) |
 | `ios` | An app on an iOS simulator | `app` (required), the bundle identifier; `device`, the simulator by its name or UDID, which has to be given when more than one is booted; `timeout`, see below | [probe-ios](https://github.com/mozership/probe-ios) |
 
 Without `targets`, `url`, `allow_hosts`, `storage_state`, `headless`, `window_w` and `window_h` at the top of `with` are the short form of `targets.browser`, as before there were targets; the action warns that they move under it. A step with both `targets` and one of them is refused.
+
+### A browser
+
+The agent drives Chrome through probe-browser, which it calls as a step of the run would, under the guard of the run, one call for each tool the tester uses, keeping the browser open from one to the next. Name probe-browser under `actions` of the workflow, by any name; the agent finds it by its reference, and the workflow pins its version as it pins every action. It needs probe-browser v0.10.0 or later, and Probe v1.37.0 or later.
+
+```yaml
+actions:
+  agent: github.com/mozership/probe-agent@<commit SHA>
+  browser: github.com/mozership/probe-browser@<commit SHA>
+```
+
+A workflow of an earlier agent, which drove Chrome itself, names probe-browser too: without it, a test of a browser fails at once, and says so. Probe stops the browser once the run is over. A link that would open a window opens its page in the tab the tester drives, as probe-browser's `one_tab` has it, and the requests and the console errors of the page are those probe-browser reads while each tool runs, and from one to the next.
 
 ### An iOS app
 
@@ -405,7 +418,7 @@ probe-ios keeps to no guard either, and the agent calls it under the guard of th
 ## Development
 
 ```bash
-go test ./...                      # the page tests start Chrome, and are skipped without it
+go test ./...                      # the page tests build probe-browser and drive Chrome through it, skipped without Chrome
 go -C e2e/server run . &           # the sign-up the e2e workflow tests
 go build -o e2e/action/probe-agent . && probe e2e/workflow.yml   # needs ANTHROPIC_API_KEY
 ```

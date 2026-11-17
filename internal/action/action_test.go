@@ -403,7 +403,7 @@ func TestParse_StorageState(t *testing.T) {
 // when the step that saves the login failed.
 func TestRun_MissingStorageState(t *testing.T) {
 	a := &Action{ctx: t.Context(), log: hclog.NewNullLogger()}
-	_, err := a.run(actionrpc.Call{With: map[string]any{
+	_, err := a.run(actionrpc.Call{Actions: browserActions, With: map[string]any{
 		"task": "t", "expect": "e", "url": "http://a.test/",
 		"storage_state": filepath.Join(t.TempDir(), "missing.json"),
 	}})
@@ -411,6 +411,10 @@ func TestRun_MissingStorageState(t *testing.T) {
 		t.Errorf("error %v, want the file refused", err)
 	}
 }
+
+// browserActions names probe-browser, as a workflow that drives a browser
+// does.
+var browserActions = map[string]string{"browser": "github.com/mozership/probe-browser@" + strings.Repeat("a", 40)}
 
 // TestRun_StorageStateOfAnotherShape fails the step before the browser
 // starts, rather than starting it signed out, as for the file save_passkeys
@@ -421,7 +425,7 @@ func TestRun_StorageStateOfAnotherShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &Action{ctx: t.Context(), log: hclog.NewNullLogger()}
-	_, err := a.run(actionrpc.Call{With: map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "storage_state": path}})
+	_, err := a.run(actionrpc.Call{Actions: browserActions, With: map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "storage_state": path}})
 	if err == nil || !strings.Contains(err.Error(), "storage_state: "+path+" is not a storage state: it has no list of cookies") {
 		t.Errorf("error %v, want the file refused", err)
 	}

@@ -1,8 +1,9 @@
 # The end-to-end tests of an iOS app: probe-agent drives the Settings app
-# of an iOS simulator through probe-ios, alone and beside a browser on the
-# help page of e2e/server. Run it from the repository root on macOS, with
-# Xcode, a booted simulator, the server listening, Chrome installed and
-# ANTHROPIC_API_KEY set, and the action built first:
+# of an iOS simulator through probe-ios, alone and beside a browser, driven
+# through probe-browser, on the help page of e2e/server. Run it from the
+# repository root on macOS, with Xcode, a booted simulator, the server
+# listening, Chrome installed and ANTHROPIC_API_KEY set, and the action built
+# first:
 #
 #   xcrun simctl boot "iPhone 17"
 #   go -C e2e/server run . &
@@ -10,12 +11,13 @@
 #
 # DEVICE names the simulator when more than one is booted. probe-ios builds
 # its runner the first time, which takes minutes, so the steps have a
-# timeout of 15 minutes. The calls of probe-ios need Probe v1.37.0 or
-# later.
+# timeout of 15 minutes. The calls of probe-ios and probe-browser need
+# Probe v1.37.0 or later.
 name: probe-agent against an iOS app
 
 actions:
   agent: ./action
+  browser: github.com/mozership/probe-browser@5d06f87a238d52e2144f1332b347172bbe873f32 # v0.10.0
   ios: github.com/mozership/probe-ios@836056e3b6a1f9d164ff5674c35b774423647bcc # v0.2.1
   github-notes: github.com/mozership/probe-github-notes@d2df0b2dbbbffd3e368d156e571bf9bf2f784b76 # v0.1.3
 
