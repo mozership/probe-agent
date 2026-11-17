@@ -498,3 +498,21 @@ func TestSlowest(t *testing.T) {
 		t.Errorf("slowest %v", got)
 	}
 }
+
+// TestWithoutPageAtFailure leaves the page at the failure out of an error
+// of probe-browser, and keeps the error it was, as a refusal of the guard.
+func TestWithoutPageAtFailure(t *testing.T) {
+	refused := &actionrpc.Refused{Reason: "not allowed"}
+	err := withoutPageAtFailure(fmt.Errorf("click #go: %w (page at failure: url http://a/, screenshot s.png, html s.html)", refused))
+	if err.Error() != "click #go: "+refused.Error() {
+		t.Errorf("error %q", err)
+	}
+	var got *actionrpc.Refused
+	if !errors.As(err, &got) {
+		t.Errorf("%v is no longer the refusal", err)
+	}
+	plain := errors.New("plain")
+	if withoutPageAtFailure(plain) != plain {
+		t.Error("an error with no page at the failure is changed")
+	}
+}

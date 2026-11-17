@@ -129,7 +129,7 @@ func (b *Browser) run(ctx context.Context, timeout time.Duration, actions ...act
 	res, err := b.call(ctx, with)
 	b.record(res)
 	if err != nil {
-		return nil, nil, errors.New(pageAtFailure.ReplaceAllString(err.Error(), ""))
+		return nil, nil, withoutPageAtFailure(err)
 	}
 	results, _ := res["results"].(map[string]any)
 	files, _ := res["filepaths"].(map[string]any)
@@ -437,4 +437,24 @@ func slowest(list []Request, req Request, n int) []Request {
 	}
 	list = slices.Insert(list, i, req)
 	return list[:min(len(list), n)]
+}
+
+// shortened is an error of probe-browser told without the page at the
+// failure, which the tester reads the page for itself, and is still the
+// error it was, as a refusal of the guard.
+type shortened struct {
+	msg string
+	err error
+}
+
+func (e *shortened) Error() string { return e.msg }
+func (e *shortened) Unwrap() error { return e.err }
+
+// withoutPageAtFailure returns err without the page at the failure.
+func withoutPageAtFailure(err error) error {
+	msg := pageAtFailure.ReplaceAllString(err.Error(), "")
+	if msg == err.Error() {
+		return err
+	}
+	return &shortened{msg: msg, err: err}
 }
