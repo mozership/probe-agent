@@ -39,9 +39,10 @@ jobs:
   # On CI, the first launch of a fresh runner on a simulator just booted,
   # and the first query of the app after it, run out of the 30 seconds of
   # probe-ios, as XCUITest waits for the app to settle, so both are done
-  # here, with minutes for them, before the agent opens the app. The calls
-  # of the tests keep that timeout: on CI, activating the app took longer
-  # than 10 seconds even after a launch.
+  # here, with minutes for them, before the agent opens the app. Even
+  # after them, the agent's opening of the app, activating it and reading
+  # it, ran out of those 30 seconds on CI now and then, so the tests give
+  # the calls of probe-ios 2 minutes.
   - name: The runner of probe-ios launches the app and reads it
     uses: ios
     timeout: 15m
@@ -64,6 +65,7 @@ jobs:
         ios:
           app: com.apple.Preferences
           device: "{{vars.device}}"
+          timeout: 2m
     test: res.verdict == "pass" && res.targets[0].kind == "ios"
 
   - name: A help page on the web names a section the app opens
@@ -78,6 +80,7 @@ jobs:
         ios:
           app: com.apple.Preferences
           device: "{{vars.device}}"
+          timeout: 2m
     test: |
       res.verdict == "pass" &&
       len(filter(res.steps, .target == "browser")) > 0 &&
