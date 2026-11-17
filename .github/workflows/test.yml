@@ -40,7 +40,7 @@ jobs:
     # Two runs on the same pull request at once could each add a comment of
     # the notes, rather than edit the one there.
     concurrency:
-      group: ${{ github.job }}-${{ github.event.pull_request.number || github.ref }}
+      group: e2e-${{ github.event.pull_request.number || github.ref }}
     env:
       GITHUB_TOKEN: ${{ github.token }}
       # The Claude API is called with the OIDC token of the job, through
@@ -100,7 +100,7 @@ jobs:
     # Two runs on the same pull request at once could each add a comment of
     # the notes, rather than edit the one there.
     concurrency:
-      group: ${{ github.job }}-${{ github.event.pull_request.number || github.ref }}
+      group: e2e-ios-${{ github.event.pull_request.number || github.ref }}
     env:
       GITHUB_TOKEN: ${{ github.token }}
       # The Claude API is called with the OIDC token of the job, through
