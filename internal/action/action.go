@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"slices"
@@ -218,12 +219,16 @@ func iosAction(actions map[string]string) (string, error) {
 // newModel returns the model of the provider r names. The API key of a
 // provider other than anthropic is read from its environment variable
 // here, so that a test without one ends before the browser starts; the
-// Anthropic SDK finds its own, as in ANTHROPIC_API_KEY.
+// Anthropic SDK finds its own, as in ANTHROPIC_API_KEY, except an OIDC token
+// of GitHub Actions, which is asked for anew for each exchange.
 func newModel(r req) (llm.Model, error) {
 	if r.Provider == anthropic {
 		var opts []option.RequestOption
 		if r.BaseURL != "" {
 			opts = append(opts, option.WithBaseURL(r.BaseURL))
+		}
+		if fed, ok := llm.GitHubActionsFederation(os.Getenv, http.DefaultClient); ok {
+			opts = append(opts, fed)
 		}
 		return llm.NewAnthropic(r.Model, r.Effort, opts...), nil
 	}
