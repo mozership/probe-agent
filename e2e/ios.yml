@@ -99,4 +99,4 @@ jobs:
       token: "{{vars.github_token}}"
       notes: "{{ notes }}"
       body: The notes probe-agent left in e2e/ios.yml, driving the Settings app of an iOS simulator.
-    test: res.posted || res.number == 0
+    test: res.code < 300

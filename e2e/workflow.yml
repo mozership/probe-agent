@@ -246,4 +246,4 @@ jobs:
       token: "{{vars.github_token}}"
       notes: "{{ notes }}"
       body: "The notes probe-agent left in e2e/workflow.yml. e2e/server fails a sign-up and answers the page of a new note with a 500 on purpose, so the notes on them are expected."
-    test: res.posted || res.number == 0
+    test: res.code < 300
