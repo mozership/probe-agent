@@ -32,19 +32,22 @@ jobs:
       evidence_dir: out/agent
       timeout: 12m
   steps:
-  # The first launch of a fresh runner on a simulator just booted runs out
-  # of the 30 seconds of probe-ios on CI, as XCUITest waits for the app to
-  # settle, so it is done here before the agent opens the app. The calls of
-  # the tests keep that timeout: on CI, activating the app took longer than
-  # 10 seconds even after this.
-  - name: The runner of probe-ios launches the app
+  # On CI, the first launch of a fresh runner on a simulator just booted,
+  # and the first query of the app after it, run out of the 30 seconds of
+  # probe-ios, as XCUITest waits for the app to settle, so both are done
+  # here, with minutes for them, before the agent opens the app. The calls
+  # of the tests keep that timeout: on CI, activating the app took longer
+  # than 10 seconds even after a launch.
+  - name: The runner of probe-ios launches the app and reads it
     uses: ios
     timeout: 15m
     with:
       app: com.apple.Preferences
       device: "{{vars.device}}"
+      timeout: 3m
       actions:
       - name: launch
+      - name: tree
     test: res.code == 0
 
   - name: A user finds the version of iOS
