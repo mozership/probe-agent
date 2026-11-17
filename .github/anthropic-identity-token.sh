@@ -26,6 +26,15 @@ fetch() {
   mv "$file.new" "$file"
 }
 
+# The claims the federation rule matches, without the signature, which
+# alone makes the token usable, for when the rule refuses the token.
+claims() {
+  payload=$(cut -d. -f2 "$file" | tr '_-' '/+')
+  while [ $((${#payload} % 4)) -ne 0 ]; do payload="$payload="; done
+  printf '%s' "$payload" | base64 -d | jq -c '{sub, aud, repository, ref, event_name, job_workflow_ref}'
+}
+
 fetch
+echo "The OIDC token for the Claude API: $(claims)"
 (while sleep 120; do fetch || true; done) > /dev/null 2>&1 &
 echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$file" >> "$GITHUB_ENV"
