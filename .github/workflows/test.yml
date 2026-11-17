@@ -34,7 +34,15 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      # probe-github-notes puts the notes of the agent in a comment on the
+      # pull request.
+      pull-requests: write
+    # Two runs on the same pull request at once could each add a comment of
+    # the notes, rather than edit the one there.
+    concurrency:
+      group: ${{ github.job }}-${{ github.event.pull_request.number || github.ref }}
     env:
+      GITHUB_TOKEN: ${{ github.token }}
       # The Claude API is called with the OIDC token of the job, through
       # workload identity federation, rather than an API key: probe-agent
       # asks GitHub for a new token for each exchange.
@@ -86,7 +94,15 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      # probe-github-notes puts the notes of the agent in a comment on the
+      # pull request.
+      pull-requests: write
+    # Two runs on the same pull request at once could each add a comment of
+    # the notes, rather than edit the one there.
+    concurrency:
+      group: ${{ github.job }}-${{ github.event.pull_request.number || github.ref }}
     env:
+      GITHUB_TOKEN: ${{ github.token }}
       # The Claude API is called with the OIDC token of the job, through
       # workload identity federation, rather than an API key: probe-agent
       # asks GitHub for a new token for each exchange.
