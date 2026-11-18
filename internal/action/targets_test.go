@@ -277,7 +277,9 @@ func TestHTTPResponse(t *testing.T) {
 
 func TestAPIGuard(t *testing.T) {
 	g := apiGuard(actionrpc.Guard{}, "https://api.test/v1")
-	if !slices.Equal(g.AllowHosts, []string{"api.test"}) || !g.Runs("http") || g.AllowsHost("evil.test") || !g.AllowsHost("api.test:443") {
+	// The port of the scheme is named, so that neither another port nor
+	// plain http is allowed.
+	if !slices.Equal(g.AllowHosts, []string{"api.test:443"}) || !g.Runs("http") || g.AllowsHost("evil.test:443") || g.AllowsHost("api.test:80") || !g.AllowsHost("api.test:443") {
 		t.Errorf("guard %+v", g)
 	}
 	g = apiGuard(actionrpc.Guard{ReadOnly: true, AllowHosts: []string{"*.test"}}, "http://api.test:8080/")
@@ -288,6 +290,17 @@ func TestAPIGuard(t *testing.T) {
 	g = apiGuard(actionrpc.Guard{AllowHosts: []string{"other.test"}}, "https://api.test/")
 	if !slices.Equal(g.AllowHosts, []string{"other.test"}) {
 		t.Errorf("guard %+v", g)
+	}
+}
+
+func TestResult_MasksTheBaseURLOfTheAPI(t *testing.T) {
+	r := req{Task: "t", Expect: "e", HTTP: &httpReq{URL: "https://api.test/v1?token=s3cret-token"}, Secrets: map[string]string{"TOKEN": "s3cret-token"}}
+	ret, err := result(r, outcome(), files{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api := ret["req"].(map[string]any)["api"]; api != "https://api.test/v1?token=<secret:TOKEN>" {
+		t.Errorf("req.api %v", api)
 	}
 }
 
@@ -330,13 +343,13 @@ func TestEvidence_WritesTheLastResponseOfTheAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := outcome()
-	o.Targets = []scenario.TargetState{{Kind: "http", Method: "GET", URL: "http://a.test/v1/orders/7", Status: 200}}
+	o.Targets = []scenario.TargetState{{Kind: "http", Method: "GET", URL: "http://a.test/v1/orders/7", Status: 200, Response: "GET http://a.test/v1/orders/7 -> 200 OK\n\n{\"id\":7}"}}
 	f, err := ev.write(req{Task: "t", Expect: "e"}, o)
 	if err != nil {
 		t.Fatal(err)
 	}
 	md, _ := os.ReadFile(f.Report)
-	if want := "## Last response of the API\n\nGET <http://a.test/v1/orders/7> → 200"; !strings.Contains(string(md), want) {
+	if want := "## Last response of the API\n\nGET <http://a.test/v1/orders/7> → 200\n\n```\nGET http://a.test/v1/orders/7 -> 200 OK\n\n{\"id\":7}\n```"; !strings.Contains(string(md), want) {
 		t.Errorf("the report lacks %q:\n%s", want, md)
 	}
 }

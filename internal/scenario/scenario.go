@@ -536,6 +536,9 @@ type TargetState struct {
 	Title  string `json:"title,omitempty"`
 	Method string `json:"method,omitempty"`
 	Status int    `json:"status,omitempty"`
+	// Response is the last response of an HTTP API, masked and cut, for the
+	// report; it is not in the result, which the report is beside.
+	Response string `json:"-"`
 	// App and Device are of the app the tester drove, and the simulator
 	// it ran on.
 	App    string `json:"app,omitempty"`

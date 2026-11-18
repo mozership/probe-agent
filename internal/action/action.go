@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -286,8 +287,18 @@ func apiGuard(g actionrpc.Guard, raw string) actionrpc.Guard {
 	if err != nil || u.Host == "" {
 		return g
 	}
-	if len(g.AllowHosts) == 0 || g.AllowsHost(u.Host) {
-		g.AllowHosts = []string{u.Host}
+	// The port is named, that of the scheme when the URL names none, so
+	// that a redirect cannot go to another port, nor from https to http.
+	host := u.Host
+	if u.Port() == "" {
+		port := "443"
+		if u.Scheme == "http" {
+			port = "80"
+		}
+		host = net.JoinHostPort(u.Hostname(), port)
+	}
+	if len(g.AllowHosts) == 0 || g.AllowsHost(host) {
+		g.AllowHosts = []string{host}
 	}
 	// The http action keeps to both kinds of guard, as its package
 	// declares, which a guard of a run with none may not hold.
@@ -469,7 +480,10 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 		reqMap["url"] = r.URL
 	}
 	if r.HTTP != nil {
-		reqMap["api"] = r.HTTP.URL
+		// The base URL can hold a secret, as a token in its query.
+		var api strings.Builder
+		_, _ = io.WriteString(secretsHidden(&api, r.Secrets), r.HTTP.URL)
+		reqMap["api"] = api.String()
 	}
 	if r.IOS != nil {
 		reqMap["app"] = r.IOS.App

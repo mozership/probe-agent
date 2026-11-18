@@ -208,17 +208,17 @@ The agent calls the API through the http action of Probe, which it calls as a st
 
 | Key | Type | Description |
 |---|---|---|
-| `url` | String | The base URL, `http` or `https`. The tester gives the path after it, and cannot reach another host, nor a path out of it; a redirect to another host is refused, so that the headers the workflow fixes do not go there |
+| `url` | String | The base URL, `http` or `https`. The tester gives the path after it, and cannot reach another host, nor a path out of it; a redirect to another host or port, or from `https` to `http`, is refused, so that the headers the workflow fixes do not go there. A redirect to another path of the same host is followed, as the http action follows it |
 | `openapi` | String or Object | The path of an OpenAPI document, from the directory Probe runs in, or a map of `spec`, the path, and `strict`, as the [http action](https://probe.linyo.ws/reference/actions/http#checking-against-openapi) takes them. The tester is given the document, and each request and its response are checked against it |
 | `headers` | Object | Headers sent with each request, by name, such as a credential. The tester cannot change them |
 | `cookies` | Object | Cookies sent with each request, by name |
 | `timeout` | String or Number | The timeout of each request, as `10s` or a number of seconds; 30 seconds by default, as in the http action |
 
-The tester has one tool, `http_request`, with `method`, `path`, `query`, `headers` and `body`; a body that is JSON is sent as `application/json`. It is told the status, the headers and the body of the response, a long body cut, and the cookies the API sets are sent on with the requests after it, as the http action keeps them. `{secret:NAME}` in the path, the query, a header or the body is replaced with the value of the secret as the request is sent, escaped for the path, the query or a JSON string it stands in, and the response is read with the values masked.
+The tester has one tool, `http_request`, with `method`, `path`, `query`, `headers` and `body`; a body that is JSON is sent as `application/json`. It is told the status, the headers and the body of the response, a long body cut, with the values of the cookies `Set-Cookie` sets hidden, and the cookies the API sets are sent on with the requests after it, as the http action keeps them. `{secret:NAME}` in the path, the query, a header or the body is replaced with the value of the secret as the request is sent, escaped for the path, the query or a JSON string it stands in, and the response is read with the values masked.
 
 What the OpenAPI document does not allow in a request or a response is told to the tester with the response, and to the judge or the reviewer with the record. In a persona test, a response that breaks the document is a finding, `verified` as a deterministic check found it, without the reviewer: the violations of one field of one operation are one finding. A request that breaks it is the tester's to mend, and is no finding, nor is a response the document has no operation for, as to a path the tester got wrong.
 
-The judge checks its quotes against the responses, and is given the last one; nothing is sent again at the end, as a request can change what the API holds. A `cache` is refused, as for an app.
+The judge checks its quotes against the responses, and is given the last one, which `report.md` shows; nothing is sent again at the end, as a request can change what the API holds. A `cache` is refused, as for an app.
 
 ## Models
 

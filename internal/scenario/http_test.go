@@ -109,7 +109,8 @@ func TestRun_CallsAnHTTPAPI(t *testing.T) {
 	if len(o.Steps) != 2 || o.Steps[0].Target != "http" || o.Steps[0].URL != "https://api.test/v1/orders?key={secret:PASSWORD}" || o.Steps[0].Input["headers"].(map[string]any)["X-Request"] != "{secret:EMAIL}" {
 		t.Errorf("steps %+v", o.Steps)
 	}
-	want := TargetState{Kind: "http", Method: "GET", URL: "https://api.test/v1/orders/o1?full=1", Status: 200}
+	want := TargetState{Kind: "http", Method: "GET", URL: "https://api.test/v1/orders/o1?full=1", Status: 200,
+		Response: "GET https://api.test/v1/orders/o1?full=1 -> 200 OK\n\n" + `{"id":"o1","item":7,"quantity":2}`}
 	if len(o.Targets) != 1 || o.Targets[0] != want || o.URL != "" {
 		t.Errorf("targets %+v, url %q", o.Targets, o.URL)
 	}
@@ -432,5 +433,39 @@ func TestRun_ContractFindingsOfAPersonaThatRefused(t *testing.T) {
 	}
 	if len(o.Findings) != 1 || o.Findings[0].Title != "The response of GET /notes breaks the OpenAPI document at $.count" || !slices.Equal(o.Findings[0].Steps, []int{2, 3}) || len(o.Findings[0].Evidence) != 2 {
 		t.Errorf("findings %+v", o.Findings)
+	}
+}
+
+// A secret whose value escaping leaves as it is, such as .., cannot lead
+// the path out of the base URL.
+func TestRun_HTTPSecretThatLeadsOut(t *testing.T) {
+	api := &fakeAPI{}
+	m := &fakeModel{scripts: [][]llm.Reply{
+		{
+			toolCall("1", "http_request", map[string]any{"method": "GET", "path": "/{secret:KEY}/admin"}),
+			toolCall("2", "finish", map[string]any{"status": "done", "summary": "Done."}),
+		},
+		{toolCall("j1", "verdict", map[string]any{"verdict": "fail", "reason": "r", "evidence": []string{}})},
+	}}
+	cfg := apiConfig()
+	cfg.Secrets = map[string]string{"KEY": ".."}
+	if _, err := Run(t.Context(), cfg, Targets{HTTP: api.target()}, m); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.requests) != 0 {
+		t.Errorf("sent %+v", api.requests)
+	}
+	if res := m.chats[0].turns[1].Results[0]; !res.IsError || !strings.Contains(res.Text, "leads out of the base URL") {
+		t.Errorf("result %+v", res)
+	}
+}
+
+func TestResponseText_HidesTheValuesOfCookies(t *testing.T) {
+	text := responseText("POST", "https://api.test/v1/login", HTTPResponse{
+		Code: 200, Status: "200 OK",
+		Headers: map[string]string{"Set-Cookie": "sid=abc123; Path=/; HttpOnly, theme=dark; Expires=Wed, 21 Oct 2026 07:28:00 GMT"},
+	})
+	if strings.Contains(text, "abc123") || strings.Contains(text, "=dark") || !strings.Contains(text, "Set-Cookie: sid=<hidden>; Path=/; HttpOnly, theme=<hidden>; Expires=Wed, 21 Oct 2026 07:28:00 GMT") {
+		t.Errorf("text:\n%s", text)
 	}
 }

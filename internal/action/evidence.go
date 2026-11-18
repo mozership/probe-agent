@@ -234,6 +234,9 @@ func markdown(r req, o scenario.Outcome, dir string) string {
 				w("No request was made.\n\n")
 			} else {
 				w("%s <%s> → %d\n\n", t.Method, t.URL, t.Status)
+				if t.Response != "" {
+					w("```\n%s\n```\n\n", strings.ReplaceAll(t.Response, "```", "` ` `"))
+				}
 			}
 		}
 	}

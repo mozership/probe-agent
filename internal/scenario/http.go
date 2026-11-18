@@ -136,11 +136,12 @@ func (d *httpDriver) Brief() string {
 	}
 	if d.api.OpenAPI != "" {
 		b.WriteString("\n- Each request and its response are checked against the OpenAPI document below; a request returns what the document does not allow in them.")
-		spec := d.api.OpenAPI
+		// The document is masked whole before it is cut, as a response is.
+		spec := d.secrets.mask(d.api.OpenAPI)
 		if len([]rune(spec)) > maxSpec {
 			spec = truncate(spec, maxSpec) + "\n(The document is cut here.)"
 		}
-		b.WriteString("\n\n<openapi>\n" + d.secrets.mask(spec) + "\n</openapi>")
+		b.WriteString("\n\n<openapi>\n" + spec + "\n</openapi>")
 	}
 	return b.String()
 }
@@ -206,6 +207,11 @@ func (d *httpDriver) request(ctx context.Context, in httpInput) (string, string,
 	shown = placeholderEscaped.ReplaceAllString(shown, "{secret:$1}")
 	if err != nil {
 		return "", shown, err
+	}
+	// A value can make what escaping leaves as it is, such as .., so the
+	// path is kept under the base URL once the values are in it too.
+	if err := d.within(u); err != nil {
+		return "", shown, fmt.Errorf("with the secrets filled in, %w", err)
 	}
 	headers := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(in.Headers)) {
@@ -299,6 +305,19 @@ func (d *httpDriver) resolve(p string, query map[string]string) (string, error) 
 	return u.String(), nil
 }
 
+// within returns an error when the URL u, as it is sent, leads out of the
+// base URL, as the server reads its path, with its escapes undone.
+func (d *httpDriver) within(u string) error {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return err
+	}
+	if parsed.Scheme != d.base.Scheme || parsed.Host != d.base.Host || !under(path.Clean("/"+parsed.Path), strings.TrimSuffix(d.base.Path, "/")) {
+		return fmt.Errorf("the path leads out of the base URL %s", d.shownBase)
+	}
+	return nil
+}
+
 // under says whether p is base or under it.
 func under(p, base string) bool {
 	return base == "" || p == base || strings.HasPrefix(p, base+"/")
@@ -351,7 +370,11 @@ func responseText(method, u string, r HTTPResponse) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s -> %s\n", method, u, statusOf(r))
 	for _, name := range slices.Sorted(maps.Keys(r.Headers)) {
-		fmt.Fprintf(&b, "%s: %s\n", name, r.Headers[name])
+		v := r.Headers[name]
+		if strings.EqualFold(name, "set-cookie") {
+			v = cookieValuesHidden(v)
+		}
+		fmt.Fprintf(&b, "%s: %s\n", name, v)
 	}
 	// What the document does not allow comes before the body, which a long
 	// one would otherwise cut off.
@@ -372,6 +395,21 @@ func responseText(method, u string, r HTTPResponse) string {
 		b.WriteString(r.Body)
 	}
 	return b.String()
+}
+
+// cookieValuesHidden hides the values of the cookies a Set-Cookie header
+// sets, which can be a session, keeping their names and attributes. The
+// http action keeps the cookies for the next request all the same.
+func cookieValuesHidden(header string) string {
+	var cookies []string
+	for _, c := range strings.Split(header, ", ") {
+		parts := strings.Split(c, ";")
+		if name, _, ok := strings.Cut(parts[0], "="); ok && !strings.Contains(name, " ") {
+			parts[0] = name + "=<hidden>"
+		}
+		cookies = append(cookies, strings.Join(parts, ";"))
+	}
+	return strings.Join(cookies, ", ")
 }
 
 func statusOf(r HTTPResponse) string {
@@ -413,6 +451,7 @@ func (d *httpDriver) Final(context.Context, bool) observation {
 		o.state.Method = d.lastMethod
 		o.state.URL = d.secrets.mask(d.lastURL)
 		o.state.Status = d.last.Code
+		o.state.Response = text
 	}
 	o.sections = []section{{"last_response", text}}
 	return o
@@ -439,6 +478,7 @@ func (l *ledger) contractFindings() []Finding {
 			if c.Field != "" {
 				title += " at " + c.Field
 			}
+			title = l.secrets.mask(title)
 			out = append(out, Finding{
 				Title:    title,
 				Severity: "medium",
