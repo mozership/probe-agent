@@ -444,3 +444,43 @@ func TestRun_TheTesterIsNotOfferedDisabledMembers(t *testing.T) {
 		t.Errorf("the tester is not told the host it may open:\n%s", m.chats[0].opts.System)
 	}
 }
+
+// catchUpPage is a page that tells, once caught up, a request that failed
+// while the judge decided.
+type catchUpPage struct {
+	fakePage
+	caughtUp int
+}
+
+func (p *catchUpPage) CatchUp(context.Context) {
+	p.caughtUp++
+	p.network = append(p.network, page.NetworkError{Method: "POST", URL: "http://app.test:8080/beacon", Status: 500})
+	p.requests.Count++
+}
+
+// TestRun_CatchesUpAfterTheJudge catches up on the page once the judge has
+// decided, and before the outcome is put together, which has what the
+// page did meanwhile.
+func TestRun_CatchesUpAfterTheJudge(t *testing.T) {
+	p := &catchUpPage{fakePage: fakePage{text: "Welcome"}}
+	m := &fakeModel{scripts: [][]llm.Reply{
+		{toolCall("1", "finish", map[string]any{"status": "done", "summary": "Done."})},
+		{toolCall("j1", "verdict", map[string]any{"verdict": "pass", "reason": "ok", "evidence": []string{"Welcome"}})},
+	}}
+	o, err := Run(context.Background(), config(), Targets{Browser: p}, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.caughtUp != 1 {
+		t.Errorf("caught up %d times, want once", p.caughtUp)
+	}
+	if fmt.Sprint(o.NetworkErrors) != "[{POST http://app.test:8080/beacon 500 }]" || o.Metrics.FailedRequests != 1 {
+		t.Errorf("network errors %v, failed requests %d; want the beacon's", o.NetworkErrors, o.Metrics.FailedRequests)
+	}
+	// The judge decided before it.
+	for _, turn := range m.chats[1].turns {
+		if strings.Contains(turn.Text, "beacon") {
+			t.Errorf("the judge was told of the beacon: %s", turn.Text)
+		}
+	}
+}

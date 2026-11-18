@@ -401,9 +401,15 @@ func (d *browserDriver) member(ctx context.Context, name string, in browserInput
 // open, as one a window the page opened between the calls took the tab
 // to, and goes back from it, so that a secret is typed on the hosts of
 // the test alone.
+// A page whose URL cannot be read is taken for one off the hosts. The
+// page can still move between the check and the typing, which are calls
+// of their own.
 func (d *browserDriver) secretsOnHost(ctx context.Context, secret bool) error {
 	if !secret {
 		return nil
+	}
+	if _, _, err := d.page.State(ctx); err != nil {
+		return fmt.Errorf("the page's URL could not be read, so the secret was not typed: %w", err)
 	}
 	if msg := d.keepToHosts(ctx); msg != "" {
 		return errors.New(msg + " The secret was not typed.")

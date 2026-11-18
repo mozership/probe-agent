@@ -238,14 +238,19 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 	// The browser is caught up at the end in time of its own, which the
 	// tester and the judge leave.
 	catchUpCtx := ctx
+	var reserve time.Duration
 	if r.web != nil {
+		reserve = catchUpReserve(cfg.Timeout)
 		var cancelWork context.CancelFunc
-		ctx, cancelWork = context.WithTimeout(ctx, cfg.Timeout-catchUpReserve(cfg.Timeout))
+		ctx, cancelWork = context.WithTimeout(ctx, cfg.Timeout-reserve)
 		defer cancelWork()
 	}
 	// The judge has time of its own at the end, so that a tester that runs
 	// out of time is still judged.
-	testerCtx, cancelTester := context.WithTimeout(ctx, cfg.Timeout-judgeReserve(cfg.Timeout))
+	// The catch up's time comes out of the tester's, half of it at most.
+	tester := cfg.Timeout - judgeReserve(cfg.Timeout)
+	tester -= min(reserve, tester/2)
+	testerCtx, cancelTester := context.WithTimeout(ctx, tester)
 	defer cancelTester()
 
 	for _, d := range r.drivers {
