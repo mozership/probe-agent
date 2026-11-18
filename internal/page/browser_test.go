@@ -59,6 +59,9 @@ func server(t *testing.T) *httptest.Server {
 		fmt.Fprint(w, `<!doctype html><title>Timed</title><link rel="icon" href="data:,"><p id="out"></p>
 <script>fetch("/slow", {method: "POST"}).then(r => r.text()).then(t => document.getElementById("out").textContent = t)</script>`)
 	})
+	mux.HandleFunc("/popup", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `<!doctype html><title>Popup</title><link rel="icon" href="data:,"><button onclick="setTimeout(() => window.open('/next'), 500)">Open later</button>`)
+	})
 	mux.HandleFunc("/later", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `<!doctype html><title>Later</title><link rel="icon" href="data:,"><script>setTimeout(() => fetch("/slow", {method: "POST"}), 500)</script>`)
 	})
@@ -538,5 +541,30 @@ func TestBrowser_CatchesUp(t *testing.T) {
 	b.CatchUp(ctx)
 	if r := b.Requests(); len(r.Slowest) == 0 || !strings.HasSuffix(r.Slowest[0].URL, "/slow") {
 		t.Errorf("requests %+v, want the slow one, which ended after the last call", r)
+	}
+}
+
+// TestBrowser_KeepsToOneTabBetweenCalls opens in the tab the agent drives
+// a window the page opens after the click's call has ended, as the tester
+// thinks.
+func TestBrowser_KeepsToOneTabBetweenCalls(t *testing.T) {
+	b := startBrowser(t, Options{})
+	s := server(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	if err := b.Navigate(ctx, s.URL+"/popup"); err != nil {
+		t.Fatal(err)
+	}
+	read, err := b.Read(ctx, "interactive", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Click(ctx, Target{Ref: refOf(t, read, `button "Open later"`)}, "left", 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	if _, title, err := b.State(ctx); err != nil || title != "Next" {
+		t.Errorf("the tab shows %q, %v; want the page the window was opened for", title, err)
 	}
 }
