@@ -3,6 +3,7 @@ package scenario
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -32,6 +33,9 @@ type fakePage struct {
 	// landOn, when set, is where navigating to the first URL lands, as
 	// after a redirect.
 	landOn string
+	// stateErr, when set, is what reading the URL fails with once the
+	// page has been opened.
+	stateErr error
 }
 
 func (p *fakePage) Navigate(_ context.Context, url string) error {
@@ -64,9 +68,14 @@ func (p *fakePage) Type(_ context.Context, text string) error {
 func (p *fakePage) Key(context.Context, string, int) error                    { return nil }
 func (p *fakePage) Read(context.Context, string, int, string) (string, error) { return p.read, nil }
 func (p *fakePage) Text(context.Context) (string, error)                      { return p.text, nil }
-func (p *fakePage) State(context.Context) (string, string, error)             { return p.url, p.title, nil }
-func (p *fakePage) ConsoleErrors() []page.ConsoleError                        { return nil }
-func (p *fakePage) NetworkErrors() []page.NetworkError                        { return p.network }
+func (p *fakePage) State(context.Context) (string, string, error) {
+	if p.stateErr != nil && len(p.navigated) > 0 {
+		return "", "", p.stateErr
+	}
+	return p.url, p.title, nil
+}
+func (p *fakePage) ConsoleErrors() []page.ConsoleError { return nil }
+func (p *fakePage) NetworkErrors() []page.NetworkError { return p.network }
 func (p *fakePage) Locator(_ context.Context, t page.Target) (*page.Locator, error) {
 	if l, ok := p.locators[t.Ref]; ok {
 		return &l, nil
@@ -367,7 +376,28 @@ func TestRun_ASecretIsTypedOnTheHostsAlone(t *testing.T) {
 		t.Errorf("typed %q, want what is no secret alone", p.typed)
 	}
 	r := m.chats[0].turns[2].Results[0]
-	if !r.IsError || !strings.Contains(r.Text, "The secret was not typed") || !strings.Contains(r.Text, "evil.test") {
+	if !r.IsError || !strings.Contains(r.Text, "the secret was not typed") || !strings.Contains(r.Text, "evil.test") {
+		t.Errorf("result %+v", r)
+	}
+}
+
+// TestRun_ASecretIsNotTypedOnAPageItCannotTell does not type a secret on
+// a page whose URL cannot be read.
+func TestRun_ASecretIsNotTypedOnAPageItCannotTell(t *testing.T) {
+	p := &fakePage{stateErr: errors.New("the page is going away")}
+	m := &fakeModel{scripts: [][]llm.Reply{
+		{
+			browserCall("1", "type", map[string]any{"text": "{secret:PASSWORD}"}),
+			toolCall("2", "finish", map[string]any{"status": "blocked", "summary": "Gone."}),
+		},
+	}}
+	if _, err := Run(context.Background(), config(), Targets{Browser: p}, m); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.typed) != 0 {
+		t.Errorf("typed %q", p.typed)
+	}
+	if r := m.chats[0].turns[1].Results[0]; !r.IsError || !strings.Contains(r.Text, "could not be read") {
 		t.Errorf("result %+v", r)
 	}
 }
@@ -477,10 +507,9 @@ func TestRun_CatchesUpAfterTheJudge(t *testing.T) {
 	if fmt.Sprint(o.NetworkErrors) != "[{POST http://app.test:8080/beacon 500 }]" || o.Metrics.FailedRequests != 1 {
 		t.Errorf("network errors %v, failed requests %d; want the beacon's", o.NetworkErrors, o.Metrics.FailedRequests)
 	}
-	// The judge decided before it.
-	for _, turn := range m.chats[1].turns {
-		if strings.Contains(turn.Text, "beacon") {
-			t.Errorf("the judge was told of the beacon: %s", turn.Text)
-		}
+	// The judge decided before it, from a record, given as its prompt,
+	// that has the page's errors so far.
+	if judge := m.chats[1]; strings.Contains(fmt.Sprint(judge.opts), "beacon") || strings.Contains(fmt.Sprint(judge.turns), "beacon") {
+		t.Errorf("the judge was told of the beacon: %+v", judge.opts)
 	}
 }

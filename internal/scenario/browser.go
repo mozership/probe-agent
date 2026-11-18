@@ -408,13 +408,18 @@ func (d *browserDriver) secretsOnHost(ctx context.Context, secret bool) error {
 	if !secret {
 		return nil
 	}
-	if _, _, err := d.page.State(ctx); err != nil {
+	url, _, err := d.page.State(ctx)
+	if err != nil {
 		return fmt.Errorf("the page's URL could not be read, so the secret was not typed: %w", err)
 	}
-	if msg := d.keepToHosts(ctx); msg != "" {
-		return errors.New(msg + " The secret was not typed.")
+	if d.hosts.allows(url) {
+		return nil
 	}
-	return nil
+	msg := fmt.Sprintf("The page went to %s, which is not on a host this test may open, so the secret was not typed, and the browser went back.", url)
+	if err := d.page.Navigate(ctx, "back"); err != nil {
+		msg += " Going back failed: " + err.Error()
+	}
+	return errors.New(msg)
 }
 
 // keepToHosts goes back from a page on a host the test may not open, and
