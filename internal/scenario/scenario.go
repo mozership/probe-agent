@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -161,7 +162,8 @@ type Evidence struct {
 type Step struct {
 	Index int    `json:"index"`
 	Tool  string `json:"tool"`
-	// Target is the kind of the target the step used, browser or ios.
+	// Target is the kind of the target the step used, browser, ios or
+	// http.
 	Target string `json:"target"`
 	// Notes are what the tester wrote before the call.
 	Notes      []string       `json:"notes,omitempty"`
@@ -207,12 +209,15 @@ func (r *run) driverOf(call llm.Call) Driver {
 	return nil
 }
 
-// Targets are what a test drives: a browser, an iOS app, or both.
+// Targets are what a test drives: a browser, an iOS app, an HTTP API, or
+// more than one of them.
 type Targets struct {
 	// Browser is the tab of the browser, driven from Config.StartURL.
 	Browser page.Page
 	// IOS is an app on an iOS simulator.
 	IOS *IOS
+	// HTTP is an HTTP API.
+	HTTP *HTTP
 }
 
 // Run runs the test of cfg on the targets t with m. It returns an error
@@ -228,6 +233,13 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 	}
 	if t.IOS != nil {
 		r.drivers = append(r.drivers, newIOSDriver(r.ledger, *t.IOS, m.Vision()))
+	}
+	if t.HTTP != nil {
+		d, err := newHTTPDriver(r.ledger, *t.HTTP)
+		if err != nil {
+			return Outcome{}, err
+		}
+		r.drivers = append(r.drivers, d)
 	}
 	if len(r.drivers) == 0 {
 		return Outcome{}, errors.New("the test has no target")
@@ -317,9 +329,6 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 			return Outcome{}, err
 		}
 		o.Verdict, o.Reason, o.Evidence, o.Findings = rv.verdict.verdict, rv.reason, rv.evidence, rv.findings
-		if o.Findings == nil {
-			o.Findings = []Finding{}
-		}
 		if stopped == StoppedBlocked {
 			o.Verdict, o.Reason = Blocked, "The tester was blocked: "+summary
 		}
@@ -331,6 +340,18 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 			return Outcome{}, err
 		}
 		o.Verdict, o.Reason, o.Evidence = v.verdict, v.reason, v.evidence
+	}
+	if o.Mode == ModePersona {
+		// The responses the OpenAPI document does not allow are findings
+		// as a deterministic check found them, whatever the reviewer made
+		// of them, and whether or not there was a review.
+		o.Findings = append(o.Findings, r.contractFindings()...)
+		slices.SortStableFunc(o.Findings, func(a, b Finding) int {
+			return slices.Index(severities, a.Severity) - slices.Index(severities, b.Severity)
+		})
+		if o.Findings == nil {
+			o.Findings = []Finding{}
+		}
 	}
 	if cfg.Record && r.browserOnly() && o.Mode == ModeScenario && o.Verdict == Pass && stopped == StoppedDone &&
 		(o.Replay == nil || o.Replay.Status != ReplayHit) {
@@ -417,7 +438,7 @@ func (r *run) test(ctx context.Context) (stopped, summary string, err error) {
 				return StoppedNoFinish, reply.Text, nil
 			}
 			nudged = true
-			turn = llm.Turn{Text: "Carry on with the browser tools, or call finish if you are done."}
+			turn = llm.Turn{Text: "Carry on with the tools of the " + r.targetWord() + ", or call finish if you are done."}
 			continue
 		}
 
@@ -506,11 +527,18 @@ type section struct {
 
 // TargetState is the last state of a target of a test.
 type TargetState struct {
-	// Kind is browser or ios.
+	// Kind is browser, ios or http.
 	Kind string `json:"kind"`
-	// URL and Title are of the page the browser was left on.
-	URL   string `json:"url,omitempty"`
-	Title string `json:"title,omitempty"`
+	// URL and Title are of the page the browser was left on. URL is of the
+	// last request to an HTTP API, and Method and Status of it and its
+	// response.
+	URL    string `json:"url,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Method string `json:"method,omitempty"`
+	Status int    `json:"status,omitempty"`
+	// Response is the last response of an HTTP API, masked and cut, for the
+	// report; it is not in the result, which the report is beside.
+	Response string `json:"-"`
 	// App and Device are of the app the tester drove, and the simulator
 	// it ran on.
 	App    string `json:"app,omitempty"`

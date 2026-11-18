@@ -65,12 +65,27 @@ func (r *run) aim() string {
 // seenIn says where the tester ends for what it did to be seen.
 func (r *run) seenIn() string {
 	switch {
-	case r.browserOnly():
-		return "in the browser"
-	case len(r.drivers) == 1:
-		return "in the app"
+	case len(r.drivers) > 1:
+		return "on the targets"
+	case r.drivers[0].Kind() == "http":
+		return "in the responses of the API"
 	}
-	return "on the targets"
+	return "in the " + r.targetWord()
+}
+
+// targetWord names the targets of the test in a word: the browser, the
+// app, the API, or the targets.
+func (r *run) targetWord() string {
+	if len(r.drivers) != 1 {
+		return "targets"
+	}
+	switch r.drivers[0].Kind() {
+	case "ios":
+		return "app"
+	case "http":
+		return "API"
+	}
+	return "browser"
 }
 
 // opening says what the targets show as the tester starts.

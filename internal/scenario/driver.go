@@ -46,6 +46,9 @@ type ledger struct {
 	// texts are what the targets showed the tester, which the judge's
 	// quotes are checked against.
 	texts []string
+	// breaches are what the OpenAPI document of an HTTP API did not allow
+	// in the requests and the responses.
+	breaches []contractBreach
 }
 
 func newLedger(cfg Config) *ledger {

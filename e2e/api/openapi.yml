@@ -1,0 +1,91 @@
+openapi: 3.0.3
+info:
+  title: Acme Notes API
+  version: "1"
+servers:
+- url: /api/v1
+paths:
+  /notes:
+    post:
+      summary: Write a note
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+      responses:
+        "201":
+          description: The note written
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Note"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+    get:
+      summary: List the notes
+      responses:
+        "200":
+          description: The notes, the oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notes, count]
+                properties:
+                  notes:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Note"
+                  count:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Error"
+  /notes/{id}:
+    get:
+      summary: Read a note
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: The note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Note"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+components:
+  schemas:
+    Note:
+      type: object
+      required: [id, text]
+      properties:
+        id:
+          type: string
+        text:
+          type: string
+  responses:
+    Error:
+      description: What went wrong
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: string

@@ -192,3 +192,43 @@ func TestHelp(t *testing.T) {
 		t.Fatalf("%d %s", res.StatusCode, body)
 	}
 }
+
+func TestNotesAPI(t *testing.T) {
+	s := httptest.NewServer(newMux())
+	defer s.Close()
+	do := func(method, path, key, body string) (int, map[string]any) {
+		t.Helper()
+		req, _ := http.NewRequest(method, s.URL+path, strings.NewReader(body))
+		if key != "" {
+			req.Header.Set("X-Api-Key", key)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var got map[string]any
+		json.NewDecoder(res.Body).Decode(&got)
+		return res.StatusCode, got
+	}
+
+	if code, got := do("GET", "/api/v1/notes", "", ""); code != 401 || got["error"] == nil {
+		t.Errorf("without the key: %d %v", code, got)
+	}
+	if code, got := do("POST", "/api/v1/notes", apiKey, `{}`); code != 400 || got["error"] == nil {
+		t.Errorf("without a text: %d %v", code, got)
+	}
+	if code, got := do("POST", "/api/v1/notes", apiKey, `{"text":"Buy milk"}`); code != 201 || got["id"] != "n1" || got["text"] != "Buy milk" {
+		t.Errorf("a note written: %d %v", code, got)
+	}
+	if code, got := do("GET", "/api/v1/notes/n1", apiKey, ""); code != 200 || got["text"] != "Buy milk" {
+		t.Errorf("a note read: %d %v", code, got)
+	}
+	if code, _ := do("GET", "/api/v1/notes/n9", apiKey, ""); code != 404 {
+		t.Errorf("a note that is not there: %d", code)
+	}
+	// The count is a string, against the document.
+	if code, got := do("GET", "/api/v1/notes", apiKey, ""); code != 200 || got["count"] != "1" {
+		t.Errorf("the list: %d %v", code, got)
+	}
+}

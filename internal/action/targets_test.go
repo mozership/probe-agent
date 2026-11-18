@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mozership/probe"
+	"github.com/mozership/probe/actionrpc"
+
 	"github.com/mozership/probe-agent/internal/scenario"
 )
 
@@ -73,7 +76,47 @@ func TestParse_RefusesTargets(t *testing.T) {
 		},
 		"not a map":      {with: map[string]any{"task": "t", "expect": "e", "targets": "ios"}, want: "targets must be a map"},
 		"no target":      {with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{}}, want: "names no target"},
-		"a later target": {with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"url": "http://a.test/"}}}, want: "targets.http is not driven yet"},
+		"a later target": {with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443"}}}, want: "targets.grpc is not driven yet"},
+		"no url of the API": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"headers": map[string]any{"X": "y"}}}},
+			want: "targets.http.url is required",
+		},
+		"a url of the API not a string": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"url": 1.0}}},
+			want: "targets.http.url must be a string",
+		},
+		"a bad url of the API": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"url": "ftp://a.test/"}}},
+			want: "targets.http.url \"ftp://a.test/\" must be an http or https URL",
+		},
+		"an unknown key of the API": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"url": "http://a.test/", "method": "GET"}}},
+			want: "unknown parameter targets.http.method",
+		},
+		"headers of the API not a map": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"url": "http://a.test/", "headers": "X: y"}}},
+			want: "targets.http.headers must be a map",
+		},
+		"a header of the API not a string": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"url": "http://a.test/", "headers": map[string]any{"X": []any{"y"}}}}},
+			want: "targets.http.headers.X must be a string",
+		},
+		"an openapi of the API without spec": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"url": "http://a.test/", "openapi": map[string]any{"strict": true}}}},
+			want: "targets.http.openapi.spec is required",
+		},
+		"an unknown key of openapi": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"url": "http://a.test/", "openapi": map[string]any{"spec": "o.yml", "request": false}}}},
+			want: "unknown parameter targets.http.openapi.request",
+		},
+		"a bad timeout of the API": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"url": "http://a.test/", "timeout": "soon"}}},
+			want: "targets.http.timeout",
+		},
+		"a cache with an API": {
+			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"browser": map[string]any{"url": "http://a.test/"}, "http": map[string]any{"url": "http://a.test/api"}}},
+			want: "cache is for a test of a browser alone",
+		},
 		"an unknown target": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"android": map[string]any{}}},
 			want: "unknown target android",
@@ -111,6 +154,203 @@ func TestParse_RefusesTargets(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%s: err %v, want it to say %q", name, err, tt.want)
 		}
+	}
+}
+
+func TestParse_TargetsHTTP(t *testing.T) {
+	r, err := parse(map[string]any{
+		"persona": "p", "goal": "g",
+		"targets": map[string]any{
+			"http": map[string]any{
+				"url":     "https://api.test/v1",
+				"openapi": "./openapi.yml",
+				"headers": map[string]any{"Authorization": "Bearer t", "X-Version": 2.0},
+				"cookies": map[string]any{"session": "s"},
+				"timeout": "10s",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Browser || r.IOS != nil || r.HTTP == nil {
+		t.Fatalf("parsed %+v", r)
+	}
+	h := r.HTTP
+	if h.URL != "https://api.test/v1" || h.spec() != "./openapi.yml" || h.Timeout != 10*time.Second {
+		t.Errorf("http %+v", h)
+	}
+	if !reflect.DeepEqual(h.Headers, map[string]string{"Authorization": "Bearer t", "X-Version": "2"}) || h.Cookies["session"] != "s" {
+		t.Errorf("headers %v, cookies %v", h.Headers, h.Cookies)
+	}
+	if got := r.kinds(); !slices.Equal(got, []string{"http"}) {
+		t.Errorf("kinds %v", got)
+	}
+
+	r, err = parse(map[string]any{
+		"task": "t", "expect": "e",
+		"targets": map[string]any{"http": map[string]any{"url": "http://a.test/", "openapi": map[string]any{"spec": "o.yml", "strict": "true"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(r.HTTP.OpenAPI, map[string]any{"spec": "o.yml", "strict": true}) {
+		t.Errorf("openapi %v", r.HTTP.OpenAPI)
+	}
+}
+
+func TestHTTPWith(t *testing.T) {
+	h := httpReq{
+		URL:     "https://api.test/v1",
+		OpenAPI: map[string]any{"spec": "o.yml"},
+		Headers: map[string]string{"Authorization": "Bearer t"},
+		Cookies: map[string]string{"session": "s"},
+		Timeout: 10 * time.Second,
+	}
+	got := httpWith(h, scenario.HTTPRequest{
+		Method:  "POST",
+		URL:     "https://api.test/v1/orders",
+		Headers: map[string]string{"Content-Type": "application/json", "Authorization": "mine"},
+		Body:    `{"item":1}`,
+	})
+	want := map[string]any{
+		"method":       "POST",
+		"url":          "https://api.test/v1/orders",
+		"keep_cookies": true,
+		"headers":      map[string]any{"Content-Type": "application/json", "Authorization": "Bearer t"},
+		"body":         `{"item":1}`,
+		"cookies":      map[string]any{"session": "s"},
+		"openapi":      map[string]any{"spec": "o.yml"},
+		"timeout":      "10s",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("with %v, want %v", got, want)
+	}
+
+	got = httpWith(httpReq{URL: "http://a.test/"}, scenario.HTTPRequest{Method: "GET", URL: "http://a.test/x"})
+	if !reflect.DeepEqual(got, map[string]any{"method": "GET", "url": "http://a.test/x", "keep_cookies": true}) {
+		t.Errorf("with %v, want only the method, the url and keep_cookies", got)
+	}
+}
+
+func TestHTTPResponse(t *testing.T) {
+	cr := &probe.CallResult{
+		Result: map[string]any{"res": map[string]any{
+			"code": 201.0, "status": "201 Created",
+			"headers": map[string]any{"Content-Type": "application/json"},
+			"body":    `{"id":7}`,
+		}},
+		Contract: &actionrpc.ContractCheck{
+			Matched:    &actionrpc.ContractMatch{Spec: "o.yml", Operation: "POST /orders", Response: "201"},
+			Violations: []actionrpc.Violation{{In: "response", Field: "$.id", Reason: "type", Message: "id must be a string"}},
+		},
+	}
+	got, err := httpResponse(cr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := scenario.HTTPResponse{
+		Code: 201, Status: "201 Created",
+		Headers:    map[string]string{"Content-Type": "application/json"},
+		Body:       `{"id":7}`,
+		Operation:  "POST /orders",
+		Violations: []scenario.Violation{{In: "response", Field: "$.id", Reason: "type", Message: "id must be a string"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("response %+v, want %+v", got, want)
+	}
+
+	// A body that came parsed is given as JSON, and one that is not text
+	// by its file.
+	got, _ = httpResponse(&probe.CallResult{Result: map[string]any{"res": map[string]any{"code": 200, "body": map[string]any{"a": 1.0}}}})
+	if got.Body != `{"a":1}` {
+		t.Errorf("body %q", got.Body)
+	}
+	got, _ = httpResponse(&probe.CallResult{Result: map[string]any{"res": map[string]any{"code": 200, "body": "", "filepath": "/tmp/x.png"}}})
+	if got.File != "/tmp/x.png" || got.Body != "" {
+		t.Errorf("response %+v", got)
+	}
+	if _, err := httpResponse(&probe.CallResult{Result: map[string]any{}}); err == nil {
+		t.Error("a result without res is taken")
+	}
+}
+
+func TestAPIGuard(t *testing.T) {
+	g := apiGuard(actionrpc.Guard{}, "https://api.test/v1")
+	// The port of the scheme is named, so that neither another port nor
+	// plain http is allowed.
+	if !slices.Equal(g.AllowHosts, []string{"api.test:443"}) || !g.Runs("http") || g.AllowsHost("evil.test:443") || g.AllowsHost("api.test:80") || !g.AllowsHost("api.test:443") {
+		t.Errorf("guard %+v", g)
+	}
+	g = apiGuard(actionrpc.Guard{ReadOnly: true, AllowHosts: []string{"*.test"}}, "http://api.test:8080/")
+	if !g.ReadOnly || !slices.Equal(g.AllowHosts, []string{"api.test:8080"}) || !g.Runs("http") {
+		t.Errorf("guard %+v", g)
+	}
+	// A host the run does not allow stays refused.
+	g = apiGuard(actionrpc.Guard{AllowHosts: []string{"other.test"}}, "https://api.test/")
+	if !slices.Equal(g.AllowHosts, []string{"other.test"}) {
+		t.Errorf("guard %+v", g)
+	}
+}
+
+func TestResult_MasksTheBaseURLOfTheAPI(t *testing.T) {
+	r := req{Task: "t", Expect: "e", HTTP: &httpReq{URL: "https://api.test/v1?token=s3cret-token"}, Secrets: map[string]string{"TOKEN": "s3cret-token"}}
+	ret, err := result(r, outcome(), files{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api := ret["req"].(map[string]any)["api"]; api != "https://api.test/v1?token=<secret:TOKEN>" {
+		t.Errorf("req.api %v", api)
+	}
+}
+
+func TestHTTPTarget(t *testing.T) {
+	caller := probe.NewActionCaller(actionrpc.Call{}, "")
+	t.Setenv(probe.ExecutableEnv, "")
+	if _, err := httpTarget(caller, nil, httpReq{URL: "http://a.test/"}); err == nil || !strings.Contains(err.Error(), "needs Probe v1.37.0 or later") {
+		t.Errorf("without %s: err %v", probe.ExecutableEnv, err)
+	}
+
+	t.Setenv(probe.ExecutableEnv, "/usr/local/bin/probe")
+	if _, err := httpTarget(caller, map[string]string{"http": "github.com/x/y@" + strings.Repeat("a", 40)}, httpReq{URL: "http://a.test/"}); err == nil || !strings.Contains(err.Error(), "give the name http to github.com/x/y") {
+		t.Errorf("an action named http: err %v", err)
+	}
+	if _, err := httpTarget(caller, nil, httpReq{URL: "http://a.test/", OpenAPI: map[string]any{"spec": "missing.yml"}}); err == nil || !strings.Contains(err.Error(), "targets.http.openapi") {
+		t.Errorf("a missing document: err %v", err)
+	}
+
+	spec := t.TempDir() + "/openapi.yml"
+	if err := os.WriteFile(spec, []byte("openapi: 3.0.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	api, err := httpTarget(caller, nil, httpReq{
+		URL:     "http://a.test/",
+		OpenAPI: map[string]any{"spec": spec},
+		Headers: map[string]string{"X-Version": "2", "Authorization": "Bearer t"},
+		Cookies: map[string]string{"session": "s"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api.OpenAPI != "openapi: 3.0.3\n" || !slices.Equal(api.Fixed, []string{"Authorization", "X-Version", "Cookie"}) {
+		t.Errorf("api %+v", api)
+	}
+}
+
+func TestEvidence_WritesTheLastResponseOfTheAPI(t *testing.T) {
+	ev, err := newEvidence(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := outcome()
+	o.Targets = []scenario.TargetState{{Kind: "http", Method: "GET", URL: "http://a.test/v1/orders/7", Status: 200, Response: "GET http://a.test/v1/orders/7 -> 200 OK\n\n{\"id\":7}"}}
+	f, err := ev.write(req{Task: "t", Expect: "e"}, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	md, _ := os.ReadFile(f.Report)
+	if want := "## Last response of the API\n\nGET <http://a.test/v1/orders/7> → 200\n\n```\nGET http://a.test/v1/orders/7 -> 200 OK\n\n{\"id\":7}\n```"; !strings.Contains(string(md), want) {
+		t.Errorf("the report lacks %q:\n%s", want, md)
 	}
 }
 
