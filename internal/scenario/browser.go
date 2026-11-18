@@ -321,6 +321,9 @@ func (d *browserDriver) member(ctx context.Context, name string, in browserInput
 		if err != nil {
 			return "", nil, err
 		}
+		if err := d.secretsOnHost(ctx, text != in.Text); err != nil {
+			return "", nil, err
+		}
 		if err := p.Type(ctx, text); err != nil {
 			return "", nil, err
 		}
@@ -383,12 +386,40 @@ func (d *browserDriver) member(ctx context.Context, name string, in browserInput
 			if err != nil {
 				return "", nil, err
 			}
+			if err := d.secretsOnHost(ctx, filled != s); err != nil {
+				return "", nil, err
+			}
 			value = filled
 		}
 		said, err := p.FormInput(ctx, in.Target.Ref, value)
 		return said, nil, err
 	}
 	return "", nil, fmt.Errorf("%s is not enabled in this environment", name)
+}
+
+// secretsOnHost fails, when secret, for a page on a host the test may not
+// open, as one a window the page opened between the calls took the tab
+// to, and goes back from it, so that a secret is typed on the hosts of
+// the test alone.
+// A page whose URL cannot be read is taken for one off the hosts. The
+// page can still move between the check and the typing, which are calls
+// of their own.
+func (d *browserDriver) secretsOnHost(ctx context.Context, secret bool) error {
+	if !secret {
+		return nil
+	}
+	url, _, err := d.page.State(ctx)
+	if err != nil {
+		return fmt.Errorf("the page's URL could not be read, so the secret was not typed: %w", err)
+	}
+	if d.hosts.allows(url) {
+		return nil
+	}
+	msg := fmt.Sprintf("The page went to %s, which is not on a host this test may open, so the secret was not typed, and the browser went back.", url)
+	if err := d.page.Navigate(ctx, "back"); err != nil {
+		msg += " Going back failed: " + err.Error()
+	}
+	return errors.New(msg)
 }
 
 // keepToHosts goes back from a page on a host the test may not open, and

@@ -235,9 +235,22 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
+	// The browser is caught up at the end in time of its own, which the
+	// tester and the judge leave.
+	catchUpCtx := ctx
+	var reserve time.Duration
+	if r.web != nil {
+		reserve = catchUpReserve(cfg.Timeout)
+		var cancelWork context.CancelFunc
+		ctx, cancelWork = context.WithTimeout(ctx, cfg.Timeout-reserve)
+		defer cancelWork()
+	}
 	// The judge has time of its own at the end, so that a tester that runs
 	// out of time is still judged.
-	testerCtx, cancelTester := context.WithTimeout(ctx, cfg.Timeout-judgeReserve(cfg.Timeout))
+	// The catch up's time comes out of the tester's, half of it at most.
+	tester := cfg.Timeout - judgeReserve(cfg.Timeout)
+	tester -= min(reserve, tester/2)
+	testerCtx, cancelTester := context.WithTimeout(ctx, tester)
 	defer cancelTester()
 
 	for _, d := range r.drivers {
@@ -330,9 +343,13 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 	// The console, the requests and their errors are of the browser.
 	var reqs page.Requests
 	if r.web != nil {
+		if c, ok := r.web.page.(page.CatchUpper); ok {
+			c.CatchUp(catchUpCtx)
+		}
 		o.ConsoleErrors = r.web.page.ConsoleErrors()
 		for i := range o.ConsoleErrors {
 			o.ConsoleErrors[i].Text = r.secrets.mask(o.ConsoleErrors[i].Text)
+			o.ConsoleErrors[i].URL = r.secrets.mask(o.ConsoleErrors[i].URL)
 		}
 		o.NetworkErrors = r.web.page.NetworkErrors()
 		for i := range o.NetworkErrors {
@@ -558,3 +575,10 @@ func hostOf(raw string) string {
 }
 
 var errNoVerdict = errors.New("the judge gave no verdict")
+
+// catchUpReserve is the time a test of a browser leaves at its end to
+// catch up on what the page did while the judge decided: as long as a
+// catch up takes at most, and a tenth of a short test.
+func catchUpReserve(timeout time.Duration) time.Duration {
+	return min(page.CatchUpTimeout+time.Second, timeout/10)
+}
