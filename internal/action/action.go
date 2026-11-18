@@ -1,9 +1,10 @@
 // Package action serves the agent as a Probe action: it reads the step's
 // with, readies the targets and the model, runs the test, and returns how
 // it came out, with its evidence written to files. The browser is driven
-// through probe-browser, an iOS app through probe-ios, and an HTTP API and
-// a gRPC API through the http and grpc actions of Probe, which the agent
-// calls as a step of the run would.
+// through probe-browser, an iOS app through probe-ios, an Android app
+// through probe-android, and an HTTP API and a gRPC API through the http
+// and grpc actions of Probe, which the agent calls as a step of the run
+// would.
 package action
 
 import (
@@ -88,9 +89,15 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	// which the tester types into them, under whatever names they have:
 	// the caller hides only the credentials it recognizes.
 	caller := probe.NewActionCaller(call, "", probe.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
-	var ios *scenario.IOS
+	var ios *scenario.App
 	if r.IOS != nil {
-		if ios, err = iosTarget(caller, call.Actions, *r.IOS); err != nil {
+		if ios, err = appTarget(caller, call.Actions, probeIOS, targetIOS, *r.IOS); err != nil {
+			return nil, err
+		}
+	}
+	var android *scenario.App
+	if r.Android != nil {
+		if android, err = appTarget(caller, call.Actions, probeAndroid, targetAndroid, *r.Android); err != nil {
 			return nil, err
 		}
 	}
@@ -141,7 +148,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	targets := scenario.Targets{IOS: ios, HTTP: api, GRPC: rpc}
+	targets := scenario.Targets{IOS: ios, Android: android, HTTP: api, GRPC: rpc}
 	if r.Browser {
 		tab, err := page.NewBrowser(func(ctx context.Context, with map[string]any) (map[string]any, error) {
 			return callRes(ctx, caller, browser, with)
@@ -196,6 +203,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 // them.
 const (
 	probeIOS     = "github.com/mozership/probe-ios"
+	probeAndroid = "github.com/mozership/probe-android"
 	probeBrowser = "github.com/mozership/probe-browser"
 )
 
@@ -214,26 +222,26 @@ func callRes(ctx context.Context, caller *probe.ActionCaller, name string, with 
 	return res, nil
 }
 
-// iosTarget returns the app of t, driven through probe-ios: the action the
-// workflow names under actions whose reference is github.com/mozership/probe-ios,
-// whatever its name.
-func iosTarget(caller *probe.ActionCaller, actions map[string]string, t iosReq) (*scenario.IOS, error) {
-	name, err := actionNamed(actions, probeIOS, "targets.ios drives the app", "ios")
+// appTarget returns the app of t, the targets.<kind> of the step, driven
+// through the action of repo, probe-ios or probe-android: the one the
+// workflow names under actions whose reference is repo, whatever its name.
+func appTarget(caller *probe.ActionCaller, actions map[string]string, repo, kind string, t appReq) (*scenario.App, error) {
+	name, err := actionNamed(actions, repo, "targets."+kind+" drives the app", kind)
 	if err != nil {
 		return nil, err
 	}
-	return &scenario.IOS{
+	return &scenario.App{
 		App:    t.App,
 		Device: t.Device,
 		Call: func(ctx context.Context, actions []map[string]any) (map[string]any, error) {
-			return callRes(ctx, caller, name, iosWith(t, actions))
+			return callRes(ctx, caller, name, appWith(t, actions))
 		},
 	}, nil
 }
 
-// iosWith is the with of a call of probe-ios that takes actions on the app
-// of t.
-func iosWith(t iosReq, actions []map[string]any) map[string]any {
+// appWith is the with of a call of probe-ios or probe-android, which take
+// the same, that takes actions on the app of t.
+func appWith(t appReq, actions []map[string]any) map[string]any {
 	list := make([]any, len(actions))
 	for i, a := range actions {
 		list[i] = a
@@ -617,10 +625,15 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 		_, _ = io.WriteString(secretsHidden(&api, r.Secrets), r.HTTP.URL)
 		reqMap["api"] = api.String()
 	}
-	if r.IOS != nil {
-		reqMap["app"] = r.IOS.App
-		if r.IOS.Device != "" {
-			reqMap["device"] = r.IOS.Device
+	// The app and the device are of the iOS app, or of the Android one in
+	// a test without an iOS app.
+	for _, a := range []*appReq{r.Android, r.IOS} {
+		if a != nil {
+			reqMap["app"] = a.App
+			delete(reqMap, "device")
+			if a.Device != "" {
+				reqMap["device"] = a.Device
+			}
 		}
 	}
 	if o.Mode == scenario.ModePersona {

@@ -17,9 +17,14 @@ import (
 
 const (
 	// actionTimeout bounds one call of probe-browser, such as a click,
-	// when the context of the call allows it longer. The first call starts
-	// the browser, which takes a few seconds.
+	// when the context of the call allows it longer.
 	actionTimeout = 30 * time.Second
+	// startTimeout bounds the call that starts the browser in place of
+	// actionTimeout, as probe-browser waits for Chrome to start within the
+	// timeout of the call: a few seconds as a rule, but more than
+	// actionTimeout on a machine as busy as a CI runner with an Android
+	// emulator.
+	startTimeout = 2 * time.Minute
 	// settlePause gives the page's scripts a moment to act on an event,
 	// such as to show an error under a field.
 	settlePause = 300 * time.Millisecond
@@ -66,7 +71,9 @@ type Browser struct {
 	// which the agent does not keep: a failure is the model's to read.
 	evidence string
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// started is whether a call has started the browser.
+	started bool
 	console []ConsoleError
 	network []NetworkError
 	count   int
@@ -101,8 +108,14 @@ var pageAtFailure = regexp.MustCompile(` \((?:page at failure: [^)]*|the page co
 // reports. It returns the results of the actions, and the paths of the
 // files they wrote.
 func (b *Browser) run(ctx context.Context, timeout time.Duration, actions ...action) (map[string]any, map[string]any, error) {
-	if timeout <= 0 || timeout > actionTimeout {
-		timeout = actionTimeout
+	b.mu.Lock()
+	limit := actionTimeout
+	if !b.started {
+		limit = startTimeout
+	}
+	b.mu.Unlock()
+	if timeout <= 0 || timeout > limit {
+		timeout = limit
 	}
 	if d, ok := ctx.Deadline(); ok && time.Until(d) < timeout {
 		timeout = max(time.Until(d), time.Second)
@@ -128,6 +141,11 @@ func (b *Browser) run(ctx context.Context, timeout time.Duration, actions ...act
 	}
 	res, err := b.call(ctx, with)
 	b.record(res)
+	if err == nil {
+		b.mu.Lock()
+		b.started = true
+		b.mu.Unlock()
+	}
 	if err != nil {
 		return nil, nil, withoutPageAtFailure(err)
 	}

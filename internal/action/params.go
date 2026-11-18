@@ -54,6 +54,7 @@ var params = []string{
 const (
 	targetBrowser = "browser"
 	targetIOS     = "ios"
+	targetAndroid = "android"
 	targetHTTP    = "http"
 	targetGRPC    = "grpc"
 )
@@ -62,18 +63,14 @@ const (
 // targets gives at the top of with, as the short form of targets.browser.
 var browserParams = []string{"url", "allow_hosts", "storage_state", "headless", "window_w", "window_h"}
 
-// iosParams are the keys of targets.ios.
-var iosParams = []string{"app", "device", "timeout"}
+// appParams are the keys of targets.ios and targets.android.
+var appParams = []string{"app", "device", "timeout"}
 
 // httpParams are the keys of targets.http.
 var httpParams = []string{"url", "openapi", "headers", "cookies", "timeout"}
 
 // grpcParams are the keys of targets.grpc.
 var grpcParams = []string{"addr", "protocol", "tls", "insecure", "cert_file", "key_file", "ca_file", "metadata", "proto", "timeout"}
-
-// laterTargets are the kinds of target the agent is to drive, but does not
-// yet.
-var laterTargets = []string{"android"}
 
 // Params returns the keys the action takes in with.
 func Params() []string {
@@ -114,7 +111,10 @@ type req struct {
 	Height      int
 	EvidenceDir string
 	// IOS is the app the test drives on an iOS simulator, if any.
-	IOS *iosReq
+	IOS *appReq
+	// Android is the app the test drives on an Android emulator or device,
+	// if any.
+	Android *appReq
 	// HTTP is the HTTP API the test calls, if any.
 	HTTP *httpReq
 	// GRPC is the gRPC API the test calls, if any.
@@ -134,8 +134,8 @@ type grpcReq struct {
 	Proto map[string]any
 }
 
-// iosReq is targets.ios.
-type iosReq struct {
+// appReq is targets.ios or targets.android.
+type appReq struct {
 	App    string
 	Device string
 	// Timeout bounds the actions of each call of probe-ios, from the first
@@ -174,6 +174,9 @@ func (r req) kinds() []string {
 	}
 	if r.IOS != nil {
 		k = append(k, targetIOS)
+	}
+	if r.Android != nil {
+		k = append(k, targetAndroid)
 	}
 	if r.HTTP != nil {
 		k = append(k, targetHTTP)
@@ -261,21 +264,30 @@ func parse(with map[string]any) (req, error) {
 		if b, ok := targets[targetBrowser]; ok {
 			r.Browser, browser = true, b
 		}
-		if i, ok := targets[targetIOS]; ok {
-			r.IOS = &iosReq{}
-			strIn(i, "targets.ios.", "app", &r.IOS.App)
-			strIn(i, "targets.ios.", "device", &r.IOS.Device)
+		for _, app := range []struct {
+			kind string
+			dst  **appReq
+		}{{targetIOS, &r.IOS}, {targetAndroid, &r.Android}} {
+			i, ok := targets[app.kind]
+			if !ok {
+				continue
+			}
+			a := &appReq{}
+			prefix := "targets." + app.kind + "."
+			strIn(i, prefix, "app", &a.App)
+			strIn(i, prefix, "device", &a.Device)
 			if v, ok := i["timeout"]; ok {
 				d, err := actionrpc.ParseTimeout(v)
 				if err != nil {
-					errs = append(errs, fmt.Errorf("targets.ios.timeout: %w", err))
+					errs = append(errs, fmt.Errorf("%stimeout: %w", prefix, err))
 				} else {
-					r.IOS.Timeout = d
+					a.Timeout = d
 				}
 			}
-			if r.IOS.App == "" {
-				errs = append(errs, errors.New("targets.ios.app is required"))
+			if a.App == "" {
+				errs = append(errs, fmt.Errorf("%sapp is required", prefix))
 			}
+			*app.dst = a
 		}
 		if h, ok := targets[targetHTTP]; ok {
 			r.HTTP = &httpReq{}
@@ -425,10 +437,10 @@ func parse(with map[string]any) (req, error) {
 func readTargets(v any) (map[string]map[string]any, []error) {
 	m, ok := v.(map[string]any)
 	if !ok {
-		return nil, []error{errors.New("targets must be a map from the kind of each target, browser, ios, http or grpc, to what the workflow fixes for it")}
+		return nil, []error{errors.New("targets must be a map from the kind of each target, browser, ios, android, http or grpc, to what the workflow fixes for it")}
 	}
 	if len(m) == 0 {
-		return nil, []error{errors.New("targets names no target; name browser, ios, http, grpc or more than one")}
+		return nil, []error{errors.New("targets names no target; name browser, ios, android, http, grpc or more than one")}
 	}
 	var errs []error
 	out := map[string]map[string]any{}
@@ -437,18 +449,14 @@ func readTargets(v any) (map[string]map[string]any, []error) {
 		switch kind {
 		case targetBrowser:
 			keys = browserParams
-		case targetIOS:
-			keys = iosParams
+		case targetIOS, targetAndroid:
+			keys = appParams
 		case targetHTTP:
 			keys = httpParams
 		case targetGRPC:
 			keys = grpcParams
 		default:
-			if slices.Contains(laterTargets, kind) {
-				errs = append(errs, fmt.Errorf("targets.%s is not driven yet; the agent drives browser, ios, http and grpc", kind))
-			} else {
-				errs = append(errs, fmt.Errorf("unknown target %s; the targets are browser, ios, http and grpc", kind))
-			}
+			errs = append(errs, fmt.Errorf("unknown target %s; the targets are browser, ios, android, http and grpc", kind))
 			continue
 		}
 		t, ok := m[kind].(map[string]any)
