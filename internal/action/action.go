@@ -14,7 +14,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -25,7 +27,6 @@ import (
 	"github.com/mozership/probe-browser/storagestate"
 	"github.com/mozership/probe/actionref"
 	"github.com/mozership/probe/actionrpc"
-	"github.com/mozership/probe/mask"
 	"github.com/mozership/probe/style"
 
 	"github.com/mozership/probe-agent/internal/llm"
@@ -415,8 +416,52 @@ func oneLine(s string) string {
 }
 
 // secretsHidden returns a writer to w that hides the values of secrets,
-// each as <secret:NAME>.
+// each as <secret:NAME>, in each record written to it: in any case, as an
+// application can give an email address in lower case, and as JSON or Go
+// quote them, short ones too, as a PIN, though a short one can hide what
+// is no secret.
 func secretsHidden(w io.Writer, secrets map[string]string) io.Writer {
 	names := slices.Sorted(maps.Keys(secrets))
-	return mask.New(names, secrets).Writer(w)
+	// The longest first, so that one inside another is not hidden first.
+	slices.SortStableFunc(names, func(a, b string) int { return len(secrets[b]) - len(secrets[a]) })
+	h := &hidingWriter{w: w}
+	for _, name := range names {
+		v := secrets[name]
+		if v == "" {
+			continue
+		}
+		forms := []string{regexp.QuoteMeta(v)}
+		for _, q := range []string{jsonQuoted(v), jsonQuoted(jsonQuoted(v)), strconv.Quote(v)} {
+			if inner := q[1 : len(q)-1]; inner != v {
+				forms = append(forms, regexp.QuoteMeta(inner))
+			}
+		}
+		h.res = append(h.res, regexp.MustCompile("(?i)"+strings.Join(forms, "|")))
+		h.labels = append(h.labels, "<secret:"+name+">")
+	}
+	return h
+}
+
+func jsonQuoted(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// hidingWriter writes to w what is written to it, with what res match
+// replaced by their labels.
+type hidingWriter struct {
+	w      io.Writer
+	res    []*regexp.Regexp
+	labels []string
+}
+
+func (h *hidingWriter) Write(p []byte) (int, error) {
+	s := string(p)
+	for i, re := range h.res {
+		s = re.ReplaceAllLiteralString(s, h.labels[i])
+	}
+	if _, err := io.WriteString(h.w, s); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }

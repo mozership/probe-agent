@@ -225,4 +225,14 @@ func TestSecretsHidden(t *testing.T) {
 	if !strings.Contains(got, "<secret:EMAIL>") {
 		t.Errorf("the secret is not named in %s", got)
 	}
+
+	// A short one, one in another case, and one JSON quotes.
+	b.Reset()
+	w = secretsHidden(&b, map[string]string{"PIN": "739", "EMAIL": "Dave+X@example.test", "PW": `p"w\x`})
+	if _, err := w.Write([]byte(`{"value":"pin 739 for dave+x@example.test, pw p\"w\\x"}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.String(); got != `{"value":"pin <secret:PIN> for <secret:EMAIL>, pw <secret:PW>"}`+"\n" {
+		t.Errorf("got %s", got)
+	}
 }
