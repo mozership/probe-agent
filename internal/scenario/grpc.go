@@ -89,6 +89,8 @@ func (d *grpcDriver) Open(ctx context.Context) error {
 		return nil
 	}
 	d.services = stringsOf(res["services"])
+	// What the tester is told as it starts is what the API showed it.
+	d.seen(d.Opening())
 	return nil
 }
 
@@ -152,6 +154,11 @@ func (d *grpcDriver) Do(ctx context.Context, call llm.Call) (llm.Result, Step) {
 	if err == nil {
 		text, err = d.tool(ctx, call.Name, in)
 	}
+	// What a listing or a description showed is kept as what the tester
+	// saw, as an answer to a call is when it is made.
+	if err == nil && call.Name != "grpc_call" {
+		d.seen(text)
+	}
 	if err != nil {
 		res.Text = "Error: " + d.secrets.mask(err.Error())
 		res.IsError = true
@@ -177,7 +184,7 @@ func (d *grpcDriver) tool(ctx context.Context, name string, in grpcInput) (strin
 		if len(services) == 0 {
 			return "The server lists no service.", nil
 		}
-		return "The services: " + strings.Join(services, ", ") + ".", nil
+		return d.secrets.mask("The services: " + strings.Join(services, ", ") + "."), nil
 	case "grpc_describe":
 		if service == "" {
 			return "", fmt.Errorf("grpc_describe needs a service")

@@ -126,6 +126,32 @@ func TestRun_CallsAGRPCAPI(t *testing.T) {
 	}
 }
 
+// A test that only lists and describes can rest its verdict on what they
+// showed.
+func TestRun_GRPCDiscoveryIsEvidence(t *testing.T) {
+	rpc := &fakeGRPC{}
+	m := &fakeModel{scripts: [][]llm.Reply{
+		{
+			toolCall("1", "grpc_list", map[string]any{}),
+			toolCall("2", "grpc_describe", map[string]any{"service": "notes.v1.Notes"}),
+			toolCall("3", "finish", map[string]any{"status": "done", "summary": "Described."}),
+		},
+		{toolCall("j1", "verdict", map[string]any{"verdict": "pass", "reason": "r", "evidence": []string{"The services: notes.v1.Notes.", "rpc WatchNotes(notes.v1.Note) returns (stream notes.v1.Note)", "has the services notes.v1.Notes"}})},
+	}}
+	o, err := Run(t.Context(), apiConfig(), Targets{GRPC: rpc.target()}, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Verdict != Pass {
+		t.Fatalf("verdict %s: %s", o.Verdict, o.Reason)
+	}
+	for _, e := range o.Evidence {
+		if !e.Verified {
+			t.Errorf("evidence %q is not verified", e.Quote)
+		}
+	}
+}
+
 func TestRun_GRPCCallsRefused(t *testing.T) {
 	rpc := &fakeGRPC{listFail: errors.New("the server serves no reflection")}
 	m := &fakeModel{scripts: [][]llm.Reply{
