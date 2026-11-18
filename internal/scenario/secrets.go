@@ -89,6 +89,12 @@ func (s secrets) maskAny(v any) any {
 // placeholder of a secret that was not given is an error, so that it is not
 // typed as it is.
 func (s secrets) fill(text string) (string, error) {
+	return s.fillWith(text, func(v string) string { return v })
+}
+
+// fillWith is fill with each value escaped as escape has it, as for a JSON
+// string.
+func (s secrets) fillWith(text string, escape func(string) string) (string, error) {
 	var missing []string
 	out := placeholder.ReplaceAllStringFunc(text, func(m string) string {
 		name := placeholder.FindStringSubmatch(m)[1]
@@ -97,7 +103,7 @@ func (s secrets) fill(text string) (string, error) {
 			missing = append(missing, name)
 			return m
 		}
-		return v
+		return escape(v)
 	})
 	if len(missing) > 0 {
 		return "", fmt.Errorf("no secret is named %s; the secrets are %s", strings.Join(missing, ", "), s.list())

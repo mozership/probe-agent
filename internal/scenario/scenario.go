@@ -329,16 +329,6 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 			return Outcome{}, err
 		}
 		o.Verdict, o.Reason, o.Evidence, o.Findings = rv.verdict.verdict, rv.reason, rv.evidence, rv.findings
-		// The responses the OpenAPI document does not allow are findings
-		// as a deterministic check found them, whatever the reviewer made
-		// of them.
-		o.Findings = append(o.Findings, r.contractFindings()...)
-		slices.SortStableFunc(o.Findings, func(a, b Finding) int {
-			return slices.Index(severities, a.Severity) - slices.Index(severities, b.Severity)
-		})
-		if o.Findings == nil {
-			o.Findings = []Finding{}
-		}
 		if stopped == StoppedBlocked {
 			o.Verdict, o.Reason = Blocked, "The tester was blocked: "+summary
 		}
@@ -350,6 +340,18 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 			return Outcome{}, err
 		}
 		o.Verdict, o.Reason, o.Evidence = v.verdict, v.reason, v.evidence
+	}
+	if o.Mode == ModePersona {
+		// The responses the OpenAPI document does not allow are findings
+		// as a deterministic check found them, whatever the reviewer made
+		// of them, and whether or not there was a review.
+		o.Findings = append(o.Findings, r.contractFindings()...)
+		slices.SortStableFunc(o.Findings, func(a, b Finding) int {
+			return slices.Index(severities, a.Severity) - slices.Index(severities, b.Severity)
+		})
+		if o.Findings == nil {
+			o.Findings = []Finding{}
+		}
 	}
 	if cfg.Record && r.browserOnly() && o.Mode == ModeScenario && o.Verdict == Pass && stopped == StoppedDone &&
 		(o.Replay == nil || o.Replay.Status != ReplayHit) {

@@ -13,6 +13,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
@@ -94,7 +95,14 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	}
 	var api *scenario.HTTP
 	if r.HTTP != nil {
-		if api, err = httpTarget(caller, call.Actions, *r.HTTP); err != nil {
+		// The http action is called by a caller of its own, whose guard
+		// lets it reach the host of the API alone, so that a redirect to
+		// another host, which would carry the headers the workflow fixes,
+		// is refused.
+		hc := call
+		hc.Guard = apiGuard(call.Guard, r.HTTP.URL)
+		httpCaller := probe.NewActionCaller(hc, "", probe.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
+		if api, err = httpTarget(httpCaller, call.Actions, *r.HTTP); err != nil {
 			return nil, err
 		}
 	}
@@ -267,6 +275,23 @@ func httpTarget(caller *probe.ActionCaller, actions map[string]string, t httpReq
 		return httpResponse(cr)
 	}
 	return api, nil
+}
+
+// apiGuard returns g kept to the host of the base URL raw, for the http
+// action, which keeps to the guard, to refuse a request, or a redirect, to
+// any other host. A run that does not allow the host keeps its own hosts,
+// which refuse it all the same.
+func apiGuard(g actionrpc.Guard, raw string) actionrpc.Guard {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return g
+	}
+	if len(g.AllowHosts) == 0 || g.AllowsHost(u.Host) {
+		g.AllowHosts = []string{u.Host}
+	}
+	// The http action keeps to both kinds of guard, as its package
+	// declares, which a guard of a run with none may not hold.
+	return g.WithKeeps(httpAction, []string{actionrpc.KindReadOnly, actionrpc.KindAllowHost})
 }
 
 // httpWith is the with of a call of the http action that sends req to the

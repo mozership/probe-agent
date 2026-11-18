@@ -7,6 +7,7 @@ import (
 	"maps"
 	"net/url"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -83,6 +84,9 @@ type httpDriver struct {
 	*ledger
 	api  HTTP
 	base *url.URL
+	// shownBase is the base URL as the model and the record see it, with
+	// the secrets in it masked.
+	shownBase string
 	// last is the last response, and lastURL and lastMethod its request,
 	// for the judge.
 	last       *HTTPResponse
@@ -97,7 +101,7 @@ func newHTTPDriver(l *ledger, api HTTP) (*httpDriver, error) {
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
 		return nil, fmt.Errorf("the base URL %q of the API must be an http or https URL", api.URL)
 	}
-	return &httpDriver{ledger: l, api: api, base: base}, nil
+	return &httpDriver{ledger: l, api: api, base: base, shownBase: l.secrets.mask(api.URL)}, nil
 }
 
 // Kind is http.
@@ -123,7 +127,7 @@ const maxSpec = 60000
 // of what the OpenAPI document says it can call.
 func (d *httpDriver) Brief() string {
 	var b strings.Builder
-	b.WriteString(`The HTTP API at ` + d.api.URL + `, through http_request:
+	b.WriteString(`The HTTP API at ` + d.shownBase + `, through http_request:
 - Give the path after the base URL, such as /orders/42. The request goes to the base URL; another host cannot be reached.
 - A request returns the status, the headers and the body of the response. A long body is cut.
 - Cookies the API sets are sent on with the requests after.`)
@@ -143,7 +147,7 @@ func (d *httpDriver) Brief() string {
 
 // Opening says that no request has been made.
 func (d *httpDriver) Opening() string {
-	return "No request has been made to the API at " + d.api.URL + "."
+	return "No request has been made to the API at " + d.shownBase + "."
 }
 
 // httpInput is the input of http_request.
@@ -191,24 +195,15 @@ func (d *httpDriver) request(ctx context.Context, in httpInput) (string, string,
 	if !slices.Contains(methods, method) {
 		return "", "", fmt.Errorf("the method %q must be one of %s", in.Method, strings.Join(methods, ", "))
 	}
-	// The request is shown with the placeholders of the secrets, and sent
-	// with their values.
+	// The URL is shown with the placeholders of the secrets, and sent with
+	// their values, each escaped where it stands, so that a value cannot
+	// change the path or add to the query.
 	shown, err := d.resolve(in.Path, in.Query)
 	if err != nil {
 		return "", "", err
 	}
-	shown = placeholderEscaped.Replace(shown)
-	p, err := d.secrets.fill(in.Path)
-	if err != nil {
-		return "", shown, err
-	}
-	query := map[string]string{}
-	for k, v := range in.Query {
-		if query[k], err = d.secrets.fill(v); err != nil {
-			return "", shown, err
-		}
-	}
-	u, err := d.resolve(p, query)
+	u, err := d.fillURL(shown)
+	shown = placeholderEscaped.ReplaceAllString(shown, "{secret:$1}")
 	if err != nil {
 		return "", shown, err
 	}
@@ -223,11 +218,17 @@ func (d *httpDriver) request(ctx context.Context, in httpInput) (string, string,
 		}
 		headers[name] = v
 	}
-	body, err := d.secrets.fill(in.Body)
+	// A secret in a JSON body is escaped as a JSON string holds it.
+	isJSON := in.Body != "" && json.Valid([]byte(in.Body))
+	escape := func(v string) string { return v }
+	if isJSON {
+		escape = func(v string) string { q, _ := json.Marshal(v); return string(q[1 : len(q)-1]) }
+	}
+	body, err := d.secrets.fillWith(in.Body, escape)
 	if err != nil {
 		return "", shown, err
 	}
-	if body != "" && json.Valid([]byte(body)) && !hasHeader(headers, "content-type") && !slices.ContainsFunc(d.api.Fixed, func(f string) bool { return strings.EqualFold(f, "content-type") }) {
+	if isJSON && !hasHeader(headers, "content-type") && !slices.ContainsFunc(d.api.Fixed, func(f string) bool { return strings.EqualFold(f, "content-type") }) {
 		headers["Content-Type"] = "application/json"
 	}
 	resp, err := d.api.Call(ctx, HTTPRequest{Method: method, URL: u, Headers: headers, Body: body})
@@ -240,17 +241,22 @@ func (d *httpDriver) request(ctx context.Context, in httpInput) (string, string,
 			Violation: v, step: len(d.steps) + 1, method: method, url: d.secrets.mask(shown), operation: resp.Operation,
 		})
 	}
-	text := responseText(method, shown, resp)
+	// The response is masked whole before it is cut, so that a secret is
+	// not cut into what the mask no longer knows, and what the tester did
+	// not see is not kept as what it saw.
+	text := truncate(d.secrets.mask(responseText(method, shown, resp)), maxText)
 	d.seen(text)
-	return truncate(text, maxText), shown, nil
+	return text, shown, nil
 }
 
-// resolve returns the URL of p under the base URL, with query. A path that
-// names another host, or leads out of the base URL, is an error.
+// resolve returns the URL of p under the base URL, with query, and the
+// placeholders of secrets escaped as the URL escapes them. A path that
+// names another host, or leads out of the base URL, is an error. The
+// escapes of p are kept, as %40 in /users/alice%40example.com.
 func (d *httpDriver) resolve(p string, query map[string]string) (string, error) {
 	p = strings.TrimSpace(p)
 	if strings.Contains(p, "://") || strings.HasPrefix(p, "//") {
-		return "", fmt.Errorf("the path %q names a host; give the path after the base URL %s", p, d.api.URL)
+		return "", fmt.Errorf("the path %q names a host; give the path after the base URL %s", p, d.shownBase)
 	}
 	rawQuery := ""
 	if i := strings.IndexAny(p, "?#"); i >= 0 {
@@ -259,16 +265,24 @@ func (d *httpDriver) resolve(p string, query map[string]string) (string, error) 
 		}
 		p = p[:i]
 	}
+	escaped := placeholder.ReplaceAllString(p, "%7Bsecret:$1%7D")
+	if _, err := url.PathUnescape(escaped); err != nil {
+		return "", fmt.Errorf("the path %q is not escaped as a URL is: %w", p, err)
+	}
 	u := *d.base
-	basePath := strings.TrimSuffix(u.Path, "/")
-	joined := path.Join("/", basePath, p)
-	if strings.HasSuffix(p, "/") && joined != "/" {
+	baseRaw := strings.TrimSuffix(u.EscapedPath(), "/")
+	joined := path.Join("/", baseRaw, escaped)
+	if strings.HasSuffix(escaped, "/") && joined != "/" {
 		joined += "/"
 	}
-	if basePath != "" && joined != basePath && !strings.HasPrefix(joined, basePath+"/") {
-		return "", fmt.Errorf("the path %q leads out of the base URL %s", p, d.api.URL)
+	decoded, _ := url.PathUnescape(joined)
+	// The path is kept under the base URL as it is written, and as the
+	// server reads it, with its escapes, such as %2e%2e, undone.
+	basePath := strings.TrimSuffix(d.base.Path, "/")
+	if !under(joined, baseRaw) || !under(path.Clean("/"+decoded), basePath) {
+		return "", fmt.Errorf("the path %q leads out of the base URL %s", p, d.shownBase)
 	}
-	u.Path, u.RawPath = joined, ""
+	u.Path, u.RawPath = decoded, joined
 	q, err := url.ParseQuery(rawQuery)
 	if err != nil {
 		return "", fmt.Errorf("the query of %q: %w", p, err)
@@ -285,9 +299,43 @@ func (d *httpDriver) resolve(p string, query map[string]string) (string, error) 
 	return u.String(), nil
 }
 
-// placeholderEscaped turns the placeholders of secrets in a URL back from
-// how the URL escapes them, for it to be shown.
-var placeholderEscaped = strings.NewReplacer("%7Bsecret:", "{secret:", "%7Bsecret%3A", "{secret:", "%7D", "}")
+// under says whether p is base or under it.
+func under(p, base string) bool {
+	return base == "" || p == base || strings.HasPrefix(p, base+"/")
+}
+
+// placeholderEscaped is a placeholder of a secret as a URL escapes it: in
+// its path, or in its query.
+var placeholderEscaped = regexp.MustCompile(`%7Bsecret(?::|%3A)([A-Za-z_][A-Za-z0-9_]*)%7D`)
+
+// fillURL replaces each placeholder in u, as resolve escaped it, with the
+// value of its secret, escaped for the path or the query it stands in.
+func (d *httpDriver) fillURL(u string) (string, error) {
+	pathPart, query, hasQuery := strings.Cut(u, "?")
+	pathPart, err := d.fillEscaped(pathPart, url.PathEscape)
+	if err != nil || !hasQuery {
+		return pathPart, err
+	}
+	query, err = d.fillEscaped(query, url.QueryEscape)
+	return pathPart + "?" + query, err
+}
+
+func (d *httpDriver) fillEscaped(s string, escape func(string) string) (string, error) {
+	var missing []string
+	out := placeholderEscaped.ReplaceAllStringFunc(s, func(m string) string {
+		name := placeholderEscaped.FindStringSubmatch(m)[1]
+		v, ok := d.secrets.values[name]
+		if !ok {
+			missing = append(missing, name)
+			return m
+		}
+		return escape(v)
+	})
+	if len(missing) > 0 {
+		return "", fmt.Errorf("no secret is named %s; the secrets are %s", strings.Join(missing, ", "), d.secrets.list())
+	}
+	return out, nil
+}
 
 func hasHeader(h map[string]string, name string) bool {
 	for k := range h {
@@ -305,6 +353,15 @@ func responseText(method, u string, r HTTPResponse) string {
 	for _, name := range slices.Sorted(maps.Keys(r.Headers)) {
 		fmt.Fprintf(&b, "%s: %s\n", name, r.Headers[name])
 	}
+	// What the document does not allow comes before the body, which a long
+	// one would otherwise cut off.
+	if len(r.Violations) > 0 {
+		b.WriteString("\nThe OpenAPI document does not allow:")
+		for _, v := range r.Violations {
+			b.WriteString("\n- " + violationLine(v))
+		}
+		b.WriteString("\n")
+	}
 	b.WriteString("\n")
 	switch {
 	case r.File != "":
@@ -313,12 +370,6 @@ func responseText(method, u string, r HTTPResponse) string {
 		b.WriteString("The body is empty.")
 	default:
 		b.WriteString(r.Body)
-	}
-	if len(r.Violations) > 0 {
-		b.WriteString("\n\nThe OpenAPI document does not allow:")
-		for _, v := range r.Violations {
-			b.WriteString("\n- " + violationLine(v))
-		}
 	}
 	return b.String()
 }
@@ -353,7 +404,7 @@ func violationText(v Violation) string {
 // request can change what the API holds.
 func (d *httpDriver) Final(context.Context, bool) observation {
 	o := observation{
-		heading: "The last response of the HTTP API " + d.api.URL + ":",
+		heading: "The last response of the HTTP API " + d.shownBase + ":",
 		state:   TargetState{Kind: d.Kind()},
 	}
 	text := "No request was made."
@@ -370,20 +421,18 @@ func (d *httpDriver) Final(context.Context, bool) observation {
 // contractFindings are the findings of the responses the OpenAPI document
 // does not allow: a deterministic check found them, so they need no
 // evidence of the reviewer. A request that breaks it is the tester's to
-// mend, not a finding. The violations of one field of one operation are one
-// finding.
+// mend, not a finding, and so is one the document has no operation for, as
+// a path the tester got wrong. The violations of one field of one
+// operation are one finding.
 func (l *ledger) contractFindings() []Finding {
 	var out []Finding
 	index := map[string]int{}
 	for _, c := range l.breaches {
-		if c.In != "response" {
+		if c.In != "response" || c.operation == "" {
 			continue
 		}
 		op := c.operation
-		if op == "" {
-			op = c.method + " " + c.url
-		}
-		key := op + "\x00" + c.Field + "\x00" + c.Reason
+		key := op + "\x00" + c.Field
 		i, ok := index[key]
 		if !ok {
 			title := "The response of " + op + " breaks the OpenAPI document"

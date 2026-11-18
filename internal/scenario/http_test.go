@@ -288,3 +288,149 @@ func TestNewHTTPDriver_RefusesABadURL(t *testing.T) {
 		t.Fatal("an API of an ftp URL was taken")
 	}
 }
+
+// A secret is escaped where it stands: in the path, the query or a JSON
+// string, so that its value cannot change the request around it.
+func TestRun_HTTPSecretsEscaped(t *testing.T) {
+	api := &fakeAPI{}
+	m := &fakeModel{scripts: [][]llm.Reply{
+		{
+			toolCall("1", "http_request", map[string]any{
+				"method": "POST", "path": "/keys/{secret:KEY}?token={secret:TOKEN}",
+				"body": `{"password":"{secret:PW}"}`,
+			}),
+			toolCall("2", "finish", map[string]any{"status": "done", "summary": "Done."}),
+		},
+		{toolCall("j1", "verdict", map[string]any{"verdict": "fail", "reason": "r", "evidence": []string{}})},
+	}}
+	cfg := apiConfig()
+	cfg.Secrets = map[string]string{"KEY": "abc?def/x", "TOKEN": "a&role=admin", "PW": `p"w\x`}
+	o, err := Run(t.Context(), cfg, Targets{HTTP: api.target()}, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := api.requests[0]
+	if got.URL != "https://api.test/v1/keys/abc%3Fdef%2Fx?token=a%26role%3Dadmin" {
+		t.Errorf("url %s", got.URL)
+	}
+	if got.Body != `{"password":"p\"w\\x"}` || got.Headers["Content-Type"] != "application/json" {
+		t.Errorf("body %s, headers %v", got.Body, got.Headers)
+	}
+	if o.Steps[0].URL != "https://api.test/v1/keys/{secret:KEY}?token={secret:TOKEN}" {
+		t.Errorf("step url %s", o.Steps[0].URL)
+	}
+}
+
+func TestResolve_Escapes(t *testing.T) {
+	d, _ := newHTTPDriver(newLedger(Config{}), HTTP{URL: "https://api.test/v1"})
+	if got, err := d.resolve("/users/alice%40example.com", nil); err != nil || got != "https://api.test/v1/users/alice%40example.com" {
+		t.Errorf("got %q, %v; want the escape kept", got, err)
+	}
+	for _, p := range []string{"/%2e%2e/admin", "/x/%2E%2E/%2e%2e/admin", "/bad%zz"} {
+		if got, err := d.resolve(p, nil); err == nil {
+			t.Errorf("%q resolved to %q", p, got)
+		}
+	}
+}
+
+// A secret in the base URL is masked wherever the model or the record sees
+// it.
+func TestRun_HTTPBaseURLMasked(t *testing.T) {
+	api := &fakeAPI{responses: []HTTPResponse{{Code: 200, Status: "200 OK", Body: "ok"}}}
+	target := api.target()
+	target.URL = "https://api.test/v1?tenant=hunter2-long"
+	m := &fakeModel{scripts: [][]llm.Reply{
+		{
+			toolCall("1", "http_request", map[string]any{"method": "GET", "path": "/x"}),
+			toolCall("2", "finish", map[string]any{"status": "done", "summary": "Done."}),
+		},
+		{toolCall("j1", "verdict", map[string]any{"verdict": "pass", "reason": "r", "evidence": []string{"ok"}})},
+	}}
+	o, err := Run(t.Context(), apiConfig(), Targets{HTTP: target}, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api.requests[0].URL != "https://api.test/v1/x?tenant=hunter2-long" {
+		t.Errorf("sent %s", api.requests[0].URL)
+	}
+	for _, c := range m.chats {
+		for _, text := range []string{c.opts.System, c.opts.Prompt} {
+			if strings.Contains(text, "hunter2-long") {
+				t.Errorf("the model was shown the secret:\n%s", text)
+			}
+		}
+		for _, turn := range c.turns {
+			for _, r := range turn.Results {
+				if strings.Contains(r.Text, "hunter2-long") {
+					t.Errorf("the model was shown the secret:\n%s", r.Text)
+				}
+			}
+		}
+	}
+	if strings.Contains(o.Targets[0].URL, "hunter2-long") || strings.Contains(o.Steps[0].URL, "hunter2-long") {
+		t.Errorf("targets %+v, steps %+v", o.Targets, o.Steps)
+	}
+}
+
+// A secret in a body cut at its end is masked before it is cut.
+func TestRun_HTTPMasksBeforeCutting(t *testing.T) {
+	body := strings.Repeat("x", maxText-80) + "hunter2-long" + strings.Repeat("y", 200)
+	api := &fakeAPI{responses: []HTTPResponse{{Code: 200, Status: "200 OK", Body: body}}}
+	m := &fakeModel{scripts: [][]llm.Reply{
+		{
+			toolCall("1", "http_request", map[string]any{"method": "GET", "path": "/x"}),
+			toolCall("2", "finish", map[string]any{"status": "done", "summary": "Done."}),
+		},
+		{toolCall("j1", "verdict", map[string]any{"verdict": "fail", "reason": "r", "evidence": []string{}})},
+	}}
+	if _, err := Run(t.Context(), apiConfig(), Targets{HTTP: api.target()}, m); err != nil {
+		t.Fatal(err)
+	}
+	res := m.chats[0].turns[1].Results[0].Text
+	if strings.Contains(res, "hunter2") || !strings.Contains(res, "{secret:PASSWORD}") || len([]rune(res)) > maxText+1 {
+		t.Errorf("the result is not masked whole and cut: …%s", res[len(res)-120:])
+	}
+}
+
+// The violations come before a long body, which would cut them off.
+func TestResponseText_ViolationsBeforeTheBody(t *testing.T) {
+	text := responseText("GET", "https://api.test/v1/x", HTTPResponse{
+		Code: 200, Status: "200 OK", Body: strings.Repeat("x", 2*maxText),
+		Violations: []Violation{{In: "response", Field: "$.id", Message: "bad"}},
+	})
+	if !strings.Contains(truncate(text, maxText), "in the response, $.id: bad") {
+		t.Error("the violations are cut off with the body")
+	}
+}
+
+// A response the document has no operation for, as of a path the tester
+// got wrong, is no finding; the violations of one field are one finding
+// whatever their reasons; and the findings stand when the tester refused.
+func TestRun_ContractFindingsOfAPersonaThatRefused(t *testing.T) {
+	api := &fakeAPI{responses: []HTTPResponse{
+		{Code: 404, Status: "404 Not Found", Violations: []Violation{{In: "response", Message: "GET /typo is not in the document"}}},
+		{Code: 200, Status: "200 OK", Body: `{"count":"1"}`, Operation: "GET /notes", Violations: []Violation{{In: "response", Field: "$.count", Reason: "type", Message: "count is wrong"}}},
+		{Code: 200, Status: "200 OK", Body: `{"count":-1}`, Operation: "GET /notes", Violations: []Violation{{In: "response", Field: "$.count", Reason: "minimum", Message: "count is too small"}}},
+	}}
+	m := &fakeModel{scripts: [][]llm.Reply{
+		{
+			toolCall("1", "http_request", map[string]any{"method": "GET", "path": "/typo"}),
+			toolCall("2", "http_request", map[string]any{"method": "GET", "path": "/notes"}),
+			toolCall("3", "http_request", map[string]any{"method": "GET", "path": "/notes"}),
+			{Stop: llm.StopRefusal, Refusal: "no"},
+		},
+	}}
+	cfg := apiConfig()
+	cfg.Task, cfg.Expect = "", ""
+	cfg.Persona, cfg.Goal = "A client.", "Count the notes."
+	o, err := Run(t.Context(), cfg, Targets{HTTP: api.target()}, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Stopped != StoppedRefused {
+		t.Fatalf("stopped %s", o.Stopped)
+	}
+	if len(o.Findings) != 1 || o.Findings[0].Title != "The response of GET /notes breaks the OpenAPI document at $.count" || !slices.Equal(o.Findings[0].Steps, []int{2, 3}) || len(o.Findings[0].Evidence) != 2 {
+		t.Errorf("findings %+v", o.Findings)
+	}
+}

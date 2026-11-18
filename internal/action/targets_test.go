@@ -275,6 +275,22 @@ func TestHTTPResponse(t *testing.T) {
 	}
 }
 
+func TestAPIGuard(t *testing.T) {
+	g := apiGuard(actionrpc.Guard{}, "https://api.test/v1")
+	if !slices.Equal(g.AllowHosts, []string{"api.test"}) || !g.Runs("http") || g.AllowsHost("evil.test") || !g.AllowsHost("api.test:443") {
+		t.Errorf("guard %+v", g)
+	}
+	g = apiGuard(actionrpc.Guard{ReadOnly: true, AllowHosts: []string{"*.test"}}, "http://api.test:8080/")
+	if !g.ReadOnly || !slices.Equal(g.AllowHosts, []string{"api.test:8080"}) || !g.Runs("http") {
+		t.Errorf("guard %+v", g)
+	}
+	// A host the run does not allow stays refused.
+	g = apiGuard(actionrpc.Guard{AllowHosts: []string{"other.test"}}, "https://api.test/")
+	if !slices.Equal(g.AllowHosts, []string{"other.test"}) {
+		t.Errorf("guard %+v", g)
+	}
+}
+
 func TestHTTPTarget(t *testing.T) {
 	caller := probe.NewActionCaller(actionrpc.Call{}, "")
 	t.Setenv(probe.ExecutableEnv, "")
