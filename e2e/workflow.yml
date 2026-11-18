@@ -61,7 +61,9 @@ jobs:
   id: signup
   defaults:
     agent:
-      url: "{{vars.url}}/"
+      targets:
+        browser:
+          url: "{{vars.url}}/"
       evidence_dir: out/agent
       provider: "{{vars.provider}}"
       model: "{{vars.model}}"
@@ -121,7 +123,9 @@ jobs:
   id: persona
   defaults:
     agent:
-      url: "{{vars.url}}/"
+      targets:
+        browser:
+          url: "{{vars.url}}/"
       evidence_dir: out/agent
       provider: "{{vars.provider}}"
       model: "{{vars.model}}"
@@ -206,8 +210,10 @@ jobs:
   - name: A signed-in user changes their name, starting from the saved login
     uses: agent
     with:
-      url: "{{vars.url}}/account"
-      storage_state: "{{outputs.login.state}}"
+      targets:
+        browser:
+          url: "{{vars.url}}/account"
+          storage_state: "{{outputs.login.state}}"
       task: |
         On your account page, change your display name to Dave Renamed, and
         save it.

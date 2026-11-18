@@ -43,7 +43,7 @@ func TestManifestsDeclare(t *testing.T) {
 }
 
 func TestParse_Defaults(t *testing.T) {
-	r, err := parse(map[string]any{"task": " Sign up ", "expect": "An account", "url": "http://localhost:8080/"})
+	r, err := parse(map[string]any{"task": " Sign up ", "expect": "An account", "targets": browserAt("http://localhost:8080/")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,14 +55,12 @@ func TestParse_Defaults(t *testing.T) {
 
 func TestParse_TakesTemplatedStrings(t *testing.T) {
 	r, err := parse(map[string]any{
-		"task": "t", "expect": "e", "url": "https://app.test/",
-		"max_steps":   "25",
-		"timeout":     "90s",
-		"headless":    "false",
-		"window_w":    1024.0,
-		"allow_hosts": "app.test, auth.test",
-		"secrets":     map[string]any{"PASSWORD": "pw", "PIN": 1234.0},
-		"effort":      "high",
+		"task": "t", "expect": "e",
+		"targets":   browserAt("https://app.test/", "headless", "false", "window_w", 1024.0, "allow_hosts", "app.test, auth.test"),
+		"max_steps": "25",
+		"timeout":   "90s",
+		"secrets":   map[string]any{"PASSWORD": "pw", "PIN": 1234.0},
+		"effort":    "high",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -80,25 +78,25 @@ func TestParse_TakesTemplatedStrings(t *testing.T) {
 
 func TestParse_Refuses(t *testing.T) {
 	for name, with := range map[string]map[string]any{
-		"no task":          {"expect": "e", "url": "http://a.test/"},
-		"no expect":        {"task": "t", "url": "http://a.test/"},
+		"no task":          {"expect": "e", "targets": browserAt("http://a.test/")},
+		"no expect":        {"task": "t", "targets": browserAt("http://a.test/")},
 		"no url":           {"task": "t", "expect": "e"},
-		"a url not http":   {"task": "t", "expect": "e", "url": "file:///etc/passwd"},
-		"a bad timeout":    {"task": "t", "expect": "e", "url": "http://a.test/", "timeout": "soon"},
-		"zero steps":       {"task": "t", "expect": "e", "url": "http://a.test/", "max_steps": 0.0},
-		"a bad effort":     {"task": "t", "expect": "e", "url": "http://a.test/", "effort": "huge"},
-		"a bad secret":     {"task": "t", "expect": "e", "url": "http://a.test/", "secrets": map[string]any{"MY-PW": "x"}},
-		"an unknown key":   {"task": "t", "expect": "e", "url": "http://a.test/", "prompt": "x"},
-		"both modes":       {"task": "t", "expect": "e", "persona": "p", "goal": "g", "url": "http://a.test/"},
-		"no goal":          {"persona": "p", "url": "http://a.test/"},
-		"only a goal":      {"goal": "g", "url": "http://a.test/"},
-		"a bad cache mode": {"task": "t", "expect": "e", "url": "http://a.test/", "cache": "c.json", "cache_mode": "sometimes"},
-		"a persona cache":  {"persona": "p", "goal": "g", "url": "http://a.test/", "cache": "c.json"},
-		"a bad provider":   {"task": "t", "expect": "e", "url": "http://a.test/", "provider": "acme", "model": "m"},
-		"no model":         {"task": "t", "expect": "e", "url": "http://a.test/", "provider": "openai"},
-		"a bad base_url":   {"task": "t", "expect": "e", "url": "http://a.test/", "provider": "openai", "model": "m", "base_url": "api.test"},
-		"a bad vision":     {"task": "t", "expect": "e", "url": "http://a.test/", "provider": "openai", "model": "m", "vision": "maybe"},
-		"claude's vision":  {"task": "t", "expect": "e", "url": "http://a.test/", "vision": false},
+		"a url not http":   {"task": "t", "expect": "e", "targets": browserAt("file:///etc/passwd")},
+		"a bad timeout":    {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "timeout": "soon"},
+		"zero steps":       {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "max_steps": 0.0},
+		"a bad effort":     {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "effort": "huge"},
+		"a bad secret":     {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "secrets": map[string]any{"MY-PW": "x"}},
+		"an unknown key":   {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "prompt": "x"},
+		"both modes":       {"task": "t", "expect": "e", "persona": "p", "goal": "g", "targets": browserAt("http://a.test/")},
+		"no goal":          {"persona": "p", "targets": browserAt("http://a.test/")},
+		"only a goal":      {"goal": "g", "targets": browserAt("http://a.test/")},
+		"a bad cache mode": {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "cache": "c.json", "cache_mode": "sometimes"},
+		"a persona cache":  {"persona": "p", "goal": "g", "targets": browserAt("http://a.test/"), "cache": "c.json"},
+		"a bad provider":   {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "provider": "acme", "model": "m"},
+		"no model":         {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "provider": "openai"},
+		"a bad base_url":   {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "provider": "openai", "model": "m", "base_url": "api.test"},
+		"a bad vision":     {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "provider": "openai", "model": "m", "vision": "maybe"},
+		"claude's vision":  {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "vision": false},
 	} {
 		if _, err := parse(with); err == nil {
 			t.Errorf("%s: parsed", name)
@@ -108,7 +106,7 @@ func TestParse_Refuses(t *testing.T) {
 
 func TestParse_Provider(t *testing.T) {
 	base := func(more map[string]any) map[string]any {
-		with := map[string]any{"task": "t", "expect": "e", "url": "http://a.test/"}
+		with := map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/")}
 		for k, v := range more {
 			with[k] = v
 		}
@@ -142,7 +140,7 @@ func TestParse_Provider(t *testing.T) {
 
 func TestNewModel_NeedsTheKeyOfTheProvider(t *testing.T) {
 	t.Setenv("XAI_API_KEY", "")
-	r, err := parse(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "provider": "xai", "model": "grok"})
+	r, err := parse(map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "provider": "xai", "model": "grok"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +155,7 @@ func TestNewModel_NeedsTheKeyOfTheProvider(t *testing.T) {
 }
 
 func TestParse_Persona(t *testing.T) {
-	r, err := parse(map[string]any{"persona": " A first-time visitor ", "goal": "Write a note", "url": "http://a.test/"})
+	r, err := parse(map[string]any{"persona": " A first-time visitor ", "goal": "Write a note", "targets": browserAt("http://a.test/")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,14 +317,14 @@ func TestEvidence_WritesThePersonaReport(t *testing.T) {
 }
 
 func TestParse_Cache(t *testing.T) {
-	r, err := parse(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "cache": " .probe-agent/signup.json "})
+	r, err := parse(map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "cache": " .probe-agent/signup.json "})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.Cache != ".probe-agent/signup.json" || r.CacheMode != "auto" {
 		t.Errorf("cache %q, mode %q", r.Cache, r.CacheMode)
 	}
-	if r, err := parse(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "cache": "c.json", "cache_mode": "strict"}); err != nil || r.CacheMode != "strict" {
+	if r, err := parse(map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "cache": "c.json", "cache_mode": "strict"}); err != nil || r.CacheMode != "strict" {
 		t.Errorf("strict: %q, %v", r.CacheMode, err)
 	}
 }
@@ -387,14 +385,14 @@ func TestResult_Cache(t *testing.T) {
 }
 
 func TestParse_StorageState(t *testing.T) {
-	r, err := parse(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "storage_state": " /tmp/state.json "})
+	r, err := parse(map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/", "storage_state", " /tmp/state.json ")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.StorageState != "/tmp/state.json" {
 		t.Errorf("storage_state %q", r.StorageState)
 	}
-	if _, err := parse(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "storage_state": 1.0}); err == nil || !strings.Contains(err.Error(), "storage_state must be a string") {
+	if _, err := parse(map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/", "storage_state", 1.0)}); err == nil || !strings.Contains(err.Error(), "storage_state must be a string") {
 		t.Errorf("a number was taken: %v", err)
 	}
 }
@@ -404,12 +402,22 @@ func TestParse_StorageState(t *testing.T) {
 func TestRun_MissingStorageState(t *testing.T) {
 	a := &Action{ctx: t.Context(), log: hclog.NewNullLogger()}
 	_, err := a.run(actionrpc.Call{Actions: browserActions, With: map[string]any{
-		"task": "t", "expect": "e", "url": "http://a.test/",
-		"storage_state": filepath.Join(t.TempDir(), "missing.json"),
+		"task": "t", "expect": "e",
+		"targets": browserAt("http://a.test/", "storage_state", filepath.Join(t.TempDir(), "missing.json")),
 	}})
 	if err == nil || !strings.Contains(err.Error(), "storage_state: open") {
 		t.Errorf("error %v, want the file refused", err)
 	}
+}
+
+// browserAt is a targets of a browser that opens url, with the other keys
+// of targets.browser in kv, as key and value after key and value.
+func browserAt(url string, kv ...any) map[string]any {
+	b := map[string]any{"url": url}
+	for i := 0; i+1 < len(kv); i += 2 {
+		b[kv[i].(string)] = kv[i+1]
+	}
+	return map[string]any{"browser": b}
 }
 
 // browserActions names probe-browser, as a workflow that drives a browser
@@ -425,7 +433,7 @@ func TestRun_StorageStateOfAnotherShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &Action{ctx: t.Context(), log: hclog.NewNullLogger()}
-	_, err := a.run(actionrpc.Call{Actions: browserActions, With: map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "storage_state": path}})
+	_, err := a.run(actionrpc.Call{Actions: browserActions, With: map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/", "storage_state", path)}})
 	if err == nil || !strings.Contains(err.Error(), "storage_state: "+path+" is not a storage state: it has no list of cookies") {
 		t.Errorf("error %v, want the file refused", err)
 	}

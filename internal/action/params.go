@@ -44,10 +44,10 @@ const (
 
 // params are the keys the action takes in with.
 var params = []string{
-	"task", "expect", "persona", "goal", "targets", "url", "allow_hosts", "secrets", "storage_state",
+	"task", "expect", "persona", "goal", "targets", "secrets",
 	"cache", "cache_mode",
 	"provider", "model", "effort", "base_url", "vision", "max_steps", "timeout",
-	"headless", "window_w", "window_h", "evidence_dir",
+	"evidence_dir",
 }
 
 // The kinds of target, as the keys of targets.
@@ -59,8 +59,9 @@ const (
 	targetGRPC    = "grpc"
 )
 
-// browserParams are the keys of targets.browser, which a step without
-// targets gives at the top of with, as the short form of targets.browser.
+// browserParams are the keys of targets.browser. A step once gave them at
+// the top of with, as a short form of targets.browser, which is no longer
+// taken.
 var browserParams = []string{"url", "allow_hosts", "storage_state", "headless", "window_w", "window_h"}
 
 // appParams are the keys of targets.ios and targets.android.
@@ -87,10 +88,7 @@ type req struct {
 	CacheMode string
 	// Browser says whether the test drives a browser, of URL and the
 	// fields after it.
-	Browser bool
-	// ShortForm says that the browser was given at the top of with rather
-	// than under targets.browser.
-	ShortForm  bool
+	Browser    bool
 	URL        string
 	AllowHosts []string
 	Secrets    map[string]string
@@ -231,7 +229,10 @@ func parse(with map[string]any) (req, error) {
 	num := func(key string, dst *int) { numIn(with, "", key, dst) }
 
 	for _, k := range slices.Sorted(maps.Keys(with)) {
-		if !slices.Contains(params, k) {
+		switch {
+		case slices.Contains(browserParams, k):
+			errs = append(errs, fmt.Errorf("%s goes under targets.browser, as targets.browser.%s: the short form of the browser at the top of with is no longer taken", k, k))
+		case !slices.Contains(params, k):
 			errs = append(errs, fmt.Errorf("unknown parameter %s; the parameters are %s", k, strings.Join(params, ", ")))
 		}
 	}
@@ -249,18 +250,14 @@ func parse(with map[string]any) (req, error) {
 	str("cache_mode", &r.CacheMode)
 	num("max_steps", &r.MaxSteps)
 
-	// The browser is given under targets.browser, or, without targets, at
-	// the top of with.
-	browser, prefix := with, ""
-	if v, ok := with["targets"]; ok {
+	// The browser is given under targets.browser.
+	var browser map[string]any
+	prefix := "targets.browser."
+	if v, ok := with["targets"]; !ok {
+		errs = append(errs, errors.New("targets is required: name what the test drives, as targets.browser.url for a browser"))
+	} else {
 		targets, terrs := readTargets(v)
 		errs = append(errs, terrs...)
-		for _, k := range browserParams {
-			if _, ok := with[k]; ok {
-				errs = append(errs, fmt.Errorf("%s goes under targets.browser when targets is given", k))
-			}
-		}
-		browser, prefix = nil, "targets.browser."
 		if b, ok := targets[targetBrowser]; ok {
 			r.Browser, browser = true, b
 		}
@@ -296,13 +293,6 @@ func parse(with map[string]any) (req, error) {
 		if g, ok := targets[targetGRPC]; ok {
 			r.GRPC = &grpcReq{}
 			errs = append(errs, readGRPC(g, r.GRPC)...)
-		}
-	} else {
-		r.Browser = true
-		for _, k := range browserParams {
-			if _, ok := with[k]; ok {
-				r.ShortForm = true
-			}
 		}
 	}
 	strIn(browser, prefix, "url", &r.URL)
