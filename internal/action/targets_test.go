@@ -25,7 +25,7 @@ func TestParse_Targets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !r.Browser || r.ShortForm || r.URL != "https://app.test/" || r.Headless || r.Width != 1024 {
+	if !r.Browser || r.URL != "https://app.test/" || r.Headless || r.Width != 1024 {
 		t.Errorf("browser %+v", r)
 	}
 	if !slices.Equal(r.AllowHosts, []string{"app.test", "auth.test"}) {
@@ -91,15 +91,21 @@ func TestParse_TargetsIOSAlone(t *testing.T) {
 	}
 }
 
-// The parameters of the browser at the top of with are the short form of
-// targets.browser, as before there were targets.
-func TestParse_ShortFormOfTheBrowser(t *testing.T) {
-	r, err := parse(map[string]any{"task": "t", "expect": "e", "url": "http://a.test/"})
-	if err != nil {
-		t.Fatal(err)
+// The parameters of the browser at the top of with, a short form of
+// targets.browser once, are refused, each with where it goes; and a step
+// without targets names nothing to drive.
+func TestParse_RefusesTheShortFormOfTheBrowser(t *testing.T) {
+	for _, k := range []string{"url", "allow_hosts", "storage_state", "headless", "window_w", "window_h"} {
+		_, err := parse(map[string]any{"task": "t", "expect": "e", k: "x", "targets": browserAt("http://a.test/")})
+		if err == nil || !strings.Contains(err.Error(), k+" goes under targets.browser, as targets.browser."+k) || strings.Contains(err.Error(), "unknown parameter "+k) {
+			t.Errorf("%s: err %v", k, err)
+		}
 	}
-	if !r.Browser || !r.ShortForm || r.IOS != nil || r.URL != "http://a.test/" {
-		t.Errorf("parsed %+v", r)
+	if _, err := parse(map[string]any{"task": "t", "expect": "e"}); err == nil || !strings.Contains(err.Error(), "targets is required") {
+		t.Errorf("without targets: err %v", err)
+	}
+	if slices.Contains(Params(), "url") {
+		t.Error("url is still a parameter")
 	}
 }
 

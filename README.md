@@ -29,7 +29,9 @@ jobs:
   - name: A new user signs up
     uses: agent
     with:
-      url: https://staging.example.com/
+      targets:
+        browser:
+          url: https://staging.example.com/
       task: |
         As a new user of this service, sign up with the email address
         {secret:EMAIL} and the password {secret:PASSWORD}.
@@ -48,7 +50,9 @@ A persona test:
   - name: A first-time visitor writes a first note
     uses: agent
     with:
-      url: https://staging.example.com/
+      targets:
+        browser:
+          url: https://staging.example.com/
       persona: |
         Carol, who has never used a notes app and is not technical. She signs
         up with {secret:EMAIL} and the password {secret:PASSWORD}.
@@ -64,7 +68,7 @@ A test in natural language is not deterministic: the same step can take another 
 
 ## How it works
 
-1. Chrome opens `url`.
+1. Chrome opens `targets.browser.url`.
 2. The tester is given `task` and `expect`, and the [browser toolset](https://platform.claude.com/docs/en/agents-and-tools/tool-use/browser-use-tool) of the Claude API: it reads the page as a tree of elements with refs, clicks, types, fills in forms and takes screenshots, until it calls `finish`.
 3. The judge is given the task, the expectation, the steps, the texts the pages showed, the final page and its screenshot, and the console errors and failed requests. It gives `pass` or `fail`, quoting the pages.
 4. Each quote is looked for in what the pages showed. A `pass` that quotes nothing the pages showed is not taken, and the verdict is `blocked`.
@@ -77,15 +81,12 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `targets` | Object | No | the browser of `url` | What the test drives: a browser, an iOS app, an HTTP API, a gRPC API, or more than one of them; see [Targets](#targets) |
-| `url` | String | Without `targets` | - | The page the browser opens first, `http` or `https`. The short form of `targets.browser.url` |
+| `targets` | Object | Yes | - | What the test drives: a browser, an iOS or Android app, an HTTP API, a gRPC API, or more than one of them; see [Targets](#targets) |
 | `task` | String | Scenario | - | What the tester does, in natural language |
 | `expect` | String | Scenario | - | What has to hold afterwards, in natural language |
 | `persona` | String | Persona | - | Who the tester plays, in natural language: what they know, and how they go about things |
 | `goal` | String | Persona | - | What the persona sets out to do, in natural language |
 | `secrets` | Object | No | - | Values the model never sees, by name. Write them as `{secret:NAME}` in `task` or `persona`; see [Secrets](#secrets) |
-| `storage_state` | String | No | - | A file of cookies and localStorage the browser starts with, as the browser action's `save_storage_state` writes; see [Starting signed in](#starting-signed-in) |
-| `allow_hosts` | List or string | No | the host of `url` | The hosts the tester may open pages of: `host`, `host:port`, or `*.domain`. A list, or a string apart by commas. The short form of `targets.browser.allow_hosts` |
 | `provider` | String | No | `anthropic` | `anthropic`, `openai`, `xai`, `gemini` or `sakura`; see [Models](#models) |
 | `model` | String | Not with `anthropic` | `claude-opus-5-5` with `anthropic` | The model's ID |
 | `effort` | String | No | `medium` | `low`, `medium`, `high`, `xhigh` or `max` |
@@ -93,8 +94,6 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 | `vision` | Boolean | No | `false` with `sakura`, else `true` | Whether the model sees images. Not with `anthropic` |
 | `max_steps` | Integer | No | `40` | The calls the tester may make to the targets |
 | `timeout` | Duration | No | `4m` | Limit for the whole test, the judge included, as `90s` or a number of seconds. Keep it below the step's `timeout`, which is `5m` unless set |
-| `headless` | Boolean | No | `true` | Run Chrome without a window. The short form of `targets.browser.headless` |
-| `window_w`, `window_h` | Integer | No | `1280`, `800` | The viewport, in pixels. The short form of `targets.browser.window_w` and `window_h` |
 | `cache` | String | No | - | A file to keep the steps of a scenario test that passed in, and to replay them from; see [Replay](#replay) |
 | `cache_mode` | String | No | `auto` | `auto`, `read`, `strict` or `refresh`; see [Replay](#replay) |
 | `evidence_dir` | String | No | the temporary directory | Where the screenshots and the report are written, each test in a directory of its own |
@@ -107,13 +106,13 @@ The model is called with the API key of its provider, which the action takes fro
 
 | Key | Target | What goes in it | Driven by |
 |---|---|---|---|
-| `browser` | Chrome | `url` (required), `allow_hosts`, `storage_state`, `headless`, `window_w`, `window_h`, as in [Parameters](#parameters) | [probe-browser](https://github.com/mozership/probe-browser) |
+| `browser` | Chrome | `url` (required), `allow_hosts`, `storage_state`, `headless`, `window_w`, `window_h`, see below | [probe-browser](https://github.com/mozership/probe-browser) |
 | `ios` | An app on an iOS simulator | `app` (required), the bundle identifier; `device`, the simulator by its name or UDID, which has to be given when more than one is booted; `timeout`, see below | [probe-ios](https://github.com/mozership/probe-ios) |
 | `android` | An app on an Android emulator or device | `app` (required), the package name; `device`, by its serial or model, which has to be given when adb lists more than one; `timeout`, as for `ios` | [probe-android](https://github.com/mozership/probe-android) |
 | `http` | An HTTP API | `url` (required), the base URL; `openapi`, `headers`, `cookies` and `timeout`, see below | The built-in [http](https://probe.linyo.ws/reference/actions/http) |
 | `grpc` | A gRPC API | `addr` (required); `protocol`, `tls`, `insecure`, `cert_file`, `key_file`, `ca_file`, `metadata`, `proto` and `timeout`, see below | The built-in [grpc](https://probe.linyo.ws/reference/actions/grpc) |
 
-Without `targets`, `url`, `allow_hosts`, `storage_state`, `headless`, `window_w` and `window_h` at the top of `with` are the short form of `targets.browser`, as before there were targets; the action warns that they move under it. A step with both `targets` and one of them is refused.
+Up to v0.8.0, `url`, `allow_hosts`, `storage_state`, `headless`, `window_w` and `window_h` could be given at the top of `with`, as a short form of `targets.browser`. They are no longer taken there: a step that gives one is refused, and told where it goes.
 
 ### A browser
 
@@ -124,6 +123,14 @@ actions:
   agent: github.com/mozership/probe-agent@<commit SHA>
   browser: github.com/mozership/probe-browser@<commit SHA>
 ```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `url` | String | required | The page the browser opens first, `http` or `https` |
+| `allow_hosts` | List or string | the host of `url` | The hosts the tester may open pages of: `host`, `host:port`, or `*.domain`. A list, or a string apart by commas |
+| `storage_state` | String | - | A file of cookies and localStorage the browser starts with, as the browser action's `save_storage_state` writes; see [Starting signed in](#starting-signed-in) |
+| `headless` | Boolean | `true` | Run Chrome without a window |
+| `window_w`, `window_h` | Integer | `1280`, `800` | The viewport, in pixels |
 
 A workflow of an earlier agent, which drove Chrome itself, names probe-browser too: without it, a test of a browser fails at once, and says so. Probe stops the browser once the run is over. A link that would open a window opens its page in the tab the tester drives, as probe-browser's `one_tab` has it, and the requests and the console errors of the page are those probe-browser reads while each tool runs, and from one to the next.
 
@@ -304,7 +311,9 @@ jobs:
     with:
       provider: openai
       model: gpt-5.4
-      url: https://staging.example.com/
+      targets:
+        browser:
+          url: https://staging.example.com/
       task: Sign up with {secret:EMAIL} and the password {secret:PASSWORD}.
       expect: The dashboard greets the user.
 ```
@@ -406,7 +415,9 @@ A scenario test that passes the same way every run need not ask the model how to
 
 ```yaml
     with:
-      url: https://staging.example.com/
+      targets:
+        browser:
+          url: https://staging.example.com/
       task: Sign up with {secret:EMAIL} and the password {secret:PASSWORD}.
       expect: The dashboard greets the new user.
       cache: .probe-agent/signup.json
@@ -422,7 +433,7 @@ A replay:
 
 A value the tester typed that the task spells out, or that it made up, such as a name, is typed again. A value it may have read off the screen, such as a code the application showed, or a date, belongs to that run: its step is recorded as a gap, without the value, and the replay hands the test to the tester there. A step at a point of the viewport, rather than on an element, is replayed only at the viewport it was recorded at.
 
-The recording is of the task, the expectation and the start URL; when one of them changes, it is not replayed. It keeps the secrets as placeholders, and the URLs on the host of `url` as paths, so that a recording made against one host is replayed against another. It is written only when it changes, so that a committed one stays clean while it replays. A persona test takes no `cache`: it is to take another way each run.
+The recording is of the task, the expectation and the start URL; when one of them changes, it is not replayed. It keeps the secrets as placeholders, and the URLs on the host of `targets.browser.url` as paths, so that a recording made against one host is replayed against another. It is written only when it changes, so that a committed one stays clean while it replays. A persona test takes no `cache`: it is to take another way each run.
 
 | `cache_mode` | Replays | Records | Where the recording stops matching |
 |---|---|---|---|
@@ -435,7 +446,7 @@ Commit the file, and run CI with `strict`, so that a recording that no longer ma
 
 ## Starting signed in
 
-A test of what a signed-in user does need not have the tester sign in first. Sign in with a deterministic step of the [browser action](https://github.com/mozership/probe-browser), save the login with its `save_storage_state`, and name the file in `storage_state`: the agent's browser starts with its cookies, `HttpOnly` ones included, and its localStorage, and the tester begins at `url` signed in.
+A test of what a signed-in user does need not have the tester sign in first. Sign in with a deterministic step of the [browser action](https://github.com/mozership/probe-browser), save the login with its `save_storage_state`, and name the file in `targets.browser.storage_state`: the agent's browser starts with its cookies, `HttpOnly` ones included, and its localStorage, and the tester begins at `targets.browser.url` signed in.
 
 ```yaml
 actions:
@@ -477,8 +488,10 @@ jobs:
   - name: A signed-in user cancels an order
     uses: agent
     with:
-      url: https://staging.example.com/orders
-      storage_state: "{{outputs.login.state}}"
+      targets:
+        browser:
+          url: https://staging.example.com/orders
+          storage_state: "{{outputs.login.state}}"
       task: Cancel the most recent order.
       expect: The order shows as cancelled, and the list no longer offers to cancel it.
     timeout: 5m
@@ -502,7 +515,7 @@ The model reads `{secret:NAME}` where a secret is. When it types the placeholder
 
 ## Guard
 
-The action keeps to no [guard](https://probe.linyo.ws/guide/concepts/guard): it cannot tell what a page will do, nor what the model will click. Under `--read-only` or `--allow-host`, a step that uses it is refused unless `--allow-action` names it. The tester is kept to `allow_hosts`: a page on another host is not opened, and the browser goes back from one a click led to.
+The action keeps to no [guard](https://probe.linyo.ws/guide/concepts/guard): it cannot tell what a page will do, nor what the model will click. Under `--read-only` or `--allow-host`, a step that uses it is refused unless `--allow-action` names it. The tester is kept to `targets.browser.allow_hosts`: a page on another host is not opened, and the browser goes back from one a click led to.
 
 probe-ios and probe-android keep to no guard either, and the agent calls them under the guard of the run: under `--read-only` or `--allow-host`, `--allow-action` has to name the agent and the one it drives. When it names the agent alone, the call of probe-ios or probe-android is refused, and so is the step.
 

@@ -79,9 +79,6 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if r.ShortForm {
-		a.log.Warn("url, allow_hosts, storage_state, headless, window_w and window_h move under targets.browser; give them there, as the short form at the top of with is to go")
-	}
 	// The targets are driven through actions, probe-ios and probe-browser,
 	// which one caller calls, so that each keeps its state from one call to
 	// the next, and is cleaned up once the run is over.
