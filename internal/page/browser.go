@@ -346,11 +346,15 @@ func (b *Browser) State(ctx context.Context) (string, string, error) {
 // call, as while the judge decided, so that the console, the requests and
 // their errors are whole. A page that is gone has nothing to add.
 func (b *Browser) CatchUp(ctx context.Context) {
-	_, _, _ = b.run(ctx, catchUpTimeout, action{"name": "url"})
+	// The call, the page saved at a failure included, not the action
+	// alone.
+	ctx, cancel := context.WithTimeout(ctx, CatchUpTimeout)
+	defer cancel()
+	_, _, _ = b.run(ctx, CatchUpTimeout, action{"name": "url"})
 }
 
-// catchUpTimeout bounds the call of CatchUp.
-const catchUpTimeout = 5 * time.Second
+// CatchUpTimeout bounds CatchUp.
+const CatchUpTimeout = 5 * time.Second
 
 // Locator describes the element of t so that a later page can find it
 // again, or is nil for a point with nothing to act on.

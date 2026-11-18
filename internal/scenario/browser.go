@@ -321,6 +321,9 @@ func (d *browserDriver) member(ctx context.Context, name string, in browserInput
 		if err != nil {
 			return "", nil, err
 		}
+		if err := d.secretsOnHost(ctx, text != in.Text); err != nil {
+			return "", nil, err
+		}
 		if err := p.Type(ctx, text); err != nil {
 			return "", nil, err
 		}
@@ -383,12 +386,29 @@ func (d *browserDriver) member(ctx context.Context, name string, in browserInput
 			if err != nil {
 				return "", nil, err
 			}
+			if err := d.secretsOnHost(ctx, filled != s); err != nil {
+				return "", nil, err
+			}
 			value = filled
 		}
 		said, err := p.FormInput(ctx, in.Target.Ref, value)
 		return said, nil, err
 	}
 	return "", nil, fmt.Errorf("%s is not enabled in this environment", name)
+}
+
+// secretsOnHost fails, when secret, for a page on a host the test may not
+// open, as one a window the page opened between the calls took the tab
+// to, and goes back from it, so that a secret is typed on the hosts of
+// the test alone.
+func (d *browserDriver) secretsOnHost(ctx context.Context, secret bool) error {
+	if !secret {
+		return nil
+	}
+	if msg := d.keepToHosts(ctx); msg != "" {
+		return errors.New(msg + " The secret was not typed.")
+	}
+	return nil
 }
 
 // keepToHosts goes back from a page on a host the test may not open, and

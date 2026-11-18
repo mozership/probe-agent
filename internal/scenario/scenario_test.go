@@ -346,6 +346,32 @@ func TestRun_KeepsToTheHosts(t *testing.T) {
 	}
 }
 
+// TestRun_ASecretIsTypedOnTheHostsAlone does not type a secret on a page
+// off the hosts of the test, as one a window the page opened between the
+// calls took the tab to, while it types what is no secret.
+func TestRun_ASecretIsTypedOnTheHostsAlone(t *testing.T) {
+	// The page stays off the hosts, as going back does not move it.
+	p := &fakePage{afterClick: "https://evil.test/phish"}
+	m := &fakeModel{scripts: [][]llm.Reply{
+		{
+			browserCall("1", "left_click", map[string]any{"target": map[string]any{"type": "coordinate", "x": 10, "y": 10}}),
+			browserCall("2", "type", map[string]any{"text": "{secret:PASSWORD}"}),
+			browserCall("3", "type", map[string]any{"text": "hello"}),
+			toolCall("4", "finish", map[string]any{"status": "blocked", "summary": "Left the site."}),
+		},
+	}}
+	if _, err := Run(context.Background(), config(), Targets{Browser: p}, m); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(p.typed) != "[hello]" {
+		t.Errorf("typed %q, want what is no secret alone", p.typed)
+	}
+	r := m.chats[0].turns[2].Results[0]
+	if !r.IsError || !strings.Contains(r.Text, "The secret was not typed") || !strings.Contains(r.Text, "evil.test") {
+		t.Errorf("result %+v", r)
+	}
+}
+
 func TestRun_AnUnknownSecretIsNotTyped(t *testing.T) {
 	p := &fakePage{}
 	m := &fakeModel{scripts: [][]llm.Reply{
