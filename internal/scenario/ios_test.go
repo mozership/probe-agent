@@ -134,7 +134,7 @@ func TestRun_DrivesAnIOSApp(t *testing.T) {
 	}
 
 	judge := m.chats[1]
-	if !strings.Contains(judge.opts.Prompt, "<final_app_tree>") || !strings.Contains(judge.opts.Prompt, "A screenshot of the final screen of the app follows.") {
+	if !strings.Contains(judge.opts.Prompt, "<final_ios_tree>") || !strings.Contains(judge.opts.Prompt, "A screenshot of the final screen of the app follows.") {
 		t.Errorf("judge prompt:\n%s", judge.opts.Prompt)
 	}
 	if len(judge.opts.Images) != 1 || judge.opts.Images[0].MediaType != "image/png" {
@@ -250,7 +250,7 @@ func TestRun_BrowserAndIOS(t *testing.T) {
 		t.Errorf("targets %+v, url %q", o.Targets, o.URL)
 	}
 	judge := m.chats[1].opts.Prompt
-	if !strings.Contains(judge, "<final_page_text>") || !strings.Contains(judge, "<final_app_tree>") {
+	if !strings.Contains(judge, "<final_page_text>") || !strings.Contains(judge, "<final_ios_tree>") {
 		t.Errorf("judge prompt:\n%s", judge)
 	}
 	for _, e := range o.Evidence {

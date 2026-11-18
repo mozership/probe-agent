@@ -39,6 +39,45 @@ func TestParse_Targets(t *testing.T) {
 	}
 }
 
+func TestParse_TargetsAndroid(t *testing.T) {
+	r, err := parse(map[string]any{
+		"task": "t", "expect": "e",
+		"targets": map[string]any{
+			"android": map[string]any{"app": "com.android.settings", "device": "emulator-5554", "timeout": "10s"},
+			"ios":     map[string]any{"app": "com.apple.Preferences"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Android == nil || r.Android.App != "com.android.settings" || r.Android.Device != "emulator-5554" || r.Android.Timeout != 10*time.Second {
+		t.Errorf("android %+v", r.Android)
+	}
+	if got := r.kinds(); !slices.Equal(got, []string{"ios", "android"}) {
+		t.Errorf("kinds %v", got)
+	}
+	if _, err := appTarget(nil, map[string]string{"agent": "./action"}, probeAndroid, targetAndroid, *r.Android); err == nil || !strings.Contains(err.Error(), "targets.android drives the app through probe-android: name it under actions of the workflow, as android: github.com/mozership/probe-android@<commit SHA>") {
+		t.Errorf("without probe-android: err %v", err)
+	}
+}
+
+func TestResult_AppOfAndroid(t *testing.T) {
+	r := req{Task: "t", Expect: "e", Android: &appReq{App: "com.android.settings", Device: "emulator-5554"}}
+	ret, err := result(r, outcome(), files{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q := ret["req"].(map[string]any); q["app"] != "com.android.settings" || q["device"] != "emulator-5554" {
+		t.Errorf("req %v", q)
+	}
+	// With an iOS app too, the app and the device are of it.
+	r.IOS = &appReq{App: "com.example.app"}
+	ret, _ = result(r, outcome(), files{}, 0)
+	if q := ret["req"].(map[string]any); q["app"] != "com.example.app" || q["device"] != nil {
+		t.Errorf("req %v", q)
+	}
+}
+
 func TestParse_TargetsIOSAlone(t *testing.T) {
 	r, err := parse(map[string]any{
 		"task": "t", "expect": "e",
@@ -74,9 +113,24 @@ func TestParse_RefusesTargets(t *testing.T) {
 			with: map[string]any{"task": "t", "expect": "e", "url": "http://a.test/", "targets": map[string]any{"ios": ios}},
 			want: "url goes under targets.browser",
 		},
-		"not a map":      {with: map[string]any{"task": "t", "expect": "e", "targets": "ios"}, want: "targets must be a map"},
-		"no target":      {with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{}}, want: "names no target"},
-		"a later target": {with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"android": map[string]any{"app": "a"}}}, want: "targets.android is not driven yet"},
+		"not a map": {with: map[string]any{"task": "t", "expect": "e", "targets": "ios"}, want: "targets must be a map"},
+		"no target": {with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{}}, want: "names no target"},
+		"no app of android": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"android": map[string]any{"device": "emulator-5554"}}},
+			want: "targets.android.app is required",
+		},
+		"a bad timeout of android": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"android": map[string]any{"app": "a", "timeout": "soon"}}},
+			want: "targets.android.timeout",
+		},
+		"an unknown key of android": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"android": map[string]any{"app": "a", "args": []any{}}}},
+			want: "unknown parameter targets.android.args",
+		},
+		"a cache with an android app": {
+			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"android": map[string]any{"app": "a"}}},
+			want: "cache is for a test of a browser alone",
+		},
 		"no addr of the gRPC API": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"tls": true}}},
 			want: "targets.grpc.addr is required",
@@ -529,7 +583,7 @@ func TestActionNamed(t *testing.T) {
 }
 
 func TestResult_Targets(t *testing.T) {
-	r := req{Task: "t", Expect: "e", IOS: &iosReq{App: "com.example.app", Device: "iPhone 17"}, Model: "claude-opus-5-5", Effort: "medium", MaxSteps: 40}
+	r := req{Task: "t", Expect: "e", IOS: &appReq{App: "com.example.app", Device: "iPhone 17"}, Model: "claude-opus-5-5", Effort: "medium", MaxSteps: 40}
 	o := outcome()
 	o.URL, o.Title = "", ""
 	o.Targets = []scenario.TargetState{{Kind: "ios", App: "com.example.app", Device: "UDID-1"}}
@@ -587,14 +641,14 @@ func TestParse_TimeoutOfTheApp(t *testing.T) {
 	}
 }
 
-func TestIOSWith(t *testing.T) {
+func TestAppWith(t *testing.T) {
 	actions := []map[string]any{{"name": "tap", "selector": "go"}, {"name": "tree"}}
-	got := iosWith(iosReq{App: "com.example.app"}, actions)
+	got := appWith(appReq{App: "com.example.app"}, actions)
 	want := map[string]any{"app": "com.example.app", "actions": []any{actions[0], actions[1]}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("with %v, want %v without device and timeout", got, want)
 	}
-	got = iosWith(iosReq{App: "com.example.app", Device: "iPhone 17", Timeout: 5 * time.Second}, actions)
+	got = appWith(appReq{App: "com.example.app", Device: "iPhone 17", Timeout: 5 * time.Second}, actions)
 	if got["device"] != "iPhone 17" || got["timeout"] != "5s" {
 		t.Errorf("with %v, want the device and the timeout", got)
 	}

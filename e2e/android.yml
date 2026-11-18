@@ -1,0 +1,99 @@
+# The end-to-end tests of an Android app: probe-agent drives the Settings
+# app of an Android emulator through probe-android, alone and beside a
+# browser, driven through probe-browser, on the help page of e2e/server.
+# Run it from the repository root, with an emulator booted in English, the
+# server listening, Chrome installed and ANTHROPIC_API_KEY set, and the
+# action built first:
+#
+#   emulator -avd <name> &
+#   go -C e2e/server run . &
+#   go build -o e2e/action/probe-agent . && probe e2e/android.yml
+#
+# DEVICE names the emulator when adb lists more than one device. The calls
+# of probe-android and probe-browser need Probe v1.37.0 or later.
+name: probe-agent against an Android app
+
+actions:
+  agent: ./action
+  browser: github.com/mozership/probe-browser@a9c1dca2ae8f0e79ebfbe4482d37a928237c2f4d # v0.11.1
+  android: github.com/mozership/probe-android@f54bb8ffc7dec6b3322e52a584a284cf4aec12d8 # v0.2.1
+  github-notes: github.com/mozership/probe-github-notes@d2df0b2dbbbffd3e368d156e571bf9bf2f784b76 # v0.1.3
+
+secrets:
+- ANTHROPIC_API_KEY
+- GITHUB_TOKEN
+
+vars:
+  device: "{{DEVICE ?? ''}}"
+  server: "{{SERVER ?? 'http://127.0.0.1:18090'}}"
+  github_token: "{{GITHUB_TOKEN ?? ''}}"
+
+jobs:
+- name: Settings
+  id: settings
+  defaults:
+    agent:
+      evidence_dir: out/agent
+      timeout: 8m
+  steps:
+  # The agent opens the app itself; launching it here first gives a fresh
+  # emulator its first, slow start before the test's time runs.
+  - name: probe-android launches the app and reads it
+    uses: android
+    with:
+      app: com.android.settings
+      device: "{{vars.device}}"
+      timeout: 2m
+      actions:
+      - name: launch
+      - name: tree
+    test: res.code == 0
+
+  - name: A user finds the version of Android
+    uses: agent
+    timeout: 10m
+    with:
+      task: Find which version of Android the device runs.
+      expect: The screen shows the version of Android.
+      targets:
+        android:
+          app: com.android.settings
+          device: "{{vars.device}}"
+          timeout: 1m
+    test: res.verdict == "pass" && res.targets[0].kind == "android"
+
+  - name: A help page on the web names a section the app opens
+    uses: agent
+    timeout: 10m
+    with:
+      task: Read on the help page which section of the Settings app to open, and open it in the Settings app.
+      expect: The Settings app shows the section the help page names.
+      targets:
+        browser:
+          url: "{{vars.server}}/help"
+        android:
+          app: com.android.settings
+          device: "{{vars.device}}"
+          timeout: 1m
+    test: |
+      res.verdict == "pass" &&
+      len(filter(res.steps, .target == "browser")) > 0 &&
+      len(filter(res.steps, .target == "android")) > 0
+
+# The notes the agent left, as when a test did not pass, go in a comment on
+# the pull request in CI, with probe-github-notes, which needs GITHUB_TOKEN;
+# without one, as run by hand, the step is skipped.
+- name: Notes
+  needs: [settings]
+  always: true
+  steps:
+  - name: Put the notes on the pull request
+    uses: github-notes
+    skipif: vars.github_token == ""
+    with:
+      to: comment
+      key: e2e-android
+      token: "{{vars.github_token}}"
+      notes: "{{ notes }}"
+      body: The notes probe-agent left in e2e/android.yml, driving the Settings app of an Android emulator.
+    test: res.code < 300

@@ -155,3 +155,76 @@ jobs:
         with:
           name: agent-ios-evidence
           path: out/agent
+
+  # The action driving the Settings app of an Android emulator through
+  # probe-android, alone and beside a browser, with a real model. The
+  # emulator runs at speed only with KVM, which an Ubuntu runner has but
+  # does not open to the job's user.
+  e2e-android:
+    runs-on: ubuntu-latest
+    # A pull request from a fork, and Dependabot, get no OIDC token.
+    if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+      # probe-github-notes puts the notes of the agent in a comment on the
+      # pull request.
+      pull-requests: write
+    # Two runs on the same pull request at once could each add a comment of
+    # the notes, rather than edit the one there.
+    concurrency:
+      group: e2e-android-${{ github.event.pull_request.number || github.ref }}
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      # The Claude API is called with the OIDC token of the job, through
+      # workload identity federation, rather than an API key: probe-agent
+      # asks GitHub for a new token for each exchange.
+      ANTHROPIC_FEDERATION_RULE_ID: fdrl_01LLJkzfYqamUwaAeerrnZMb
+      ANTHROPIC_ORGANIZATION_ID: 58f3ed17-7b9b-46e4-b827-dac67024964c
+      ANTHROPIC_SERVICE_ACCOUNT_ID: svac_01TXGJqXGordksx5PMkWCSeN
+      ANTHROPIC_WORKSPACE_ID: wrkspc_01FWywmW8kRVkfcsLzAsry6X
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go build -o e2e/action/probe-agent .
+      - name: Start the server
+        run: |
+          go -C e2e/server build -o server .
+          e2e/server/server > "$RUNNER_TEMP/server.txt" 2>&1 &
+      # probe-action adds probe to PATH for the emulator's script. The agent
+      # calls probe-android with ActionCaller, which needs probe v1.37.0 or
+      # later.
+      - name: Install Probe
+        uses: mozership/probe-action@5bf9b862f45a719fbc97b240c82b74e73ff5f2de # v1.4.0
+        with:
+          install-only: true
+          version: v1.38.0
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # As in the e2e tests of probe-android: an emulator of API 35, whose
+      # animations the runner turns off, as uiautomator cannot read a screen
+      # that is still moving.
+      - name: Run the Android e2e workflow on an emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          script: probe e2e/android.yml
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agent-android-evidence
+          path: out/agent
+      - name: What the server logged
+        if: always()
+        run: cat "$RUNNER_TEMP/server.txt"

@@ -219,14 +219,14 @@ func (a *app) users(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"exists": ok, "name": acc.Name})
 }
 
-// help names a section of the Settings app of an iOS simulator, for the
-// e2e workflow of a browser and an app, whose tester reads it here and
-// opens it there.
+// help names a section of the Settings app, which iOS and Android both
+// have, for the e2e workflows of a browser and an app, whose tester reads
+// it here and opens it there.
 func help(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Help - Acme Notes</title></head>
-<body><h1>Help</h1><p>To change how text looks on your iPhone, open the section named Accessibility in the Settings app.</p></body></html>
+<body><h1>Help</h1><p>To change how text looks on your phone, open the section named Accessibility in the Settings app.</p></body></html>
 `))
 }
 

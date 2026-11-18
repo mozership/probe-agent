@@ -162,8 +162,8 @@ type Evidence struct {
 type Step struct {
 	Index int    `json:"index"`
 	Tool  string `json:"tool"`
-	// Target is the kind of the target the step used, browser, ios, http
-	// or grpc.
+	// Target is the kind of the target the step used: browser, ios,
+	// android, http or grpc.
 	Target string `json:"target"`
 	// Notes are what the tester wrote before the call.
 	Notes      []string       `json:"notes,omitempty"`
@@ -215,7 +215,9 @@ type Targets struct {
 	// Browser is the tab of the browser, driven from Config.StartURL.
 	Browser page.Page
 	// IOS is an app on an iOS simulator.
-	IOS *IOS
+	IOS *App
+	// Android is an app on an Android emulator or device.
+	Android *App
 	// HTTP is an HTTP API.
 	HTTP *HTTP
 	// GRPC is a gRPC API.
@@ -234,7 +236,10 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 		r.drivers = append(r.drivers, r.web)
 	}
 	if t.IOS != nil {
-		r.drivers = append(r.drivers, newIOSDriver(r.ledger, *t.IOS, m.Vision()))
+		r.drivers = append(r.drivers, newAppDriver(r.ledger, iosPlatform, *t.IOS, m.Vision()))
+	}
+	if t.Android != nil {
+		r.drivers = append(r.drivers, newAppDriver(r.ledger, androidPlatform, *t.Android, m.Vision()))
 	}
 	if t.HTTP != nil {
 		d, err := newHTTPDriver(r.ledger, *t.HTTP)
@@ -532,7 +537,7 @@ type section struct {
 
 // TargetState is the last state of a target of a test.
 type TargetState struct {
-	// Kind is browser, ios, http or grpc.
+	// Kind is browser, ios, android, http or grpc.
 	Kind string `json:"kind"`
 	// URL and Title are of the page the browser was left on. URL is of the
 	// last request to an HTTP API, and Method and Status of it and its

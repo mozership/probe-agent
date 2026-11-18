@@ -219,7 +219,7 @@ func markdown(r req, o scenario.Outcome, dir string) string {
 			if t.Screenshot != "" {
 				w("![final page](%s)\n\n", rel(t.Screenshot))
 			}
-		case "ios":
+		case "ios", "android":
 			w("## Final screen of the app\n\n%s", t.App)
 			if t.Device != "" {
 				w(" on %s", t.Device)

@@ -1,8 +1,8 @@
 # probe-agent
 
-A [Probe](https://github.com/mozership/probe) action that tests an application from a task written in natural language. A model, the tester, uses the application through a real Chrome, an app on an iOS simulator, an HTTP API, a gRPC API, or more than one of them, to carry out the task; another call of the model, the judge, then decides from what they showed whether the expectation holds. See [Targets](#targets) for an iOS app, an HTTP API and a gRPC API.
+A [Probe](https://github.com/mozership/probe) action that tests an application from a task written in natural language. A model, the tester, uses the application through a real Chrome, an app on an iOS simulator or an Android emulator or device, an HTTP API, a gRPC API, or more than one of them, to carry out the task; another call of the model, the judge, then decides from what they showed whether the expectation holds. See [Targets](#targets) for an iOS app, an Android app, an HTTP API and a gRPC API.
 
-Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It drives Chrome through [probe-browser](https://github.com/mozership/probe-browser), and an iOS app through [probe-ios](https://github.com/mozership/probe-ios), which the workflow names under `actions` as it names the agent, and calls an HTTP API and a gRPC API through the [http](https://probe.linyo.ws/reference/actions/http) and [grpc](https://probe.linyo.ws/reference/actions/grpc) actions of Probe; it calls them as a step of the run would, which needs Probe v1.37.0 or later.
+Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It drives Chrome through [probe-browser](https://github.com/mozership/probe-browser), an iOS app through [probe-ios](https://github.com/mozership/probe-ios), and an Android app through [probe-android](https://github.com/mozership/probe-android), which the workflow names under `actions` as it names the agent, and calls an HTTP API and a gRPC API through the [http](https://probe.linyo.ws/reference/actions/http) and [grpc](https://probe.linyo.ws/reference/actions/grpc) actions of Probe; it calls them as a step of the run would, which needs Probe v1.37.0 or later.
 
 It has two modes:
 
@@ -109,6 +109,7 @@ The model is called with the API key of its provider, which the action takes fro
 |---|---|---|---|
 | `browser` | Chrome | `url` (required), `allow_hosts`, `storage_state`, `headless`, `window_w`, `window_h`, as in [Parameters](#parameters) | [probe-browser](https://github.com/mozership/probe-browser) |
 | `ios` | An app on an iOS simulator | `app` (required), the bundle identifier; `device`, the simulator by its name or UDID, which has to be given when more than one is booted; `timeout`, see below | [probe-ios](https://github.com/mozership/probe-ios) |
+| `android` | An app on an Android emulator or device | `app` (required), the package name; `device`, by its serial or model, which has to be given when adb lists more than one; `timeout`, as for `ios` | [probe-android](https://github.com/mozership/probe-android) |
 | `http` | An HTTP API | `url` (required), the base URL; `openapi`, `headers`, `cookies` and `timeout`, see below | The built-in [http](https://probe.linyo.ws/reference/actions/http) |
 | `grpc` | A gRPC API | `addr` (required); `protocol`, `tls`, `insecure`, `cert_file`, `key_file`, `ca_file`, `metadata`, `proto` and `timeout`, see below | The built-in [grpc](https://probe.linyo.ws/reference/actions/grpc) |
 
@@ -187,6 +188,30 @@ The judge checks its quotes against the trees and the texts the app showed, and 
 ```
 
 The tester is offered the tools of both, and acts on one at a time; each step says which target it used. What passes from one to the other is what the model reads on one and enters on the other: Chrome on the Mac and Safari on the simulator are two browsers, so a link on the web does not open the app.
+
+### An Android app
+
+The agent drives the app through probe-android as it drives an iOS app through probe-ios, under the guard of the run. Name probe-android under `actions` of the workflow, by any name; it needs what [probe-android needs](https://github.com/mozership/probe-android#requirements): adb, a booted emulator or a device, and the app installed on it, which an earlier step sees to. probe-android builds nothing, so the first call is not slow as that of probe-ios is.
+
+```yaml
+actions:
+  agent: github.com/mozership/probe-agent@<commit SHA>
+  android: github.com/mozership/probe-android@<commit SHA>
+jobs:
+- name: settings
+  steps:
+  - name: A user finds the version of Android
+    uses: agent
+    with:
+      task: Find which version of Android the device runs
+      expect: The screen shows the version of Android
+      targets:
+        android:
+          app: com.android.settings
+    test: res.verdict == "pass"
+```
+
+The tools are those of an iOS app, named `android_tree`, `android_tap`, `android_type`, `android_wait`, `android_text`, `android_launch`, `android_activate`, `android_terminate` and `android_screenshot`, with `android_back`, which presses the back button; `android_launch` takes no launch arguments. The tester names an element by a [selector of probe-android](https://github.com/mozership/probe-android#selectors): `id`, `text`, `desc`, `class` and `index`. Turn the animations of the emulator off, as probe-android asks. A test can drive an iOS app and an Android one together, and a browser beside them.
 
 ### An HTTP API
 
@@ -298,8 +323,8 @@ A recording is of the steps, not of the model, so a test recorded with one model
 | `res.evidence` | List | What the judge quoted: `quote`, and `verified`, whether a page showed it |
 | `res.stopped` | String | How the tester stopped: `done`, `blocked`, `max_steps`, `timeout`, `no_finish`, `refused`, or `stale` for a recording that no longer matched under `cache_mode: strict` |
 | `res.summary` | String | What the tester said it did and saw |
-| `res.steps` | List | Each call to a target: `index`, `tool`, `target` (`browser`, `ios`, `http` or `grpc`), `input`, `result` or `error`, `url`, `screenshot` and the tester's `notes` |
-| `res.targets` | List | The last state of each target: `kind`; `url` and `title` of the browser; `app` and `device` of the app; `method`, `url` and `status` of the last request to an HTTP API; `address`, `method` and `code` of the last call to a gRPC API; and `screenshot` |
+| `res.steps` | List | Each call to a target: `index`, `tool`, `target` (`browser`, `ios`, `android`, `http` or `grpc`), `input`, `result` or `error`, `url`, `screenshot` and the tester's `notes` |
+| `res.targets` | List | The last state of each target: `kind`; `url` and `title` of the browser; `app` and `device` of an app; `method`, `url` and `status` of the last request to an HTTP API; `address`, `method` and `code` of the last call to a gRPC API; and `screenshot` |
 | `res.url`, `res.title` | String | The page the tester left the browser on, empty without a browser |
 | `res.console_errors` | List | The errors the pages wrote to their console, as the browser action reports them |
 | `res.network_errors` | List | The requests that failed or were answered with 400 or more: `method`, `url`, `status`, `error` |
@@ -479,7 +504,7 @@ The model reads `{secret:NAME}` where a secret is. When it types the placeholder
 
 The action keeps to no [guard](https://probe.linyo.ws/guide/concepts/guard): it cannot tell what a page will do, nor what the model will click. Under `--read-only` or `--allow-host`, a step that uses it is refused unless `--allow-action` names it. The tester is kept to `allow_hosts`: a page on another host is not opened, and the browser goes back from one a click led to.
 
-probe-ios keeps to no guard either, and the agent calls it under the guard of the run: under `--read-only` or `--allow-host`, `--allow-action` has to name both. When it names the agent alone, the call of probe-ios is refused, and so is the step.
+probe-ios and probe-android keep to no guard either, and the agent calls them under the guard of the run: under `--read-only` or `--allow-host`, `--allow-action` has to name the agent and the one it drives. When it names the agent alone, the call of probe-ios or probe-android is refused, and so is the step.
 
 The http action keeps to the guard, and the agent calls it under the guard of the run, kept to the host of `targets.http.url`, so the requests of the tester keep to it although the agent is named by `--allow-action`: under `--read-only`, a request other than `GET`, `HEAD` or `OPTIONS` is refused, and the tester is told so; under `--allow-host`, so is one to a host the guard does not allow.
 

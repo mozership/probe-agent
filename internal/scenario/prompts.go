@@ -80,7 +80,7 @@ func (r *run) targetWord() string {
 		return "targets"
 	}
 	switch r.drivers[0].Kind() {
-	case "ios":
+	case "ios", "android":
 		return "app"
 	case "http", "grpc":
 		return "API"
