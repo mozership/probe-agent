@@ -137,6 +137,20 @@ func TestAnswerText_WithoutAStatus(t *testing.T) {
 	}
 }
 
+// .proto files that cannot be listed by are an error of the workflow, and
+// the test does not run.
+func TestRun_GRPCProtoThatCannotBeListed(t *testing.T) {
+	rpc := &fakeGRPC{listFail: errors.New("proto.files: notes.proto:3:1: syntax error")}
+	m := &fakeModel{}
+	_, err := Run(t.Context(), apiConfig(), Targets{GRPC: rpc.target()}, m)
+	if err == nil || !strings.Contains(err.Error(), "targets.grpc.proto: proto.files: notes.proto:3:1: syntax error") {
+		t.Fatalf("err %v", err)
+	}
+	if len(m.chats) != 0 {
+		t.Error("the model was asked")
+	}
+}
+
 // A test that only lists and describes can rest its verdict on what they
 // showed.
 func TestRun_GRPCDiscoveryIsEvidence(t *testing.T) {
@@ -165,6 +179,8 @@ func TestRun_GRPCDiscoveryIsEvidence(t *testing.T) {
 
 func TestRun_GRPCCallsRefused(t *testing.T) {
 	rpc := &fakeGRPC{listFail: errors.New("the server serves no reflection")}
+	target := rpc.target()
+	target.Proto = false
 	m := &fakeModel{scripts: [][]llm.Reply{
 		{
 			toolCall("1", "grpc_call", map[string]any{"service": "notes.v1.Notes"}),
@@ -176,7 +192,7 @@ func TestRun_GRPCCallsRefused(t *testing.T) {
 		},
 		{toolCall("j1", "verdict", map[string]any{"verdict": "fail", "reason": "r", "evidence": []string{}})},
 	}}
-	o, err := Run(t.Context(), apiConfig(), Targets{GRPC: rpc.target()}, m)
+	o, err := Run(t.Context(), apiConfig(), Targets{GRPC: target}, m)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -81,10 +81,16 @@ func newGRPCDriver(l *ledger, api GRPC) *grpcDriver {
 func (d *grpcDriver) Kind() string { return "grpc" }
 
 // Open lists the services of the server, for the tester to start from. A
-// server that cannot be listed is still called: the tester is told why.
+// server that cannot be listed by its reflection is still called: the
+// tester is told why. With .proto files, the listing is read from them, so
+// one that fails is an error of the workflow, such as files that do not
+// compile, and the test does not run.
 func (d *grpcDriver) Open(ctx context.Context) error {
 	res, err := d.api.List(ctx, "")
 	if err != nil {
+		if d.api.Proto {
+			return fmt.Errorf("listing the services of the gRPC API by targets.grpc.proto: %s", d.secrets.mask(err.Error()))
+		}
 		d.listFailed = d.secrets.mask(err.Error())
 		return nil
 	}
@@ -129,7 +135,7 @@ func (d *grpcDriver) Opening() string {
 	case len(d.services) == 0:
 		return "The gRPC API at " + addr + " lists no service."
 	}
-	return "The gRPC API at " + addr + " has the services " + strings.Join(d.services, ", ") + "."
+	return d.secrets.mask("The gRPC API at " + addr + " has the services " + strings.Join(d.services, ", ") + ".")
 }
 
 // grpcInput is the input of any tool of the API; each tool reads the
@@ -237,7 +243,8 @@ func (d *grpcDriver) call(ctx context.Context, service, method string, in grpcIn
 	if err != nil {
 		return "", err
 	}
-	named := service + "/" + method
+	// The call is named as the tester wrote it, with the secrets masked.
+	named := d.secrets.mask(service + "/" + method)
 	d.last, d.lastCall = &resp, named
 	for _, v := range resp.Violations {
 		d.breaches = append(d.breaches, contractBreach{
