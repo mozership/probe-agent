@@ -154,8 +154,8 @@ github.com/modelcontextprotocol/go-sdk v1.3.1 h1:TfqtNKOIWN4Z1oqmPAiWDC2Jq7K9OdJ
 github.com/modelcontextprotocol/go-sdk v1.3.1/go.mod h1:DgVX498dMD8UJlseK1S5i1T4tFz2fkBk4xogC3D15nw=
 github.com/mozership/probe v1.37.0 h1:X4E7aOZSgWMXLQZXjxVlqFNLj7UjsbSa206/aqcrk+w=
 github.com/mozership/probe v1.37.0/go.mod h1:Odwr0rIppYM40G7B5QF/4SDu01NzET+eVVN5U8iY7XA=
-github.com/mozership/probe-browser v0.11.0 h1:mcdAgaesBnE3ZZCedgdHPPBcjfMGNZJxLZCo+v86A8Q=
-github.com/mozership/probe-browser v0.11.0/go.mod h1:pHu+L0Z2UlFwtpouqetzTaoROriz56BOupVQPxSvp8U=
+github.com/mozership/probe-browser v0.11.1 h1:JbIA18L44Vr85qrl84lWdui84Aj5KOljackUSqi9IWQ=
+github.com/mozership/probe-browser v0.11.1/go.mod h1:pHu+L0Z2UlFwtpouqetzTaoROriz56BOupVQPxSvp8U=
 github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/oklog/run v1.1.0 h1:GEenZ1cK0+q0+wsJew9qUg/DyD8k3JzYsZAi5gYi2mA=
