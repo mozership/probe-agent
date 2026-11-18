@@ -55,6 +55,7 @@ const (
 	targetBrowser = "browser"
 	targetIOS     = "ios"
 	targetHTTP    = "http"
+	targetGRPC    = "grpc"
 )
 
 // browserParams are the keys of targets.browser, which a step without
@@ -67,9 +68,12 @@ var iosParams = []string{"app", "device", "timeout"}
 // httpParams are the keys of targets.http.
 var httpParams = []string{"url", "openapi", "headers", "cookies", "timeout"}
 
+// grpcParams are the keys of targets.grpc.
+var grpcParams = []string{"addr", "protocol", "tls", "insecure", "cert_file", "key_file", "ca_file", "metadata", "proto", "timeout"}
+
 // laterTargets are the kinds of target the agent is to drive, but does not
 // yet.
-var laterTargets = []string{"grpc"}
+var laterTargets = []string{"android"}
 
 // Params returns the keys the action takes in with.
 func Params() []string {
@@ -113,6 +117,21 @@ type req struct {
 	IOS *iosReq
 	// HTTP is the HTTP API the test calls, if any.
 	HTTP *httpReq
+	// GRPC is the gRPC API the test calls, if any.
+	GRPC *grpcReq
+}
+
+// grpcReq is targets.grpc.
+type grpcReq struct {
+	Addr string
+	// Conn are the keys of the grpc action that say how to reach the
+	// server, as targets.grpc gives them: protocol, the TLS ones and
+	// timeout.
+	Conn map[string]any
+	// Metadata are sent with each call.
+	Metadata map[string]string
+	// Proto is the proto of the grpc action; nil for none.
+	Proto map[string]any
 }
 
 // iosReq is targets.ios.
@@ -158,6 +177,9 @@ func (r req) kinds() []string {
 	}
 	if r.HTTP != nil {
 		k = append(k, targetHTTP)
+	}
+	if r.GRPC != nil {
+		k = append(k, targetGRPC)
 	}
 	return k
 }
@@ -258,6 +280,10 @@ func parse(with map[string]any) (req, error) {
 		if h, ok := targets[targetHTTP]; ok {
 			r.HTTP = &httpReq{}
 			errs = append(errs, readHTTP(h, r.HTTP)...)
+		}
+		if g, ok := targets[targetGRPC]; ok {
+			r.GRPC = &grpcReq{}
+			errs = append(errs, readGRPC(g, r.GRPC)...)
 		}
 	} else {
 		r.Browser = true
@@ -399,10 +425,10 @@ func parse(with map[string]any) (req, error) {
 func readTargets(v any) (map[string]map[string]any, []error) {
 	m, ok := v.(map[string]any)
 	if !ok {
-		return nil, []error{errors.New("targets must be a map from the kind of each target, browser, ios or http, to what the workflow fixes for it")}
+		return nil, []error{errors.New("targets must be a map from the kind of each target, browser, ios, http or grpc, to what the workflow fixes for it")}
 	}
 	if len(m) == 0 {
-		return nil, []error{errors.New("targets names no target; name browser, ios, http or more than one")}
+		return nil, []error{errors.New("targets names no target; name browser, ios, http, grpc or more than one")}
 	}
 	var errs []error
 	out := map[string]map[string]any{}
@@ -415,11 +441,13 @@ func readTargets(v any) (map[string]map[string]any, []error) {
 			keys = iosParams
 		case targetHTTP:
 			keys = httpParams
+		case targetGRPC:
+			keys = grpcParams
 		default:
 			if slices.Contains(laterTargets, kind) {
-				errs = append(errs, fmt.Errorf("targets.%s is not driven yet; the agent drives browser, ios and http", kind))
+				errs = append(errs, fmt.Errorf("targets.%s is not driven yet; the agent drives browser, ios, http and grpc", kind))
 			} else {
-				errs = append(errs, fmt.Errorf("unknown target %s; the targets are browser, ios and http", kind))
+				errs = append(errs, fmt.Errorf("unknown target %s; the targets are browser, ios, http and grpc", kind))
 			}
 			continue
 		}
@@ -524,6 +552,79 @@ func readHTTP(t map[string]any, h *httpReq) []error {
 		} else {
 			h.Timeout = d
 		}
+	}
+	return errs
+}
+
+// readGRPC reads targets.grpc t into g. What the grpc action reads itself,
+// such as the files of proto, it checks when it is called.
+func readGRPC(t map[string]any, g *grpcReq) []error {
+	var errs []error
+	s, isStr := t["addr"].(string)
+	g.Addr = strings.TrimSpace(s)
+	switch {
+	case t["addr"] != nil && !isStr:
+		errs = append(errs, errors.New("targets.grpc.addr must be a string"))
+	case g.Addr == "":
+		errs = append(errs, errors.New("targets.grpc.addr is required"))
+	}
+	g.Conn = map[string]any{}
+	if v, ok := t["protocol"]; ok {
+		p, _ := v.(string)
+		if p != "grpc" && p != "connect" {
+			errs = append(errs, errors.New("targets.grpc.protocol must be grpc or connect"))
+		}
+		g.Conn["protocol"] = p
+	}
+	for _, k := range []string{"tls", "insecure"} {
+		if v, ok := t[k]; ok {
+			b, err := toBool(v)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("targets.grpc.%s must be true or false", k))
+			}
+			g.Conn[k] = b
+		}
+	}
+	for _, k := range []string{"cert_file", "key_file", "ca_file"} {
+		if v, ok := t[k]; ok {
+			s, ok := v.(string)
+			if !ok || strings.TrimSpace(s) == "" {
+				errs = append(errs, fmt.Errorf("targets.grpc.%s must be the path of a file", k))
+			}
+			g.Conn[k] = s
+		}
+	}
+	if v, ok := t["timeout"]; ok {
+		d, err := actionrpc.ParseTimeout(v)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("targets.grpc.timeout: %w", err))
+		} else {
+			g.Conn["timeout"] = d.String()
+		}
+	}
+	if v, ok := t["metadata"]; ok {
+		m, isMap := v.(map[string]any)
+		if !isMap {
+			errs = append(errs, errors.New("targets.grpc.metadata must be a map of names to values"))
+		}
+		g.Metadata = map[string]string{}
+		for _, name := range slices.Sorted(maps.Keys(m)) {
+			switch val := m[name].(type) {
+			case string:
+				g.Metadata[name] = val
+			case int, int64, float64, bool:
+				g.Metadata[name] = fmt.Sprint(val)
+			default:
+				errs = append(errs, fmt.Errorf("targets.grpc.metadata.%s must be a string", name))
+			}
+		}
+	}
+	if v, ok := t["proto"]; ok {
+		p, isMap := v.(map[string]any)
+		if _, hasFiles := p["files"]; !isMap || !hasFiles {
+			errs = append(errs, errors.New("targets.grpc.proto must be a map with files, and import_paths and strict if need be, as the grpc action takes it"))
+		}
+		g.Proto = p
 	}
 	return errs
 }

@@ -1,8 +1,8 @@
 # probe-agent
 
-A [Probe](https://github.com/mozership/probe) action that tests an application from a task written in natural language. A model, the tester, uses the application through a real Chrome, an app on an iOS simulator, an HTTP API, or more than one of them, to carry out the task; another call of the model, the judge, then decides from what they showed whether the expectation holds. See [Targets](#targets) for an iOS app and an HTTP API.
+A [Probe](https://github.com/mozership/probe) action that tests an application from a task written in natural language. A model, the tester, uses the application through a real Chrome, an app on an iOS simulator, an HTTP API, a gRPC API, or more than one of them, to carry out the task; another call of the model, the judge, then decides from what they showed whether the expectation holds. See [Targets](#targets) for an iOS app, an HTTP API and a gRPC API.
 
-Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It drives Chrome through [probe-browser](https://github.com/mozership/probe-browser), and an iOS app through [probe-ios](https://github.com/mozership/probe-ios), which the workflow names under `actions` as it names the agent, and calls an HTTP API through the [http](https://probe.linyo.ws/reference/actions/http) action of Probe; it calls them as a step of the run would, which needs Probe v1.37.0 or later.
+Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It drives Chrome through [probe-browser](https://github.com/mozership/probe-browser), and an iOS app through [probe-ios](https://github.com/mozership/probe-ios), which the workflow names under `actions` as it names the agent, and calls an HTTP API and a gRPC API through the [http](https://probe.linyo.ws/reference/actions/http) and [grpc](https://probe.linyo.ws/reference/actions/grpc) actions of Probe; it calls them as a step of the run would, which needs Probe v1.37.0 or later.
 
 It has two modes:
 
@@ -77,7 +77,7 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `targets` | Object | No | the browser of `url` | What the test drives: a browser, an iOS app, an HTTP API, or more than one of them; see [Targets](#targets) |
+| `targets` | Object | No | the browser of `url` | What the test drives: a browser, an iOS app, an HTTP API, a gRPC API, or more than one of them; see [Targets](#targets) |
 | `url` | String | Without `targets` | - | The page the browser opens first, `http` or `https`. The short form of `targets.browser.url` |
 | `task` | String | Scenario | - | What the tester does, in natural language |
 | `expect` | String | Scenario | - | What has to hold afterwards, in natural language |
@@ -110,6 +110,7 @@ The model is called with the API key of its provider, which the action takes fro
 | `browser` | Chrome | `url` (required), `allow_hosts`, `storage_state`, `headless`, `window_w`, `window_h`, as in [Parameters](#parameters) | [probe-browser](https://github.com/mozership/probe-browser) |
 | `ios` | An app on an iOS simulator | `app` (required), the bundle identifier; `device`, the simulator by its name or UDID, which has to be given when more than one is booted; `timeout`, see below | [probe-ios](https://github.com/mozership/probe-ios) |
 | `http` | An HTTP API | `url` (required), the base URL; `openapi`, `headers`, `cookies` and `timeout`, see below | The built-in [http](https://probe.linyo.ws/reference/actions/http) |
+| `grpc` | A gRPC API | `addr` (required); `protocol`, `tls`, `insecure`, `cert_file`, `key_file`, `ca_file`, `metadata`, `proto` and `timeout`, see below | The built-in [grpc](https://probe.linyo.ws/reference/actions/grpc) |
 
 Without `targets`, `url`, `allow_hosts`, `storage_state`, `headless`, `window_w` and `window_h` at the top of `with` are the short form of `targets.browser`, as before there were targets; the action warns that they move under it. A step with both `targets` and one of them is refused.
 
@@ -220,6 +221,37 @@ What the OpenAPI document does not allow in a request or a response is told to t
 
 The judge checks its quotes against the responses, and is given the last one, which `report.md` shows; nothing is sent again at the end, as a request can change what the API holds. A `cache` is refused, as for an app.
 
+### A gRPC API
+
+The agent calls the API through the grpc action of Probe, as it calls an HTTP API through the http action. It needs Probe v1.38.0 or later, whose grpc action lists the services and methods of a server by its reflection; a workflow must not give the name `grpc` to another action under `actions`.
+
+```yaml
+  - name: A client renames a user over gRPC
+    uses: agent
+    with:
+      task: Rename the user 42 to Ada, and read the user back
+      expect: The user 42 is named Ada
+      targets:
+        grpc:
+          addr: staging.example.com:443
+          tls: true
+          metadata:
+            authorization: "Bearer {{vars.api_token}}"
+    test: res.verdict == "pass"
+```
+
+`addr`, `protocol`, `tls`, `insecure`, `cert_file`, `key_file`, `ca_file`, `proto` and `timeout` are those of the [grpc action](https://probe.linyo.ws/reference/actions/grpc#parameters), given to each call; `metadata` is sent with each call, and the tester cannot change it. `proto` is a map of `files`, with `import_paths` and `strict` if need be.
+
+| Tool | What it does |
+|---|---|
+| `grpc_list` | Lists the services of the server |
+| `grpc_describe` | Tells the methods of a service, how they stream and whether they write, and the messages and enums they use, as a `.proto` file writes them |
+| `grpc_call` | Calls a method with its request as JSON, and returns the status, the metadata and the response as JSON; every response of a stream, and a list of requests for a method that streams them |
+
+The services are listed as the test starts, and the tester is told them. They are read from the server's reflection, or from the `.proto` files of `proto` when it is given; a server with neither can still be called, and the tester is told why they could not be listed. A status other than `OK` is the server's answer, which the tester reads as such. `{secret:NAME}` in the request or the metadata is replaced with the value of the secret as the call is made, and the answer is read with the values masked.
+
+With `proto`, what the `.proto` files do not allow in a call or its response, or in the server's definition of the method, is told to the tester, the judge and the reviewer, and in a persona test a response that breaks them is a finding without the reviewer, as for an [HTTP API](#an-http-api). The judge is given the last answer, which `report.md` shows; nothing is called again at the end. A `cache` is refused.
+
 ## Models
 
 The agent is built for Claude, which is trained to use a browser through the browser toolset of the Claude API. The other providers are reached through their APIs compatible with OpenAI's Chat Completions, or through OpenAI's Responses API for `openai`, by which its models both reason and call tools; their models are offered the same members of the toolset as tools of the agent's own, so that they run the same tests; how well they carry out a task depends on the model.
@@ -266,8 +298,8 @@ A recording is of the steps, not of the model, so a test recorded with one model
 | `res.evidence` | List | What the judge quoted: `quote`, and `verified`, whether a page showed it |
 | `res.stopped` | String | How the tester stopped: `done`, `blocked`, `max_steps`, `timeout`, `no_finish`, `refused`, or `stale` for a recording that no longer matched under `cache_mode: strict` |
 | `res.summary` | String | What the tester said it did and saw |
-| `res.steps` | List | Each call to a target: `index`, `tool`, `target` (`browser`, `ios` or `http`), `input`, `result` or `error`, `url`, `screenshot` and the tester's `notes` |
-| `res.targets` | List | The last state of each target: `kind`; `url` and `title` of the browser; `app` and `device` of the app; `method`, `url` and `status` of the last request to an API; and `screenshot` |
+| `res.steps` | List | Each call to a target: `index`, `tool`, `target` (`browser`, `ios`, `http` or `grpc`), `input`, `result` or `error`, `url`, `screenshot` and the tester's `notes` |
+| `res.targets` | List | The last state of each target: `kind`; `url` and `title` of the browser; `app` and `device` of the app; `method`, `url` and `status` of the last request to an HTTP API; `address`, `method` and `code` of the last call to a gRPC API; and `screenshot` |
 | `res.url`, `res.title` | String | The page the tester left the browser on, empty without a browser |
 | `res.console_errors` | List | The errors the pages wrote to their console, as the browser action reports them |
 | `res.network_errors` | List | The requests that failed or were answered with 400 or more: `method`, `url`, `status`, `error` |
@@ -450,6 +482,8 @@ The action keeps to no [guard](https://probe.linyo.ws/guide/concepts/guard): it 
 probe-ios keeps to no guard either, and the agent calls it under the guard of the run: under `--read-only` or `--allow-host`, `--allow-action` has to name both. When it names the agent alone, the call of probe-ios is refused, and so is the step.
 
 The http action keeps to the guard, and the agent calls it under the guard of the run, kept to the host of `targets.http.url`, so the requests of the tester keep to it although the agent is named by `--allow-action`: under `--read-only`, a request other than `GET`, `HEAD` or `OPTIONS` is refused, and the tester is told so; under `--allow-host`, so is one to a host the guard does not allow.
+
+The grpc action keeps to the guard too, and the agent calls it under the guard of the run: under `--read-only`, a method is called only when its definition declares it free of side effects, which `grpc_describe` tells the tester, and listing the services is allowed; under `--allow-host`, `addr` has to be a host the guard allows.
 
 ## Development
 

@@ -67,7 +67,7 @@ func (r *run) seenIn() string {
 	switch {
 	case len(r.drivers) > 1:
 		return "on the targets"
-	case r.drivers[0].Kind() == "http":
+	case r.drivers[0].Kind() == "http", r.drivers[0].Kind() == "grpc":
 		return "in the responses of the API"
 	}
 	return "in the " + r.targetWord()
@@ -82,7 +82,7 @@ func (r *run) targetWord() string {
 	switch r.drivers[0].Kind() {
 	case "ios":
 		return "app"
-	case "http":
+	case "http", "grpc":
 		return "API"
 	}
 	return "browser"

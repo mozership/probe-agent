@@ -228,6 +228,16 @@ func markdown(r req, o scenario.Outcome, dir string) string {
 			if t.Screenshot != "" {
 				w("![final screen](%s)\n\n", rel(t.Screenshot))
 			}
+		case "grpc":
+			w("## Last answer of the gRPC API\n\n")
+			if t.Method == "" {
+				w("No call was made to %s.\n\n", t.Address)
+			} else {
+				w("%s at %s → %s\n\n", t.Method, t.Address, t.Code)
+				if t.Response != "" {
+					w("```\n%s\n```\n\n", strings.ReplaceAll(t.Response, "```", "` ` `"))
+				}
+			}
 		case "http":
 			w("## Last response of the API\n\n")
 			if t.URL == "" {
