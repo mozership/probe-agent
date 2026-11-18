@@ -85,9 +85,29 @@ func TestParse_RefusesTargets(t *testing.T) {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "protocol": "grpc-web"}}},
 			want: "targets.grpc.protocol must be grpc or connect",
 		},
-		"a proto without files": {
+		"a proto not a map": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "proto": "users.proto"}}},
-			want: "targets.grpc.proto must be a map with files",
+			want: "targets.grpc.proto must be a map of files",
+		},
+		"a proto without files": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "proto": map[string]any{"strict": true}}}},
+			want: "targets.grpc.proto.files is required",
+		},
+		"files of a proto not a list": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "proto": map[string]any{"files": "users.proto"}}}},
+			want: "targets.grpc.proto.files must be a list of paths",
+		},
+		"no files of a proto": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "proto": map[string]any{"files": []any{}}}}},
+			want: "targets.grpc.proto.files names no file",
+		},
+		"import_paths of a proto not paths": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "proto": map[string]any{"files": []any{"a.proto"}, "import_paths": []any{1.0}}}}},
+			want: "targets.grpc.proto.import_paths must be a list of paths",
+		},
+		"an unknown key of a proto": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "proto": map[string]any{"files": []any{"a.proto"}, "paths": []any{"."}}}}},
+			want: "unknown parameter targets.grpc.proto.paths",
 		},
 		"metadata of the gRPC API not a map": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "metadata": "x"}}},

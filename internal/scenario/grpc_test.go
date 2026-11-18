@@ -126,6 +126,17 @@ func TestRun_CallsAGRPCAPI(t *testing.T) {
 	}
 }
 
+func TestAnswerText_WithoutAStatus(t *testing.T) {
+	refused := answerText("notes.v1.Notes/CreateNote", GRPCResponse{Violations: []Violation{{In: "request", Field: "$.text", Message: "text must be a string"}}})
+	if !strings.Contains(refused, "-> no status: nothing was sent, as the .proto files do not allow the request") {
+		t.Errorf("a request refused:\n%s", refused)
+	}
+	left := answerText("notes.v1.Notes/WatchNotes", GRPCResponse{Messages: []string{`{}`}})
+	if !strings.Contains(left, "-> no status: the call left the stream") {
+		t.Errorf("a stream left:\n%s", left)
+	}
+}
+
 // A test that only lists and describes can rest its verdict on what they
 // showed.
 func TestRun_GRPCDiscoveryIsEvidence(t *testing.T) {

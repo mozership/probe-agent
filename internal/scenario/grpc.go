@@ -253,8 +253,14 @@ func (d *grpcDriver) call(ctx context.Context, service, method string, in grpcIn
 func answerText(named string, r GRPCResponse) string {
 	var b strings.Builder
 	code := r.Code
-	if code == "" {
+	switch {
+	case code != "":
+	case r.Messages != nil:
 		code = "no status: the call left the stream before the server ended it"
+	case slices.ContainsFunc(r.Violations, func(v Violation) bool { return v.In == "request" }):
+		code = "no status: nothing was sent, as the .proto files do not allow the request"
+	default:
+		code = "no status"
 	}
 	fmt.Fprintf(&b, "%s -> %s", named, code)
 	if r.Message != "" {

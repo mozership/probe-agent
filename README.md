@@ -240,7 +240,7 @@ The agent calls the API through the grpc action of Probe, as it calls an HTTP AP
     test: res.verdict == "pass"
 ```
 
-`addr`, `protocol`, `tls`, `insecure`, `cert_file`, `key_file`, `ca_file`, `proto` and `timeout` are those of the [grpc action](https://probe.linyo.ws/reference/actions/grpc#parameters), given to each call; `metadata` is sent with each call, and the tester cannot change it. `proto` is a map of `files`, with `import_paths` and `strict` if need be.
+`addr`, `protocol`, `tls`, `insecure`, `cert_file`, `key_file`, `ca_file`, `proto` and `timeout` are those of the [grpc action](https://probe.linyo.ws/reference/actions/grpc#parameters), given to each call; `metadata` is sent with each call, and the tester cannot change it. `proto` is a map of `files`, with `import_paths`, `strict` and `request` if need be, checked before the model is called.
 
 | Tool | What it does |
 |---|---|

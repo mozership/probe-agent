@@ -620,12 +620,54 @@ func readGRPC(t map[string]any, g *grpcReq) []error {
 		}
 	}
 	if v, ok := t["proto"]; ok {
-		p, isMap := v.(map[string]any)
-		if _, hasFiles := p["files"]; !isMap || !hasFiles {
-			errs = append(errs, errors.New("targets.grpc.proto must be a map with files, and import_paths and strict if need be, as the grpc action takes it"))
-		}
-		g.Proto = p
+		errs = append(errs, readProto(v, g)...)
 	}
+	return errs
+}
+
+// readProto reads targets.grpc.proto into g: files, the .proto files, and
+// import_paths, each a list of paths, and strict and request, as the grpc
+// action takes them. Whether the files compile, the grpc action tells.
+func readProto(v any, g *grpcReq) []error {
+	p, isMap := v.(map[string]any)
+	if !isMap {
+		return []error{errors.New("targets.grpc.proto must be a map of files, and import_paths, strict and request if need be, as the grpc action takes it")}
+	}
+	var errs []error
+	paths := func(k string) {
+		l, ok := p[k].([]any)
+		if !ok {
+			errs = append(errs, fmt.Errorf("targets.grpc.proto.%s must be a list of paths", k))
+			return
+		}
+		for _, e := range l {
+			if s, ok := e.(string); !ok || strings.TrimSpace(s) == "" {
+				errs = append(errs, fmt.Errorf("targets.grpc.proto.%s must be a list of paths", k))
+				return
+			}
+		}
+		if k == "files" && len(l) == 0 {
+			errs = append(errs, errors.New("targets.grpc.proto.files names no file"))
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(p)) {
+		switch k {
+		case "files", "import_paths":
+			paths(k)
+		case "strict", "request":
+			b, err := toBool(p[k])
+			if err != nil {
+				errs = append(errs, fmt.Errorf("targets.grpc.proto.%s must be true or false", k))
+			}
+			p[k] = b
+		default:
+			errs = append(errs, fmt.Errorf("unknown parameter targets.grpc.proto.%s; the parameters are files, import_paths, strict and request", k))
+		}
+	}
+	if _, ok := p["files"]; !ok {
+		errs = append(errs, errors.New("targets.grpc.proto.files is required"))
+	}
+	g.Proto = p
 	return errs
 }
 
