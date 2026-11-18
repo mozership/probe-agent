@@ -491,6 +491,32 @@ func TestBrowser_StartsWithAStorageState(t *testing.T) {
 	}
 }
 
+// TestBrowser_GivesTheStartTimeToStart gives the call that starts the
+// browser the time Chrome may take to start on a busy machine, until one
+// has started it, and the calls after it the time of an action.
+func TestBrowser_GivesTheStartTimeToStart(t *testing.T) {
+	var timeouts []any
+	fail := true
+	b, err := NewBrowser(func(_ context.Context, with map[string]any) (map[string]any, error) {
+		timeouts = append(timeouts, with["timeout"])
+		if fail {
+			fail = false
+			return nil, errors.New("address file timeout reached")
+		}
+		return map[string]any{"results": map[string]any{"url": "http://a/"}}, nil
+	}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	for range 3 {
+		_, _, _ = b.run(t.Context(), 0, action{"name": "url"})
+	}
+	if fmt.Sprint(timeouts) != "[2m0s 2m0s 30s]" {
+		t.Errorf("timeouts %v, want the start time until a call starts the browser", timeouts)
+	}
+}
+
 func TestSlowest(t *testing.T) {
 	var list []Request
 	for _, d := range []int64{5, 30, 10, 30, 1, 20} {
