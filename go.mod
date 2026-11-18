@@ -4,12 +4,10 @@ go 1.27.1
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.84.0
-	github.com/chromedp/cdproto v0.157.4
-	github.com/chromedp/chromedp v0.19.1
 	github.com/fatih/color v1.19.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/mozership/probe v1.37.0
-	github.com/mozership/probe-browser v0.6.1
+	github.com/mozership/probe-browser v0.10.1
 )
 
 require (
@@ -17,13 +15,20 @@ require (
 	github.com/briandowns/spinner v1.23.2 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/chromedp/cdproto v0.157.8 // indirect
+	github.com/chromedp/chromedp v0.20.0 // indirect
+	github.com/chromedp/chromedp/remote v0.2.0 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.5 // indirect
+	github.com/gobwas/httphead v0.1.0 // indirect
+	github.com/gobwas/pool v0.2.1 // indirect
+	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/hashicorp/go-plugin v1.8.0 // indirect

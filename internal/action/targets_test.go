@@ -114,21 +114,23 @@ func TestParse_RefusesTargets(t *testing.T) {
 	}
 }
 
-func TestIOSAction(t *testing.T) {
+func TestActionNamed(t *testing.T) {
 	sha := strings.Repeat("a", 40)
 	tests := []struct {
 		name    string
+		repo    string
 		actions map[string]string
 		want    string
 		err     string
 	}{
-		{name: "by any name", actions: map[string]string{"iphone": "github.com/mozership/probe-ios@" + sha, "agent": "github.com/mozership/probe-agent@" + sha}, want: "iphone"},
-		{name: "none", actions: map[string]string{"agent": "github.com/mozership/probe-agent@" + sha}, err: "name it under actions"},
-		{name: "a local action is not it", actions: map[string]string{"ios": "/src/probe-ios"}, err: "name it under actions"},
-		{name: "two", actions: map[string]string{"a": "github.com/mozership/probe-ios@" + sha, "b": "github.com/mozership/probe-ios@" + strings.Repeat("b", 40)}, err: "cannot tell which of a and b"},
+		{name: "by any name", repo: probeIOS, actions: map[string]string{"iphone": "github.com/mozership/probe-ios@" + sha, "agent": "github.com/mozership/probe-agent@" + sha}, want: "iphone"},
+		{name: "the browser", repo: probeBrowser, actions: map[string]string{"web": "github.com/mozership/probe-browser@" + sha, "ios": "github.com/mozership/probe-ios@" + sha}, want: "web"},
+		{name: "none", repo: probeBrowser, actions: map[string]string{"agent": "github.com/mozership/probe-agent@" + sha}, err: "through probe-browser: name it under actions of the workflow, as browser: github.com/mozership/probe-browser@<commit SHA>"},
+		{name: "a local action is not it", repo: probeIOS, actions: map[string]string{"ios": "/src/probe-ios"}, err: "name it under actions"},
+		{name: "two", repo: probeIOS, actions: map[string]string{"a": "github.com/mozership/probe-ios@" + sha, "b": "github.com/mozership/probe-ios@" + strings.Repeat("b", 40)}, err: "but a and b under actions each name github.com/mozership/probe-ios"},
 	}
 	for _, tt := range tests {
-		got, err := iosAction(tt.actions)
+		got, err := actionNamed(tt.actions, tt.repo, "it drives its target", "browser")
 		switch {
 		case tt.err != "" && (err == nil || !strings.Contains(err.Error(), tt.err)):
 			t.Errorf("%s: err %v, want %q", tt.name, err, tt.err)
@@ -207,5 +209,30 @@ func TestIOSWith(t *testing.T) {
 	got = iosWith(iosReq{App: "com.example.app", Device: "iPhone 17", Timeout: 5 * time.Second}, actions)
 	if got["device"] != "iPhone 17" || got["timeout"] != "5s" {
 		t.Errorf("with %v, want the device and the timeout", got)
+	}
+}
+
+func TestSecretsHidden(t *testing.T) {
+	var b strings.Builder
+	w := secretsHidden(&b, map[string]string{"EMAIL": "dave@example.test", "OTP": "123456"})
+	if _, err := w.Write([]byte(`{"actions":[{"value":"dave@example.test"},{"value":"say \"dave@example.test\""},{"value":"123456"}]}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	got := b.String()
+	if strings.Contains(got, "dave@example.test") || strings.Contains(got, "123456") {
+		t.Errorf("a secret is in %s", got)
+	}
+	if !strings.Contains(got, "<secret:EMAIL>") {
+		t.Errorf("the secret is not named in %s", got)
+	}
+
+	// A short one, one in another case, and one JSON quotes.
+	b.Reset()
+	w = secretsHidden(&b, map[string]string{"PIN": "739", "EMAIL": "Dave+X@example.test", "PW": `p"w\x`})
+	if _, err := w.Write([]byte(`{"value":"pin 739 for dave+x@example.test, pw p\"w\\x"}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.String(); got != `{"value":"pin <secret:PIN> for <secret:EMAIL>, pw <secret:PW>"}`+"\n" {
+		t.Errorf("got %s", got)
 	}
 }

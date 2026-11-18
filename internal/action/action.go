@@ -9,10 +9,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -73,19 +77,31 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	if r.ShortForm {
 		a.log.Warn("url, allow_hosts, storage_state, headless, window_w and window_h move under targets.browser; give them there, as the short form at the top of with is to go")
 	}
+	// The targets are driven through actions, probe-ios and probe-browser,
+	// which one caller calls, so that each keeps its state from one call to
+	// the next, and is cleaned up once the run is over.
+	// The records of the actions called hide the secrets of the agent,
+	// which the tester types into them, under whatever names they have:
+	// the caller hides only the credentials it recognizes.
+	caller := probe.NewActionCaller(call, "", probe.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
 	var ios *scenario.IOS
 	if r.IOS != nil {
-		if ios, err = iosTarget(call, *r.IOS); err != nil {
+		if ios, err = iosTarget(caller, call.Actions, *r.IOS); err != nil {
 			return nil, err
 		}
 	}
-	// The storage state is read before the browser starts, so that a
-	// missing file, as when the step that writes it failed, fails the step
-	// at once.
-	var state *storagestate.State
-	if r.StorageState != "" {
-		if state, err = storagestate.Read(r.StorageState); err != nil {
-			return nil, fmt.Errorf("storage_state: %w", err)
+	var browser string
+	if r.Browser {
+		if browser, err = actionNamed(call.Actions, probeBrowser, "targets.browser drives the browser", "browser"); err != nil {
+			return nil, err
+		}
+		// The storage state is read before the browser starts, so that a
+		// missing file, as when the step that writes it failed, fails the
+		// step at once.
+		if r.StorageState != "" {
+			if _, err = storagestate.Read(r.StorageState); err != nil {
+				return nil, fmt.Errorf("storage_state: %w", err)
+			}
 		}
 	}
 	var rec *scenario.Recording
@@ -104,12 +120,14 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	}
 	targets := scenario.Targets{IOS: ios}
 	if r.Browser {
-		chrome, err := page.Start(a.ctx, page.Options{Headless: r.Headless, Width: r.Width, Height: r.Height, StorageState: state})
+		tab, err := page.NewBrowser(func(ctx context.Context, with map[string]any) (map[string]any, error) {
+			return callRes(ctx, caller, browser, with)
+		}, page.Options{Headless: r.Headless, Width: r.Width, Height: r.Height, StorageState: r.StorageState})
 		if err != nil {
 			return nil, err
 		}
-		defer chrome.Close()
-		targets.Browser = chrome
+		defer tab.Close()
+		targets.Browser = tab
 	}
 
 	cfg := scenario.Config{
@@ -150,32 +168,42 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	return result(r, o, f, time.Since(start))
 }
 
-// probeIOS is the repository of probe-ios, by which the agent finds the
-// name the workflow gives it.
-const probeIOS = "github.com/mozership/probe-ios"
+// probeIOS and probeBrowser are the repositories of probe-ios and
+// probe-browser, by which the agent finds the names the workflow gives
+// them.
+const (
+	probeIOS     = "github.com/mozership/probe-ios"
+	probeBrowser = "github.com/mozership/probe-browser"
+)
+
+// callRes calls the action name with with, and returns its res. A failed
+// call returns its res too, when it has one, as of the console errors of
+// the page.
+func callRes(ctx context.Context, caller *probe.ActionCaller, name string, with map[string]any) (map[string]any, error) {
+	cr, err := caller.Call(ctx, name, with)
+	if err != nil {
+		return nil, err
+	}
+	res, ok := cr.Result["res"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s returned no res", name)
+	}
+	return res, nil
+}
 
 // iosTarget returns the app of t, driven through probe-ios: the action the
 // workflow names under actions whose reference is github.com/mozership/probe-ios,
 // whatever its name.
-func iosTarget(call actionrpc.Call, t iosReq) (*scenario.IOS, error) {
-	name, err := iosAction(call.Actions)
+func iosTarget(caller *probe.ActionCaller, actions map[string]string, t iosReq) (*scenario.IOS, error) {
+	name, err := actionNamed(actions, probeIOS, "targets.ios drives the app", "ios")
 	if err != nil {
 		return nil, err
 	}
-	caller := probe.NewActionCaller(call, "")
 	return &scenario.IOS{
 		App:    t.App,
 		Device: t.Device,
 		Call: func(ctx context.Context, actions []map[string]any) (map[string]any, error) {
-			cr, err := caller.Call(ctx, name, iosWith(t, actions))
-			if err != nil {
-				return nil, err
-			}
-			res, ok := cr.Result["res"].(map[string]any)
-			if !ok {
-				return nil, fmt.Errorf("%s returned no res", name)
-			}
-			return res, nil
+			return callRes(ctx, caller, name, iosWith(t, actions))
 		},
 	}, nil
 }
@@ -197,23 +225,25 @@ func iosWith(t iosReq, actions []map[string]any) map[string]any {
 	return with
 }
 
-// iosAction returns the name actions give probe-ios.
-func iosAction(actions map[string]string) (string, error) {
+// actionNamed returns the name actions give the action of repo, which
+// what says it drives its target through, as the example name does.
+func actionNamed(actions map[string]string, repo, what, example string) (string, error) {
 	var names []string
 	for name, uses := range actions {
 		ref, err := actionref.Parse(uses)
-		if err == nil && ref.Local == "" && ref.Owner+"/"+ref.Repo == "mozership/probe-ios" && ref.Dir == "" {
+		if err == nil && ref.Local == "" && "github.com/"+ref.Owner+"/"+ref.Repo == repo && ref.Dir == "" {
 			names = append(names, name)
 		}
 	}
 	slices.Sort(names)
+	short := repo[strings.LastIndex(repo, "/")+1:]
 	switch len(names) {
 	case 0:
-		return "", fmt.Errorf("targets.ios drives the app through probe-ios: name it under actions of the workflow, as ios: %s@<commit SHA>", probeIOS)
+		return "", fmt.Errorf("%s through %s: name it under actions of the workflow, as %s: %s@<commit SHA>", what, short, example, repo)
 	case 1:
 		return names[0], nil
 	}
-	return "", fmt.Errorf("targets.ios cannot tell which of %s under actions to drive the app through: each names %s", strings.Join(names, " and "), probeIOS)
+	return "", fmt.Errorf("%s through one action, but %s under actions each name %s", what, strings.Join(names, " and "), repo)
 }
 
 // newModel returns the model of the provider r names. The API key of a
@@ -383,4 +413,55 @@ func shortReport(r req, o scenario.Outcome, f files) string {
 
 func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// secretsHidden returns a writer to w that hides the values of secrets,
+// each as <secret:NAME>, in each record written to it: in any case, as an
+// application can give an email address in lower case, and as JSON or Go
+// quote them, short ones too, as a PIN, though a short one can hide what
+// is no secret.
+func secretsHidden(w io.Writer, secrets map[string]string) io.Writer {
+	names := slices.Sorted(maps.Keys(secrets))
+	// The longest first, so that one inside another is not hidden first.
+	slices.SortStableFunc(names, func(a, b string) int { return len(secrets[b]) - len(secrets[a]) })
+	h := &hidingWriter{w: w}
+	for _, name := range names {
+		v := secrets[name]
+		if v == "" {
+			continue
+		}
+		forms := []string{regexp.QuoteMeta(v)}
+		for _, q := range []string{jsonQuoted(v), jsonQuoted(jsonQuoted(v)), strconv.Quote(v)} {
+			if inner := q[1 : len(q)-1]; inner != v {
+				forms = append(forms, regexp.QuoteMeta(inner))
+			}
+		}
+		h.res = append(h.res, regexp.MustCompile("(?i)"+strings.Join(forms, "|")))
+		h.labels = append(h.labels, "<secret:"+name+">")
+	}
+	return h
+}
+
+func jsonQuoted(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// hidingWriter writes to w what is written to it, with what res match
+// replaced by their labels.
+type hidingWriter struct {
+	w      io.Writer
+	res    []*regexp.Regexp
+	labels []string
+}
+
+func (h *hidingWriter) Write(p []byte) (int, error) {
+	s := string(p)
+	for i, re := range h.res {
+		s = re.ReplaceAllLiteralString(s, h.labels[i])
+	}
+	if _, err := io.WriteString(h.w, s); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
