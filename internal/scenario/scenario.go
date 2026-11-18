@@ -162,8 +162,8 @@ type Evidence struct {
 type Step struct {
 	Index int    `json:"index"`
 	Tool  string `json:"tool"`
-	// Target is the kind of the target the step used, browser, ios or
-	// http.
+	// Target is the kind of the target the step used, browser, ios, http
+	// or grpc.
 	Target string `json:"target"`
 	// Notes are what the tester wrote before the call.
 	Notes      []string       `json:"notes,omitempty"`
@@ -218,6 +218,8 @@ type Targets struct {
 	IOS *IOS
 	// HTTP is an HTTP API.
 	HTTP *HTTP
+	// GRPC is a gRPC API.
+	GRPC *GRPC
 }
 
 // Run runs the test of cfg on the targets t with m. It returns an error
@@ -240,6 +242,9 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 			return Outcome{}, err
 		}
 		r.drivers = append(r.drivers, d)
+	}
+	if t.GRPC != nil {
+		r.drivers = append(r.drivers, newGRPCDriver(r.ledger, *t.GRPC))
 	}
 	if len(r.drivers) == 0 {
 		return Outcome{}, errors.New("the test has no target")
@@ -527,7 +532,7 @@ type section struct {
 
 // TargetState is the last state of a target of a test.
 type TargetState struct {
-	// Kind is browser, ios or http.
+	// Kind is browser, ios, http or grpc.
 	Kind string `json:"kind"`
 	// URL and Title are of the page the browser was left on. URL is of the
 	// last request to an HTTP API, and Method and Status of it and its
@@ -536,8 +541,13 @@ type TargetState struct {
 	Title  string `json:"title,omitempty"`
 	Method string `json:"method,omitempty"`
 	Status int    `json:"status,omitempty"`
-	// Response is the last response of an HTTP API, masked and cut, for the
-	// report; it is not in the result, which the report is beside.
+	// Address is of a gRPC API, Method its last method called, as
+	// users.v1.UserService/GetUser, and Code the status it answered.
+	Address string `json:"address,omitempty"`
+	Code    string `json:"code,omitempty"`
+	// Response is the last response of an HTTP or a gRPC API, masked and
+	// cut, for the report; it is not in the result, which the report is
+	// beside.
 	Response string `json:"-"`
 	// App and Device are of the app the tester drove, and the simulator
 	// it ran on.

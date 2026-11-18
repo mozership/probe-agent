@@ -76,7 +76,47 @@ func TestParse_RefusesTargets(t *testing.T) {
 		},
 		"not a map":      {with: map[string]any{"task": "t", "expect": "e", "targets": "ios"}, want: "targets must be a map"},
 		"no target":      {with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{}}, want: "names no target"},
-		"a later target": {with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443"}}}, want: "targets.grpc is not driven yet"},
+		"a later target": {with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"android": map[string]any{"app": "a"}}}, want: "targets.android is not driven yet"},
+		"no addr of the gRPC API": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"tls": true}}},
+			want: "targets.grpc.addr is required",
+		},
+		"a bad protocol of the gRPC API": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "protocol": "grpc-web"}}},
+			want: "targets.grpc.protocol must be grpc or connect",
+		},
+		"a proto not a map": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "proto": "users.proto"}}},
+			want: "targets.grpc.proto must be a map of files",
+		},
+		"a proto without files": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "proto": map[string]any{"strict": true}}}},
+			want: "targets.grpc.proto.files is required",
+		},
+		"files of a proto not a list": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "proto": map[string]any{"files": "users.proto"}}}},
+			want: "targets.grpc.proto.files must be a list of paths",
+		},
+		"no files of a proto": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "proto": map[string]any{"files": []any{}}}}},
+			want: "targets.grpc.proto.files names no file",
+		},
+		"import_paths of a proto not paths": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "proto": map[string]any{"files": []any{"a.proto"}, "import_paths": []any{1.0}}}}},
+			want: "targets.grpc.proto.import_paths must be a list of paths",
+		},
+		"an unknown key of a proto": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "proto": map[string]any{"files": []any{"a.proto"}, "paths": []any{"."}}}}},
+			want: "unknown parameter targets.grpc.proto.paths",
+		},
+		"metadata of the gRPC API not a map": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "metadata": "x"}}},
+			want: "targets.grpc.metadata must be a map",
+		},
+		"an unknown key of the gRPC API": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "service": "S"}}},
+			want: "unknown parameter targets.grpc.service",
+		},
 		"no url of the API": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"headers": map[string]any{"X": "y"}}}},
 			want: "targets.http.url is required",
@@ -118,8 +158,8 @@ func TestParse_RefusesTargets(t *testing.T) {
 			want: "cache is for a test of a browser alone",
 		},
 		"an unknown target": {
-			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"android": map[string]any{}}},
-			want: "unknown target android",
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"windows": map[string]any{}}},
+			want: "unknown target windows",
 		},
 		"an unknown key of a target": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"ios": map[string]any{"app": "a", "bundle": "b"}}},
@@ -196,6 +236,114 @@ func TestParse_TargetsHTTP(t *testing.T) {
 	}
 	if !reflect.DeepEqual(r.HTTP.OpenAPI, map[string]any{"spec": "o.yml", "strict": true}) {
 		t.Errorf("openapi %v", r.HTTP.OpenAPI)
+	}
+}
+
+func TestParse_TargetsGRPC(t *testing.T) {
+	r, err := parse(map[string]any{
+		"task": "t", "expect": "e",
+		"targets": map[string]any{
+			"grpc": map[string]any{
+				"addr": "api.test:443", "tls": "true", "ca_file": "ca.pem", "timeout": 10.0,
+				"metadata": map[string]any{"authorization": "Bearer t"},
+				"proto":    map[string]any{"files": []any{"users.proto"}, "import_paths": []any{"."}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := r.GRPC
+	if g == nil || g.Addr != "api.test:443" || !reflect.DeepEqual(g.Conn, map[string]any{"tls": true, "ca_file": "ca.pem", "timeout": "10s"}) {
+		t.Fatalf("grpc %+v", g)
+	}
+	if g.Metadata["authorization"] != "Bearer t" || g.Proto == nil {
+		t.Errorf("grpc %+v", g)
+	}
+	if got := r.kinds(); !slices.Equal(got, []string{"grpc"}) {
+		t.Errorf("kinds %v", got)
+	}
+}
+
+func TestGRPCWith(t *testing.T) {
+	g := grpcReq{
+		Addr:     "api.test:443",
+		Conn:     map[string]any{"tls": true},
+		Metadata: map[string]string{"authorization": "Bearer t"},
+		Proto:    map[string]any{"files": []any{"users.proto"}},
+	}
+	got := grpcWith(g, &scenario.GRPCRequest{Service: "users.v1.UserService", Method: "GetUser", Body: `{"id":"1"}`, Metadata: map[string]string{"x-trace": "1", "authorization": "mine"}})
+	want := map[string]any{
+		"addr": "api.test:443", "tls": true, "service": "users.v1.UserService", "method": "GetUser", "body": `{"id":"1"}`,
+		"metadata": map[string]any{"x-trace": "1", "authorization": "Bearer t"},
+		"proto":    map[string]any{"files": []any{"users.proto"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("with %v, want %v", got, want)
+	}
+	if _, ok := g.Conn["service"]; ok {
+		t.Error("the connection of the target was changed")
+	}
+	got = grpcWith(grpcReq{Addr: "a.test:50051"}, nil)
+	if !reflect.DeepEqual(got, map[string]any{"addr": "a.test:50051"}) {
+		t.Errorf("with of a listing %v", got)
+	}
+}
+
+func TestGRPCResponse(t *testing.T) {
+	got, err := grpcResponse(&probe.CallResult{
+		Result: map[string]any{"res": map[string]any{
+			"status_code": "OK", "status_message": "", "metadata": map[string]any{"x-id": "7"},
+			"body": `{"user":{"id":"1"}}`, "messages": []any{map[string]any{"id": "1"}, map[string]any{"id": "2"}},
+		}},
+		Contract: &actionrpc.ContractCheck{
+			Matched:    &actionrpc.ContractMatch{Operation: "users.v1.UserService/GetUser"},
+			Violations: []actionrpc.Violation{{In: "response", Field: "$.user.id", Message: "bad"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := scenario.GRPCResponse{
+		Code: "OK", Metadata: map[string]string{"x-id": "7"}, Body: `{"user":{"id":"1"}}`,
+		Messages: []string{`{"id":"1"}`, `{"id":"2"}`}, Operation: "users.v1.UserService/GetUser",
+		Violations: []scenario.Violation{{In: "response", Field: "$.user.id", Message: "bad"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("response %+v, want %+v", got, want)
+	}
+}
+
+func TestGRPCTarget(t *testing.T) {
+	caller := probe.NewActionCaller(actionrpc.Call{}, "")
+	t.Setenv(probe.ExecutableEnv, "")
+	if _, err := grpcTarget(caller, nil, grpcReq{Addr: "a.test:443"}); err == nil || !strings.Contains(err.Error(), "needs Probe v1.38.0 or later") {
+		t.Errorf("without %s: err %v", probe.ExecutableEnv, err)
+	}
+	t.Setenv(probe.ExecutableEnv, "/usr/local/bin/probe")
+	if _, err := grpcTarget(caller, map[string]string{"grpc": "./mine"}, grpcReq{Addr: "a.test:443"}); err == nil || !strings.Contains(err.Error(), "give the name grpc to ./mine") {
+		t.Errorf("an action named grpc: err %v", err)
+	}
+	rpc, err := grpcTarget(caller, nil, grpcReq{Addr: "a.test:443", Metadata: map[string]string{"b": "1", "a": "2"}, Proto: map[string]any{"files": []any{"x.proto"}}})
+	if err != nil || !slices.Equal(rpc.Fixed, []string{"a", "b"}) || !rpc.Proto {
+		t.Errorf("rpc %+v, %v", rpc, err)
+	}
+}
+
+func TestEvidence_WritesTheLastAnswerOfTheGRPCAPI(t *testing.T) {
+	ev, err := newEvidence(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := outcome()
+	o.Targets = []scenario.TargetState{{Kind: "grpc", Address: "a.test:443", Method: "users.v1.UserService/GetUser", Code: "NOT_FOUND", Response: "users.v1.UserService/GetUser -> NOT_FOUND"}}
+	f, err := ev.write(req{Task: "t", Expect: "e"}, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	md, _ := os.ReadFile(f.Report)
+	if want := "## Last answer of the gRPC API\n\nusers.v1.UserService/GetUser at a.test:443 → NOT_FOUND\n\n```\nusers.v1.UserService/GetUser -> NOT_FOUND\n```"; !strings.Contains(string(md), want) {
+		t.Errorf("the report lacks %q:\n%s", want, md)
 	}
 }
 

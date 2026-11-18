@@ -1,9 +1,9 @@
 // Package action serves the agent as a Probe action: it reads the step's
 // with, readies the targets and the model, runs the test, and returns how
 // it came out, with its evidence written to files. The browser is driven
-// through probe-browser, an iOS app through probe-ios, and an HTTP API
-// through the http action of Probe, which the agent calls as a step of the
-// run would.
+// through probe-browser, an iOS app through probe-ios, and an HTTP API and
+// a gRPC API through the http and grpc actions of Probe, which the agent
+// calls as a step of the run would.
 package action
 
 import (
@@ -63,8 +63,8 @@ func (a *Action) Run(with map[string]any) (map[string]any, error) {
 
 // RunStep runs the test the step asks for. The browser and an iOS app are
 // driven through probe-browser and probe-ios, by the names the workflow
-// gives them under actions, and an HTTP API through the http action of
-// Probe, as a step of the run would call them.
+// gives them under actions, and an HTTP API and a gRPC API through the
+// http and grpc actions of Probe, as a step of the run would call them.
 func (a *Action) RunStep(call actionrpc.Call) (map[string]any, map[string]any, error) {
 	actionrpc.LogParams(a.log, "received agent action request", forLog(call.With))
 	ret, err := a.run(call)
@@ -107,6 +107,12 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 			return nil, err
 		}
 	}
+	var rpc *scenario.GRPC
+	if r.GRPC != nil {
+		if rpc, err = grpcTarget(caller, call.Actions, *r.GRPC); err != nil {
+			return nil, err
+		}
+	}
 	var browser string
 	if r.Browser {
 		if browser, err = actionNamed(call.Actions, probeBrowser, "targets.browser drives the browser", "browser"); err != nil {
@@ -135,7 +141,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	targets := scenario.Targets{IOS: ios, HTTP: api}
+	targets := scenario.Targets{IOS: ios, HTTP: api, GRPC: rpc}
 	if r.Browser {
 		tab, err := page.NewBrowser(func(ctx context.Context, with map[string]any) (map[string]any, error) {
 			return callRes(ctx, caller, browser, with)
@@ -251,11 +257,8 @@ const httpAction = "http"
 // read here, for the tester to be given it, so that one that cannot be
 // read fails the step before the model is called.
 func httpTarget(caller *probe.ActionCaller, actions map[string]string, t httpReq) (*scenario.HTTP, error) {
-	if os.Getenv(probe.ExecutableEnv) == "" {
-		return nil, fmt.Errorf("targets.http calls the http action of Probe, which needs Probe v1.37.0 or later: %s is not set", probe.ExecutableEnv)
-	}
-	if uses, ok := actions[httpAction]; ok {
-		return nil, fmt.Errorf("targets.http calls the http action of Probe, but actions of the workflow give the name http to %s; give it another name", uses)
+	if err := builtinCallable(actions, httpAction, "v1.37.0"); err != nil {
+		return nil, err
 	}
 	api := &scenario.HTTP{URL: t.URL, Fixed: slices.Sorted(maps.Keys(t.Headers))}
 	if len(t.Cookies) > 0 && !slices.ContainsFunc(api.Fixed, func(n string) bool { return strings.EqualFold(n, "cookie") }) {
@@ -276,6 +279,130 @@ func httpTarget(caller *probe.ActionCaller, actions map[string]string, t httpReq
 		return httpResponse(cr)
 	}
 	return api, nil
+}
+
+// builtinCallable returns an error when the action of Probe name cannot be
+// called: when the Probe that runs the agent does not say where it is, or
+// when the workflow gives its name to another action. since is the
+// version of Probe the target needs.
+func builtinCallable(actions map[string]string, name, since string) error {
+	if os.Getenv(probe.ExecutableEnv) == "" {
+		return fmt.Errorf("targets.%s calls the %s action of Probe, which needs Probe %s or later: %s is not set", name, name, since, probe.ExecutableEnv)
+	}
+	if uses, ok := actions[name]; ok {
+		return fmt.Errorf("targets.%s calls the %s action of Probe, but actions of the workflow give the name %s to %s; give it another name", name, name, name, uses)
+	}
+	return nil
+}
+
+// grpcAction is the grpc action of Probe, which a gRPC API is called
+// through.
+const grpcAction = "grpc"
+
+// grpcTarget returns the API of t, called through the grpc action of
+// Probe, which lists its services by reflection from Probe v1.38.0.
+func grpcTarget(caller *probe.ActionCaller, actions map[string]string, t grpcReq) (*scenario.GRPC, error) {
+	if err := builtinCallable(actions, grpcAction, "v1.38.0"); err != nil {
+		return nil, err
+	}
+	rpc := &scenario.GRPC{Addr: t.Addr, Fixed: slices.Sorted(maps.Keys(t.Metadata)), Proto: t.Proto != nil}
+	rpc.List = func(ctx context.Context, service string) (map[string]any, error) {
+		with := grpcWith(t, nil)
+		with["list"] = true
+		if service != "" {
+			with["service"] = service
+		}
+		return callRes(ctx, caller, grpcAction, with)
+	}
+	rpc.Call = func(ctx context.Context, req scenario.GRPCRequest) (scenario.GRPCResponse, error) {
+		cr, err := caller.Call(ctx, grpcAction, grpcWith(t, &req))
+		if err != nil {
+			return scenario.GRPCResponse{}, err
+		}
+		return grpcResponse(cr)
+	}
+	return rpc, nil
+}
+
+// grpcWith is the with of a call of the grpc action to the API of t, with
+// the metadata t fixes: of req, or of a listing when req is nil.
+func grpcWith(t grpcReq, req *scenario.GRPCRequest) map[string]any {
+	with := maps.Clone(t.Conn)
+	if with == nil {
+		with = map[string]any{}
+	}
+	with["addr"] = t.Addr
+	md := map[string]any{}
+	if req != nil {
+		with["service"], with["method"] = req.Service, req.Method
+		if req.Body != "" {
+			with["body"] = req.Body
+		}
+		for k, v := range req.Metadata {
+			md[k] = v
+		}
+	}
+	for k, v := range t.Metadata {
+		md[k] = v
+	}
+	if len(md) > 0 {
+		with["metadata"] = md
+	}
+	if t.Proto != nil {
+		with["proto"] = maps.Clone(t.Proto)
+	}
+	return with
+}
+
+// grpcResponse reads the answer of a call of the grpc action, and what the
+// .proto files made of it.
+func grpcResponse(cr *probe.CallResult) (scenario.GRPCResponse, error) {
+	res, ok := cr.Result["res"].(map[string]any)
+	if !ok {
+		return scenario.GRPCResponse{}, fmt.Errorf("%s returned no res", grpcAction)
+	}
+	var out scenario.GRPCResponse
+	out.Code, _ = res["status_code"].(string)
+	out.Message, _ = res["status_message"].(string)
+	if md, ok := res["metadata"].(map[string]any); ok {
+		out.Metadata = map[string]string{}
+		for k, v := range md {
+			out.Metadata[k] = fmt.Sprint(v)
+		}
+	}
+	// The body comes as JSON text, or parsed, with the text in rawbody.
+	if raw, ok := res["rawbody"].(string); ok {
+		out.Body = raw
+	} else if body, ok := res["body"].(string); ok {
+		out.Body = body
+	} else if res["body"] != nil {
+		b, err := json.Marshal(res["body"])
+		if err != nil {
+			return scenario.GRPCResponse{}, err
+		}
+		out.Body = string(b)
+	}
+	// A method whose responses do not stream may come with an empty list
+	// of them, which is no stream.
+	if msgs, ok := res["messages"].([]any); ok && len(msgs) > 0 {
+		out.Messages = []string{}
+		for _, m := range msgs {
+			b, err := json.Marshal(m)
+			if err != nil {
+				return scenario.GRPCResponse{}, err
+			}
+			out.Messages = append(out.Messages, string(b))
+		}
+	}
+	if c := cr.Contract; c != nil {
+		if c.Matched != nil {
+			out.Operation = c.Matched.Operation
+		}
+		for _, v := range c.Violations {
+			out.Violations = append(out.Violations, scenario.Violation{In: v.In, Field: v.Field, Reason: v.Reason, Message: v.Message})
+		}
+	}
+	return out, nil
 }
 
 // apiGuard returns g kept to the host of the base URL raw, for the http
@@ -478,6 +605,11 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 	}
 	if r.Browser {
 		reqMap["url"] = r.URL
+	}
+	if r.GRPC != nil {
+		var addr strings.Builder
+		_, _ = io.WriteString(secretsHidden(&addr, r.Secrets), r.GRPC.Addr)
+		reqMap["addr"] = addr.String()
 	}
 	if r.HTTP != nil {
 		// The base URL can hold a secret, as a token in its query.

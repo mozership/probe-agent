@@ -10,7 +10,11 @@
 // Under /api/v1 is a JSON API of notes, which e2e/api/openapi.yml describes
 // and whose list breaks on purpose; see api.go.
 //
-// It listens on 127.0.0.1:18090, or on the address ADDR names.
+// It serves notes.v1.Notes over gRPC as well, which e2e/api/notes.proto
+// describes and whose ListNotes breaks it on purpose; see grpc.go.
+//
+// It listens on 127.0.0.1:18090, or on the address ADDR names, and serves
+// gRPC on 127.0.0.1:18091, or on the address GRPC_ADDR names.
 package main
 
 import (
@@ -19,6 +23,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -248,6 +253,16 @@ func main() {
 	if addr == "" {
 		addr = "127.0.0.1:18090"
 	}
+	grpcAddr := os.Getenv("GRPC_ADDR")
+	if grpcAddr == "" {
+		grpcAddr = "127.0.0.1:18091"
+	}
+	lis, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("serving gRPC on %s", grpcAddr)
+	go func() { log.Fatal(newGRPCServer().Serve(lis)) }()
 	log.Printf("listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, newMux()))
 }

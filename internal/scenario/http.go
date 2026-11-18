@@ -58,26 +58,6 @@ type HTTPResponse struct {
 	Violations []Violation
 }
 
-// Violation is what the OpenAPI document does not allow in a request or a
-// response.
-type Violation struct {
-	// In is request or response.
-	In      string `json:"in"`
-	Field   string `json:"field,omitempty"`
-	Reason  string `json:"reason,omitempty"`
-	Message string `json:"message"`
-}
-
-// contractBreach is a violation of the OpenAPI document by a step of the
-// tester.
-type contractBreach struct {
-	Violation
-	step      int
-	method    string
-	url       string
-	operation string
-}
-
 // httpDriver is an HTTP API as a target. Each call of http_request is one
 // call of the http action, which keeps the cookies from one to the next.
 type httpDriver struct {
@@ -244,7 +224,8 @@ func (d *httpDriver) request(ctx context.Context, in httpInput) (string, string,
 	d.last, d.lastURL, d.lastMethod = &resp, shown, method
 	for _, v := range resp.Violations {
 		d.breaches = append(d.breaches, contractBreach{
-			Violation: v, step: len(d.steps) + 1, method: method, url: d.secrets.mask(shown), operation: resp.Operation,
+			Violation: v, step: len(d.steps) + 1, call: method + " " + d.secrets.mask(shown), url: d.secrets.mask(shown),
+			operation: resp.Operation, spec: "the OpenAPI document",
 		})
 	}
 	// The response is masked whole before it is cut, so that a secret is
@@ -419,25 +400,6 @@ func statusOf(r HTTPResponse) string {
 	return fmt.Sprint(r.Code)
 }
 
-// violationLine is a violation in one line, as the tester, the judge and
-// the reviewer read it.
-func violationLine(v Violation) string {
-	s := "in the " + v.In
-	if v.Field != "" {
-		s += ", " + v.Field
-	}
-	return s + ": " + violationText(v)
-}
-
-// violationText is the message of a violation, with its reason, which
-// tells what the message may not, as got string, want integer.
-func violationText(v Violation) string {
-	if v.Reason == "" || strings.Contains(v.Message, v.Reason) {
-		return v.Message
-	}
-	return v.Message + " (" + v.Reason + ")"
-}
-
 // Final is the last response of the API. Nothing is sent again, as a
 // request can change what the API holds.
 func (d *httpDriver) Final(context.Context, bool) observation {
@@ -455,66 +417,6 @@ func (d *httpDriver) Final(context.Context, bool) observation {
 	}
 	o.sections = []section{{"last_response", text}}
 	return o
-}
-
-// contractFindings are the findings of the responses the OpenAPI document
-// does not allow: a deterministic check found them, so they need no
-// evidence of the reviewer. A request that breaks it is the tester's to
-// mend, not a finding, and so is one the document has no operation for, as
-// a path the tester got wrong. The violations of one field of one
-// operation are one finding.
-func (l *ledger) contractFindings() []Finding {
-	var out []Finding
-	index := map[string]int{}
-	for _, c := range l.breaches {
-		if c.In != "response" || c.operation == "" {
-			continue
-		}
-		op := c.operation
-		key := op + "\x00" + c.Field
-		i, ok := index[key]
-		if !ok {
-			title := "The response of " + op + " breaks the OpenAPI document"
-			if c.Field != "" {
-				title += " at " + c.Field
-			}
-			title = l.secrets.mask(title)
-			out = append(out, Finding{
-				Title:    title,
-				Severity: "medium",
-				Category: "error",
-				Expected: "A response the OpenAPI document allows.",
-				Steps:    []int{},
-				URL:      c.url,
-				Verified: true,
-			})
-			i = len(out) - 1
-			index[key] = i
-		}
-		f := &out[i]
-		msg := l.secrets.mask(violationText(c.Violation))
-		if !slices.ContainsFunc(f.Evidence, func(e Evidence) bool { return e.Quote == msg }) {
-			f.Evidence = append(f.Evidence, Evidence{Quote: msg, Verified: true})
-			if f.Observed != "" {
-				f.Observed += " "
-			}
-			f.Observed += msg
-		}
-		if !slices.Contains(f.Steps, c.step) {
-			f.Steps = append(f.Steps, c.step)
-		}
-	}
-	return out
-}
-
-// breachLines are the violations of the OpenAPI document, as the judge and
-// the reviewer are shown them.
-func (l *ledger) breachLines() []string {
-	var lines []string
-	for _, c := range l.breaches {
-		lines = append(lines, fmt.Sprintf("- step %d, %s %s: %s", c.step, c.method, c.url, l.secrets.mask(violationLine(c.Violation))))
-	}
-	return lines
 }
 
 var httpRequestTool = llm.Tool{

@@ -1,0 +1,36 @@
+// The gRPC service of notes of e2e/server, as it is meant to be. The server
+// gives the count of ListNotesResponse as a string, which this file
+// declares an int32, for a persona test to find.
+syntax = "proto3";
+
+package notes.v1;
+
+message Note {
+  string id = 1;
+  string text = 2;
+}
+
+message CreateNoteRequest {
+  string text = 1;
+}
+
+message GetNoteRequest {
+  string id = 1;
+}
+
+message ListNotesRequest {}
+
+message ListNotesResponse {
+  repeated Note notes = 1;
+  int32 count = 2;
+}
+
+service Notes {
+  rpc CreateNote(CreateNoteRequest) returns (Note);
+  rpc GetNote(GetNoteRequest) returns (Note) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc ListNotes(ListNotesRequest) returns (ListNotesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}

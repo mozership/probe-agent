@@ -68,12 +68,13 @@ jobs:
           go -C e2e/server build -o server .
           e2e/server/server > "$RUNNER_TEMP/server.txt" 2>&1 &
       # The agent calls probe-browser with ActionCaller, which needs probe
-      # v1.37.0 or later.
+      # v1.37.0 or later, and lists the services of a gRPC API with the grpc
+      # action, which needs v1.38.0 or later.
       - name: Run the e2e workflow
         uses: mozership/probe-action@5bf9b862f45a719fbc97b240c82b74e73ff5f2de # v1.4.0
         with:
           path: e2e/workflow.yml
-          version: v1.37.0
+          version: v1.38.0
       - name: Keep the evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
