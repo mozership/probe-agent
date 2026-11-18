@@ -342,6 +342,16 @@ func (b *Browser) State(ctx context.Context) (string, string, error) {
 	return text(results, "url"), text(results, "title"), err
 }
 
+// CatchUp has probe-browser report what the page did since the last
+// call, as while the judge decided, so that the console, the requests and
+// their errors are whole. A page that is gone has nothing to add.
+func (b *Browser) CatchUp(ctx context.Context) {
+	_, _, _ = b.run(ctx, catchUpTimeout, action{"name": "url"})
+}
+
+// catchUpTimeout bounds the call of CatchUp.
+const catchUpTimeout = 5 * time.Second
+
 // Locator describes the element of t so that a later page can find it
 // again, or is nil for a point with nothing to act on.
 func (b *Browser) Locator(ctx context.Context, t Target) (*Locator, error) {

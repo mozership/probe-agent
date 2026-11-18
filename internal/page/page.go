@@ -63,6 +63,12 @@ type Page interface {
 	Alerts(ctx context.Context) ([]string, error)
 }
 
+// CatchUpper is a page that can report what it did since it was last
+// driven, as while the judge decided.
+type CatchUpper interface {
+	CatchUp(ctx context.Context)
+}
+
 // The ways Locate fails.
 var (
 	// ErrNotFound is an element the page did not show in time.

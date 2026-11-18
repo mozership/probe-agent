@@ -330,6 +330,9 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 	// The console, the requests and their errors are of the browser.
 	var reqs page.Requests
 	if r.web != nil {
+		if c, ok := r.web.page.(page.CatchUpper); ok {
+			c.CatchUp(ctx)
+		}
 		o.ConsoleErrors = r.web.page.ConsoleErrors()
 		for i := range o.ConsoleErrors {
 			o.ConsoleErrors[i].Text = r.secrets.mask(o.ConsoleErrors[i].Text)
