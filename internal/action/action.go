@@ -1,8 +1,9 @@
 // Package action serves the agent as a Probe action: it reads the step's
 // with, readies the targets and the model, runs the test, and returns how
 // it came out, with its evidence written to files. The browser is driven
-// by the agent itself, and an iOS app through probe-ios, which the agent
-// calls as a step of the run would.
+// through probe-browser, an iOS app through probe-ios, and an HTTP API
+// through the http action of Probe, which the agent calls as a step of the
+// run would.
 package action
 
 import (
@@ -58,9 +59,10 @@ func (a *Action) Run(with map[string]any) (map[string]any, error) {
 	return ret, err
 }
 
-// RunStep runs the test the step asks for. An iOS app is driven through
-// probe-ios, by the name the workflow gives it under actions, as a step
-// of the run would call it.
+// RunStep runs the test the step asks for. The browser and an iOS app are
+// driven through probe-browser and probe-ios, by the names the workflow
+// gives them under actions, and an HTTP API through the http action of
+// Probe, as a step of the run would call them.
 func (a *Action) RunStep(call actionrpc.Call) (map[string]any, map[string]any, error) {
 	actionrpc.LogParams(a.log, "received agent action request", forLog(call.With))
 	ret, err := a.run(call)
@@ -87,6 +89,12 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	var ios *scenario.IOS
 	if r.IOS != nil {
 		if ios, err = iosTarget(caller, call.Actions, *r.IOS); err != nil {
+			return nil, err
+		}
+	}
+	var api *scenario.HTTP
+	if r.HTTP != nil {
+		if api, err = httpTarget(caller, call.Actions, *r.HTTP); err != nil {
 			return nil, err
 		}
 	}
@@ -118,7 +126,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	targets := scenario.Targets{IOS: ios}
+	targets := scenario.Targets{IOS: ios, HTTP: api}
 	if r.Browser {
 		tab, err := page.NewBrowser(func(ctx context.Context, with map[string]any) (map[string]any, error) {
 			return callRes(ctx, caller, browser, with)
@@ -225,6 +233,121 @@ func iosWith(t iosReq, actions []map[string]any) map[string]any {
 	return with
 }
 
+// httpAction is the http action of Probe, which an HTTP API is called
+// through.
+const httpAction = "http"
+
+// httpTarget returns the API of t, called through the http action of
+// Probe, which the Probe that runs the agent starts. The OpenAPI document is
+// read here, for the tester to be given it, so that one that cannot be
+// read fails the step before the model is called.
+func httpTarget(caller *probe.ActionCaller, actions map[string]string, t httpReq) (*scenario.HTTP, error) {
+	if os.Getenv(probe.ExecutableEnv) == "" {
+		return nil, fmt.Errorf("targets.http calls the http action of Probe, which needs Probe v1.37.0 or later: %s is not set", probe.ExecutableEnv)
+	}
+	if uses, ok := actions[httpAction]; ok {
+		return nil, fmt.Errorf("targets.http calls the http action of Probe, but actions of the workflow give the name http to %s; give it another name", uses)
+	}
+	api := &scenario.HTTP{URL: t.URL, Fixed: slices.Sorted(maps.Keys(t.Headers))}
+	if len(t.Cookies) > 0 && !slices.ContainsFunc(api.Fixed, func(n string) bool { return strings.EqualFold(n, "cookie") }) {
+		api.Fixed = append(api.Fixed, "Cookie")
+	}
+	if spec := t.spec(); spec != "" {
+		b, err := os.ReadFile(spec)
+		if err != nil {
+			return nil, fmt.Errorf("targets.http.openapi: %w", err)
+		}
+		api.OpenAPI = string(b)
+	}
+	api.Call = func(ctx context.Context, req scenario.HTTPRequest) (scenario.HTTPResponse, error) {
+		cr, err := caller.Call(ctx, httpAction, httpWith(t, req))
+		if err != nil {
+			return scenario.HTTPResponse{}, err
+		}
+		return httpResponse(cr)
+	}
+	return api, nil
+}
+
+// httpWith is the with of a call of the http action that sends req to the
+// API of t, with the headers and the cookies t fixes, and keeps the cookies
+// the API sets for the next call.
+func httpWith(t httpReq, req scenario.HTTPRequest) map[string]any {
+	headers := map[string]any{}
+	for k, v := range req.Headers {
+		headers[k] = v
+	}
+	for k, v := range t.Headers {
+		headers[k] = v
+	}
+	with := map[string]any{
+		"method":       req.Method,
+		"url":          req.URL,
+		"keep_cookies": true,
+	}
+	if len(headers) > 0 {
+		with["headers"] = headers
+	}
+	if req.Body != "" {
+		with["body"] = req.Body
+	}
+	if len(t.Cookies) > 0 {
+		cookies := map[string]any{}
+		for k, v := range t.Cookies {
+			cookies[k] = v
+		}
+		with["cookies"] = cookies
+	}
+	if t.OpenAPI != nil {
+		with["openapi"] = maps.Clone(t.OpenAPI)
+	}
+	if t.Timeout > 0 {
+		with["timeout"] = t.Timeout.String()
+	}
+	return with
+}
+
+// httpResponse reads the response of a call of the http action, and what
+// the OpenAPI document made of it.
+func httpResponse(cr *probe.CallResult) (scenario.HTTPResponse, error) {
+	res, ok := cr.Result["res"].(map[string]any)
+	if !ok {
+		return scenario.HTTPResponse{}, fmt.Errorf("%s returned no res", httpAction)
+	}
+	var out scenario.HTTPResponse
+	out.Code, _ = toInt(res["code"])
+	out.Status, _ = res["status"].(string)
+	if h, ok := res["headers"].(map[string]any); ok {
+		out.Headers = map[string]string{}
+		for k, v := range h {
+			out.Headers[k] = fmt.Sprint(v)
+		}
+	}
+	out.File, _ = res["filepath"].(string)
+	// A JSON body comes parsed, with the text it was parsed from in
+	// rawbody.
+	if raw, ok := res["rawbody"].(string); ok {
+		out.Body = raw
+	} else if body, ok := res["body"].(string); ok {
+		out.Body = body
+	} else if res["body"] != nil {
+		b, err := json.Marshal(res["body"])
+		if err != nil {
+			return scenario.HTTPResponse{}, err
+		}
+		out.Body = string(b)
+	}
+	if c := cr.Contract; c != nil {
+		if c.Matched != nil {
+			out.Operation = c.Matched.Operation
+		}
+		for _, v := range c.Violations {
+			out.Violations = append(out.Violations, scenario.Violation{In: v.In, Field: v.Field, Reason: v.Reason, Message: v.Message})
+		}
+	}
+	return out, nil
+}
+
 // actionNamed returns the name actions give the action of repo, which
 // what says it drives its target through, as the example name does.
 func actionNamed(actions map[string]string, repo, what, example string) (string, error) {
@@ -319,6 +442,9 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 	}
 	if r.Browser {
 		reqMap["url"] = r.URL
+	}
+	if r.HTTP != nil {
+		reqMap["api"] = r.HTTP.URL
 	}
 	if r.IOS != nil {
 		reqMap["app"] = r.IOS.App

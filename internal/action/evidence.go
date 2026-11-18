@@ -228,6 +228,13 @@ func markdown(r req, o scenario.Outcome, dir string) string {
 			if t.Screenshot != "" {
 				w("![final screen](%s)\n\n", rel(t.Screenshot))
 			}
+		case "http":
+			w("## Last response of the API\n\n")
+			if t.URL == "" {
+				w("No request was made.\n\n")
+			} else {
+				w("%s <%s> → %d\n\n", t.Method, t.URL, t.Status)
+			}
 		}
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"

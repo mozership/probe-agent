@@ -54,6 +54,7 @@ var params = []string{
 const (
 	targetBrowser = "browser"
 	targetIOS     = "ios"
+	targetHTTP    = "http"
 )
 
 // browserParams are the keys of targets.browser, which a step without
@@ -63,9 +64,12 @@ var browserParams = []string{"url", "allow_hosts", "storage_state", "headless", 
 // iosParams are the keys of targets.ios.
 var iosParams = []string{"app", "device", "timeout"}
 
+// httpParams are the keys of targets.http.
+var httpParams = []string{"url", "openapi", "headers", "cookies", "timeout"}
+
 // laterTargets are the kinds of target the agent is to drive, but does not
 // yet.
-var laterTargets = []string{"http", "grpc"}
+var laterTargets = []string{"grpc"}
 
 // Params returns the keys the action takes in with.
 func Params() []string {
@@ -107,6 +111,8 @@ type req struct {
 	EvidenceDir string
 	// IOS is the app the test drives on an iOS simulator, if any.
 	IOS *iosReq
+	// HTTP is the HTTP API the test calls, if any.
+	HTTP *httpReq
 }
 
 // iosReq is targets.ios.
@@ -119,6 +125,27 @@ type iosReq struct {
 	Timeout time.Duration
 }
 
+// httpReq is targets.http.
+type httpReq struct {
+	// URL is the base URL of the API.
+	URL string
+	// OpenAPI is the openapi of the http action: a map of spec, the path of
+	// the document, and strict; nil for none.
+	OpenAPI map[string]any
+	// Headers and Cookies are sent with each request.
+	Headers map[string]string
+	Cookies map[string]string
+	// Timeout bounds each request; zero for the default of the http
+	// action.
+	Timeout time.Duration
+}
+
+// spec is the path of the OpenAPI document, or "" for none.
+func (h *httpReq) spec() string {
+	s, _ := h.OpenAPI["spec"].(string)
+	return s
+}
+
 // kinds are the kinds of the targets of r, in the order the agent drives
 // them.
 func (r req) kinds() []string {
@@ -128,6 +155,9 @@ func (r req) kinds() []string {
 	}
 	if r.IOS != nil {
 		k = append(k, targetIOS)
+	}
+	if r.HTTP != nil {
+		k = append(k, targetHTTP)
 	}
 	return k
 }
@@ -225,6 +255,10 @@ func parse(with map[string]any) (req, error) {
 				errs = append(errs, errors.New("targets.ios.app is required"))
 			}
 		}
+		if h, ok := targets[targetHTTP]; ok {
+			r.HTTP = &httpReq{}
+			errs = append(errs, readHTTP(h, r.HTTP)...)
+		}
 	} else {
 		r.Browser = true
 		for _, k := range browserParams {
@@ -272,7 +306,7 @@ func parse(with map[string]any) (req, error) {
 	if r.Cache != "" && persona {
 		errs = append(errs, errors.New("cache is for scenario tests; a persona test takes another way each run"))
 	}
-	if r.Cache != "" && r.IOS != nil {
+	if r.Cache != "" && !slices.Equal(r.kinds(), []string{targetBrowser}) {
 		errs = append(errs, errors.New("cache is for a test of a browser alone; a recording holds the steps of a browser"))
 	}
 
@@ -365,10 +399,10 @@ func parse(with map[string]any) (req, error) {
 func readTargets(v any) (map[string]map[string]any, []error) {
 	m, ok := v.(map[string]any)
 	if !ok {
-		return nil, []error{errors.New("targets must be a map from the kind of each target, browser or ios, to what the workflow fixes for it")}
+		return nil, []error{errors.New("targets must be a map from the kind of each target, browser, ios or http, to what the workflow fixes for it")}
 	}
 	if len(m) == 0 {
-		return nil, []error{errors.New("targets names no target; name browser, ios or both")}
+		return nil, []error{errors.New("targets names no target; name browser, ios, http or more than one")}
 	}
 	var errs []error
 	out := map[string]map[string]any{}
@@ -379,11 +413,13 @@ func readTargets(v any) (map[string]map[string]any, []error) {
 			keys = browserParams
 		case targetIOS:
 			keys = iosParams
+		case targetHTTP:
+			keys = httpParams
 		default:
 			if slices.Contains(laterTargets, kind) {
-				errs = append(errs, fmt.Errorf("targets.%s is not driven yet; the agent drives browser and ios", kind))
+				errs = append(errs, fmt.Errorf("targets.%s is not driven yet; the agent drives browser, ios and http", kind))
 			} else {
-				errs = append(errs, fmt.Errorf("unknown target %s; the targets are browser and ios", kind))
+				errs = append(errs, fmt.Errorf("unknown target %s; the targets are browser, ios and http", kind))
 			}
 			continue
 		}
@@ -404,6 +440,92 @@ func readTargets(v any) (map[string]map[string]any, []error) {
 		out[kind] = t
 	}
 	return out, errs
+}
+
+// readHTTP reads targets.http t into h.
+func readHTTP(t map[string]any, h *httpReq) []error {
+	var errs []error
+	s, isStr := t["url"].(string)
+	h.URL = strings.TrimSpace(s)
+	switch {
+	case t["url"] != nil && !isStr:
+		errs = append(errs, errors.New("targets.http.url must be a string"))
+	case h.URL == "":
+		errs = append(errs, errors.New("targets.http.url is required"))
+	default:
+		if u, err := url.Parse(h.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, fmt.Errorf("targets.http.url %q must be an http or https URL", h.URL))
+		}
+	}
+	if v, ok := t["openapi"]; ok {
+		switch o := v.(type) {
+		case string:
+			if strings.TrimSpace(o) == "" {
+				errs = append(errs, errors.New("targets.http.openapi must name the OpenAPI document"))
+			} else {
+				h.OpenAPI = map[string]any{"spec": strings.TrimSpace(o)}
+			}
+		case map[string]any:
+			h.OpenAPI = map[string]any{}
+			for _, k := range slices.Sorted(maps.Keys(o)) {
+				switch k {
+				case "spec":
+					s, _ := o[k].(string)
+					if strings.TrimSpace(s) == "" {
+						errs = append(errs, errors.New("targets.http.openapi.spec must name the OpenAPI document"))
+					}
+					h.OpenAPI[k] = strings.TrimSpace(s)
+				case "strict":
+					b, err := toBool(o[k])
+					if err != nil {
+						errs = append(errs, errors.New("targets.http.openapi.strict must be true or false"))
+					}
+					h.OpenAPI[k] = b
+				default:
+					errs = append(errs, fmt.Errorf("unknown parameter targets.http.openapi.%s; the parameters are spec and strict", k))
+				}
+			}
+			if _, ok := o["spec"]; !ok {
+				errs = append(errs, errors.New("targets.http.openapi.spec is required"))
+			}
+		default:
+			errs = append(errs, errors.New("targets.http.openapi must be the path of an OpenAPI document, or a map of spec and strict"))
+		}
+	}
+	for _, f := range []struct {
+		key string
+		dst *map[string]string
+	}{{"headers", &h.Headers}, {"cookies", &h.Cookies}} {
+		v, ok := t[f.key]
+		if !ok {
+			continue
+		}
+		m, isMap := v.(map[string]any)
+		if !isMap {
+			errs = append(errs, fmt.Errorf("targets.http.%s must be a map of names to values", f.key))
+			continue
+		}
+		*f.dst = map[string]string{}
+		for _, name := range slices.Sorted(maps.Keys(m)) {
+			switch val := m[name].(type) {
+			case string:
+				(*f.dst)[name] = val
+			case int, int64, float64, bool:
+				(*f.dst)[name] = fmt.Sprint(val)
+			default:
+				errs = append(errs, fmt.Errorf("targets.http.%s.%s must be a string", f.key, name))
+			}
+		}
+	}
+	if v, ok := t["timeout"]; ok {
+		d, err := actionrpc.ParseTimeout(v)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("targets.http.timeout: %w", err))
+		} else {
+			h.Timeout = d
+		}
+	}
+	return errs
 }
 
 // anthropic is the provider of the Claude API, which the agent uses unless

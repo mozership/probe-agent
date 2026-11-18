@@ -1,8 +1,8 @@
 # probe-agent
 
-A [Probe](https://github.com/mozership/probe) action that tests an application from a task written in natural language. A model, the tester, uses the application through a real Chrome, an app on an iOS simulator, or both, to carry out the task; another call of the model, the judge, then decides from what they showed whether the expectation holds. See [Targets](#targets) for an iOS app.
+A [Probe](https://github.com/mozership/probe) action that tests an application from a task written in natural language. A model, the tester, uses the application through a real Chrome, an app on an iOS simulator, an HTTP API, or more than one of them, to carry out the task; another call of the model, the judge, then decides from what they showed whether the expectation holds. See [Targets](#targets) for an iOS app and an HTTP API.
 
-Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It drives Chrome through [probe-browser](https://github.com/mozership/probe-browser), and an iOS app through [probe-ios](https://github.com/mozership/probe-ios), which the workflow names under `actions` as it names the agent; it calls them as a step of the run would, which needs Probe v1.37.0 or later.
+Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It drives Chrome through [probe-browser](https://github.com/mozership/probe-browser), and an iOS app through [probe-ios](https://github.com/mozership/probe-ios), which the workflow names under `actions` as it names the agent, and calls an HTTP API through the [http](https://probe.linyo.ws/reference/actions/http) action of Probe; it calls them as a step of the run would, which needs Probe v1.37.0 or later.
 
 It has two modes:
 
@@ -77,7 +77,7 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `targets` | Object | No | the browser of `url` | What the test drives: a browser, an iOS app, or both; see [Targets](#targets) |
+| `targets` | Object | No | the browser of `url` | What the test drives: a browser, an iOS app, an HTTP API, or more than one of them; see [Targets](#targets) |
 | `url` | String | Without `targets` | - | The page the browser opens first, `http` or `https`. The short form of `targets.browser.url` |
 | `task` | String | Scenario | - | What the tester does, in natural language |
 | `expect` | String | Scenario | - | What has to hold afterwards, in natural language |
@@ -109,6 +109,7 @@ The model is called with the API key of its provider, which the action takes fro
 |---|---|---|---|
 | `browser` | Chrome | `url` (required), `allow_hosts`, `storage_state`, `headless`, `window_w`, `window_h`, as in [Parameters](#parameters) | [probe-browser](https://github.com/mozership/probe-browser) |
 | `ios` | An app on an iOS simulator | `app` (required), the bundle identifier; `device`, the simulator by its name or UDID, which has to be given when more than one is booted; `timeout`, see below | [probe-ios](https://github.com/mozership/probe-ios) |
+| `http` | An HTTP API | `url` (required), the base URL; `openapi`, `headers`, `cookies` and `timeout`, see below | The built-in [http](https://probe.linyo.ws/reference/actions/http) |
 
 Without `targets`, `url`, `allow_hosts`, `storage_state`, `headless`, `window_w` and `window_h` at the top of `with` are the short form of `targets.browser`, as before there were targets; the action warns that they move under it. A step with both `targets` and one of them is refused.
 
@@ -186,6 +187,39 @@ The judge checks its quotes against the trees and the texts the app showed, and 
 
 The tester is offered the tools of both, and acts on one at a time; each step says which target it used. What passes from one to the other is what the model reads on one and enters on the other: Chrome on the Mac and Safari on the simulator are two browsers, so a link on the web does not open the app.
 
+### An HTTP API
+
+The agent calls the API through the http action of Probe, which it calls as a step of the run would, under the guard of the run, once for each request of the tester. It needs Probe v1.37.0 or later, which tells the agent where it is, to start its built-in actions; a workflow must not give the name `http` to another action under `actions`.
+
+```yaml
+  - name: A client orders two of an item and cancels the order
+    uses: agent
+    with:
+      task: Order two of item 7, cancel the order, and look at the stock of item 7
+      expect: The stock is what it was before the order
+      targets:
+        http:
+          url: https://staging.example.com/api
+          openapi: ./openapi.yaml
+          headers:
+            Authorization: "Bearer {{vars.api_token}}"
+    test: res.verdict == "pass"
+```
+
+| Key | Type | Description |
+|---|---|---|
+| `url` | String | The base URL, `http` or `https`. The tester gives the path after it, and cannot reach another host, nor a path out of it |
+| `openapi` | String or Object | The path of an OpenAPI document, from the directory Probe runs in, or a map of `spec`, the path, and `strict`, as the [http action](https://probe.linyo.ws/reference/actions/http#checking-against-openapi) takes them. The tester is given the document, and each request and its response are checked against it |
+| `headers` | Object | Headers sent with each request, by name, such as a credential. The tester cannot change them |
+| `cookies` | Object | Cookies sent with each request, by name |
+| `timeout` | String or Number | The timeout of each request, as `10s` or a number of seconds; 30 seconds by default, as in the http action |
+
+The tester has one tool, `http_request`, with `method`, `path`, `query`, `headers` and `body`; a body that is JSON is sent as `application/json`. It is told the status, the headers and the body of the response, a long body cut, and the cookies the API sets are sent on with the requests after it, as the http action keeps them. `{secret:NAME}` in the path, the query, a header or the body is replaced with the value of the secret as the request is sent, and the response is read with the values masked.
+
+What the OpenAPI document does not allow in a request or a response is told to the tester with the response, and to the judge or the reviewer with the record. In a persona test, a response that breaks the document is a finding, `verified` as a deterministic check found it, without the reviewer: the violations of one field of one operation are one finding. A request that breaks it is the tester's to mend, and is no finding.
+
+The judge checks its quotes against the responses, and is given the last one; nothing is sent again at the end, as a request can change what the API holds. A `cache` is refused, as for an app.
+
 ## Models
 
 The agent is built for Claude, which is trained to use a browser through the browser toolset of the Claude API. The other providers are reached through their APIs compatible with OpenAI's Chat Completions, or through OpenAI's Responses API for `openai`, by which its models both reason and call tools; their models are offered the same members of the toolset as tools of the agent's own, so that they run the same tests; how well they carry out a task depends on the model.
@@ -232,8 +266,8 @@ A recording is of the steps, not of the model, so a test recorded with one model
 | `res.evidence` | List | What the judge quoted: `quote`, and `verified`, whether a page showed it |
 | `res.stopped` | String | How the tester stopped: `done`, `blocked`, `max_steps`, `timeout`, `no_finish`, `refused`, or `stale` for a recording that no longer matched under `cache_mode: strict` |
 | `res.summary` | String | What the tester said it did and saw |
-| `res.steps` | List | Each call to a target: `index`, `tool`, `target` (`browser` or `ios`), `input`, `result` or `error`, `url`, `screenshot` and the tester's `notes` |
-| `res.targets` | List | The last state of each target: `kind`; `url` and `title` of the browser; `app` and `device` of the app; and `screenshot` |
+| `res.steps` | List | Each call to a target: `index`, `tool`, `target` (`browser`, `ios` or `http`), `input`, `result` or `error`, `url`, `screenshot` and the tester's `notes` |
+| `res.targets` | List | The last state of each target: `kind`; `url` and `title` of the browser; `app` and `device` of the app; `method`, `url` and `status` of the last request to an API; and `screenshot` |
 | `res.url`, `res.title` | String | The page the tester left the browser on, empty without a browser |
 | `res.console_errors` | List | The errors the pages wrote to their console, as the browser action reports them |
 | `res.network_errors` | List | The requests that failed or were answered with 400 or more: `method`, `url`, `status`, `error` |
@@ -414,6 +448,8 @@ The model reads `{secret:NAME}` where a secret is. When it types the placeholder
 The action keeps to no [guard](https://probe.linyo.ws/guide/concepts/guard): it cannot tell what a page will do, nor what the model will click. Under `--read-only` or `--allow-host`, a step that uses it is refused unless `--allow-action` names it. The tester is kept to `allow_hosts`: a page on another host is not opened, and the browser goes back from one a click led to.
 
 probe-ios keeps to no guard either, and the agent calls it under the guard of the run: under `--read-only` or `--allow-host`, `--allow-action` has to name both. When it names the agent alone, the call of probe-ios is refused, and so is the step.
+
+The http action keeps to the guard, and the agent calls it under the guard of the run, so the requests of the tester keep to it although the agent is named by `--allow-action`: under `--read-only`, a request other than `GET`, `HEAD` or `OPTIONS` is refused, and the tester is told so; under `--allow-host`, so is one to a host the guard does not allow.
 
 ## Development
 

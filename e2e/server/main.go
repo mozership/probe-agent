@@ -7,6 +7,8 @@
 // else to the sign-up, so that a workflow can check that a test starts
 // signed in from a storage state. The help page names a section of the
 // Settings app of an iOS simulator, for a test of a browser and an app.
+// Under /api/v1 is a JSON API of notes, which e2e/api/openapi.yml describes
+// and whose list breaks on purpose; see api.go.
 //
 // It listens on 127.0.0.1:18090, or on the address ADDR names.
 package main
@@ -237,6 +239,7 @@ func newMux() *http.ServeMux {
 	})
 	mux.HandleFunc("/help", help)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
+	(&notesAPI{}).handle(mux)
 	return mux
 }
 
