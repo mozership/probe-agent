@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -37,16 +38,18 @@ type sentMail struct {
 	HTML     string
 }
 
-// newsletter keeps the subscriptions and the mailbox.
+// newsletter keeps the subscriptions and the mailbox. The subscriptions
+// are written to store as well.
 type newsletter struct {
 	mu      sync.Mutex
 	mails   []sentMail
 	pending map[string]string
 	subs    map[string]bool
+	store   *sql.DB
 }
 
-func newNewsletter() *newsletter {
-	return &newsletter{pending: map[string]string{}, subs: map[string]bool{}}
+func newNewsletter(store *sql.DB) *newsletter {
+	return &newsletter{pending: map[string]string{}, subs: map[string]bool{}, store: store}
 }
 
 func (n *newsletter) handle(mux *http.ServeMux) {
@@ -101,6 +104,12 @@ func (n *newsletter) subscribe(w http.ResponseWriter, r *http.Request) {
 		HTML:     `<p>Hello,</p><p>Confirm your subscription to the Acme Notes newsletter: <a href="` + link + `">Confirm my subscription</a></p><p>If you did not ask for it, ignore this mail.</p>`,
 	})
 	n.mu.Unlock()
+	if _, err := n.store.Exec(`INSERT INTO subscriptions (email, status, subscribed_at) VALUES (?, 'pending', ?)
+ON CONFLICT (email) DO UPDATE SET status = 'pending', subscribed_at = excluded.subscribed_at, confirmed_at = NULL`, email, now()); err != nil {
+		log.Printf("newsletter: %s not saved: %v", email, err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 	log.Printf("newsletter: mailed %s a link to confirm", email)
 	newsletterPage(w, 200, "Check your inbox", `<h1>Check your inbox</h1><p>We sent a link to `+html.EscapeString(email)+`. Open it to confirm your subscription.</p>`)
 }
@@ -117,6 +126,11 @@ func (n *newsletter) confirm(w http.ResponseWriter, r *http.Request) {
 	n.mu.Unlock()
 	if !ok {
 		newsletterPage(w, 404, "Link expired", `<h1>This link has expired</h1><p><a href="/newsletter">Subscribe again</a></p>`)
+		return
+	}
+	if _, err := n.store.Exec(`UPDATE subscriptions SET status = 'confirmed', confirmed_at = ? WHERE email = ?`, now(), email); err != nil {
+		log.Printf("newsletter: %s not saved as confirmed: %v", email, err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	log.Printf("newsletter: %s confirmed", email)

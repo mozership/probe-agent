@@ -3,8 +3,9 @@
 // it came out, with its evidence written to files. The browser is driven
 // through probe-browser, an iOS app through probe-ios, an Android app
 // through probe-android, an HTTP API and a gRPC API through the http and
-// grpc actions of Probe, a GraphQL API through probe-graphql, and a mailbox
-// through probe-jmap, which the agent calls as a step of the run would.
+// grpc actions of Probe, a GraphQL API through probe-graphql, a mailbox
+// through probe-jmap, and a database through the db action of Probe, which
+// the agent calls as a step of the run would.
 package action
 
 import (
@@ -66,8 +67,9 @@ func (a *Action) Run(with map[string]any) (map[string]any, error) {
 // RunStep runs the test the step asks for. The browser and an iOS app are
 // driven through probe-browser and probe-ios, by the names the workflow
 // gives them under actions, an HTTP API and a gRPC API through the http
-// and grpc actions of Probe, a GraphQL API through probe-graphql, and a
-// mailbox through probe-jmap, as a step of the run would call them.
+// and grpc actions of Probe, a GraphQL API through probe-graphql, a mailbox
+// through probe-jmap, and a database through the db action of Probe, as a
+// step of the run would call them.
 func (a *Action) RunStep(call actionrpc.Call) (map[string]any, map[string]any, error) {
 	actionrpc.LogParams(a.log, "received agent action request", forLog(call.With))
 	ret, err := a.run(call)
@@ -141,6 +143,19 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 			return nil, err
 		}
 	}
+	var db *scenario.DB
+	if r.DB != nil {
+		// The db action is called by a caller of its own, read-only
+		// whatever the guard of the run, so that the tester cannot write:
+		// the action runs a statement that reads alone, in a read-only
+		// transaction.
+		dc := call
+		dc.Guard = dbGuard(call.Guard)
+		dbCaller := probe.NewActionCaller(dc, "", probe.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
+		if db, err = dbTarget(dbCaller, call.Actions, *r.DB); err != nil {
+			return nil, err
+		}
+	}
 	var browser string
 	if r.Browser {
 		if browser, err = actionNamed(call.Actions, probeBrowser, "targets.browser drives the browser", "browser"); err != nil {
@@ -169,7 +184,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	targets := scenario.Targets{IOS: ios, Android: android, HTTP: api, GRPC: rpc, GraphQL: gql, Mail: box}
+	targets := scenario.Targets{IOS: ios, Android: android, HTTP: api, GRPC: rpc, GraphQL: gql, Mail: box, DB: db}
 	if r.Browser {
 		tab, err := page.NewBrowser(func(ctx context.Context, with map[string]any) (map[string]any, error) {
 			return callRes(ctx, caller, browser, with)
@@ -558,6 +573,124 @@ func graphqlResponse(name string, cr *probe.CallResult) (scenario.GraphQLRespons
 		}
 	}
 	return out, nil
+}
+
+// dbAction is the db action of Probe, which a database is read through.
+const dbAction = "db"
+
+// dbGuard returns g read-only, for the db action, which keeps to both
+// kinds of guard, as its package declares.
+func dbGuard(g actionrpc.Guard) actionrpc.Guard {
+	g.ReadOnly = true
+	return g.WithKeeps(dbAction, []string{actionrpc.KindReadOnly, actionrpc.KindAllowHost})
+}
+
+// dbTarget returns the database of t, read through the db action of Probe.
+func dbTarget(caller *probe.ActionCaller, actions map[string]string, t dbReq) (*scenario.DB, error) {
+	if err := builtinCallable(actions, dbAction, "v1.37.0"); err != nil {
+		return nil, err
+	}
+	db := &scenario.DB{Name: dsnShown(t.DSN), Driver: t.Driver}
+	db.Query = func(ctx context.Context, query string, params []any) (scenario.DBResult, error) {
+		with := map[string]any{"dsn": t.DSN, "query": query}
+		if len(params) > 0 {
+			with["params"] = params
+		}
+		if t.Timeout > 0 {
+			with["timeout"] = t.Timeout.String()
+		}
+		res, err := callRes(ctx, caller, dbAction, with)
+		if err != nil {
+			return scenario.DBResult{}, err
+		}
+		return dbResult(res), nil
+	}
+	db.Tables = func(ctx context.Context) ([]scenario.DBTable, error) {
+		res, err := db.Query(ctx, tablesQuery[t.Driver], nil)
+		if err != nil {
+			return nil, err
+		}
+		if res.Error != "" {
+			return nil, errors.New(res.Error)
+		}
+		return dbTables(res.Rows), nil
+	}
+	return db, nil
+}
+
+// tablesQuery lists the columns of the tables of a database, by its
+// driver, each row as table_name, column_name and data_type, in order.
+var tablesQuery = map[string]string{
+	"postgres": `SELECT table_schema || '.' || table_name AS table_name, column_name AS column_name, data_type AS data_type
+FROM information_schema.columns
+WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+ORDER BY table_schema, table_name, ordinal_position`,
+	"mysql": `SELECT table_name AS table_name, column_name AS column_name, data_type AS data_type
+FROM information_schema.columns
+WHERE table_schema = DATABASE()
+ORDER BY table_name, ordinal_position`,
+	"sqlite": `SELECT m.name AS table_name, p.name AS column_name, p.type AS data_type
+FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p
+WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'
+ORDER BY m.name, p.cid`,
+}
+
+// dbResult reads the res of a call of the db action.
+func dbResult(res map[string]any) scenario.DBResult {
+	if code, _ := toInt(res["code"]); code != 0 {
+		msg, _ := res["error"].(string)
+		if msg == "" {
+			msg = "the statement failed"
+		}
+		return scenario.DBResult{Error: msg}
+	}
+	var out scenario.DBResult
+	rows, _ := res["rows"].([]any)
+	for _, r := range rows {
+		if row, ok := r.(map[string]any); ok {
+			out.Rows = append(out.Rows, row)
+		}
+	}
+	return out
+}
+
+// dbTables reads the rows of tablesQuery as tables, in the order they come.
+func dbTables(rows []map[string]any) []scenario.DBTable {
+	var tables []scenario.DBTable
+	for _, row := range rows {
+		name, col, typ := fmt.Sprint(row["table_name"]), fmt.Sprint(row["column_name"]), fmt.Sprint(row["data_type"])
+		if row["data_type"] == nil {
+			typ = ""
+		}
+		if len(tables) == 0 || tables[len(tables)-1].Name != name {
+			tables = append(tables, scenario.DBTable{Name: name})
+		}
+		t := &tables[len(tables)-1]
+		t.Columns = append(t.Columns, [2]string{col, typ})
+	}
+	return tables
+}
+
+// dsnShown is dsn with its password, of its user or of a parameter,
+// hidden, as the tester and the record see it.
+func dsnShown(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil || u.Scheme == "file" || u.Scheme == "" {
+		return dsn
+	}
+	if _, has := u.User.Password(); has {
+		u.User = url.UserPassword(u.User.Username(), "***")
+	}
+	q := u.Query()
+	for k := range q {
+		if strings.EqualFold(k, "password") || strings.EqualFold(k, "sslpassword") {
+			q.Set(k, "***")
+		}
+	}
+	if len(q) > 0 {
+		u.RawQuery = q.Encode()
+	}
+	return strings.Replace(u.String(), "%2A%2A%2A", "***", -1)
 }
 
 // mailTarget returns the mailbox of t, read through probe-jmap: the action
@@ -981,6 +1114,11 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 		var gql strings.Builder
 		_, _ = io.WriteString(secretsHidden(&gql, r.Secrets), r.GraphQL.URL)
 		reqMap["graphql"] = gql.String()
+	}
+	if r.DB != nil {
+		var db strings.Builder
+		_, _ = io.WriteString(secretsHidden(&db, r.Secrets), dsnShown(r.DB.DSN))
+		reqMap["db"] = db.String()
 	}
 	if r.Mail != nil {
 		var mail strings.Builder

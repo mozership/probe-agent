@@ -163,7 +163,7 @@ type Step struct {
 	Index int    `json:"index"`
 	Tool  string `json:"tool"`
 	// Target is the kind of the target the step used: browser, ios,
-	// android, http, grpc, graphql or mail.
+	// android, http, grpc, graphql, mail or db.
 	Target string `json:"target"`
 	// Notes are what the tester wrote before the call.
 	Notes      []string       `json:"notes,omitempty"`
@@ -210,7 +210,7 @@ func (r *run) driverOf(call llm.Call) Driver {
 }
 
 // Targets are what a test drives: a browser, an app, an HTTP, gRPC or
-// GraphQL API, a mailbox, or more than one of them.
+// GraphQL API, a mailbox, a database, or more than one of them.
 type Targets struct {
 	// Browser is the tab of the browser, driven from Config.StartURL.
 	Browser page.Page
@@ -226,6 +226,8 @@ type Targets struct {
 	GraphQL *GraphQL
 	// Mail is a mailbox.
 	Mail *Mail
+	// DB is a database.
+	DB *DB
 }
 
 // Run runs the test of cfg on the targets t with m. It returns an error
@@ -260,6 +262,9 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 	}
 	if t.Mail != nil {
 		r.drivers = append(r.drivers, newMailDriver(r.ledger, *t.Mail))
+	}
+	if t.DB != nil {
+		r.drivers = append(r.drivers, newDBDriver(r.ledger, *t.DB))
 	}
 	if len(r.drivers) == 0 {
 		return Outcome{}, errors.New("the test has no target")
@@ -547,7 +552,7 @@ type section struct {
 
 // TargetState is the last state of a target of a test.
 type TargetState struct {
-	// Kind is browser, ios, android, http, grpc, graphql or mail.
+	// Kind is browser, ios, android, http, grpc, graphql, mail or db.
 	Kind string `json:"kind"`
 	// URL and Title are of the page the browser was left on. URL is of the
 	// last request to an HTTP API, and Method and Status of it and its
@@ -558,12 +563,15 @@ type TargetState struct {
 	Title  string `json:"title,omitempty"`
 	Method string `json:"method,omitempty"`
 	Status int    `json:"status,omitempty"`
+	// Query is the last statement run on a database, of which URL names
+	// the database, without its password.
+	Query string `json:"query,omitempty"`
 	// Address is of a gRPC API, Method its last method called, as
 	// users.v1.UserService/GetUser, and Code the status it answered.
 	Address string `json:"address,omitempty"`
 	Code    string `json:"code,omitempty"`
 	// Response is the last response of an HTTP, a gRPC or a GraphQL API,
-	// or the last a mailbox showed, of which URL is the server, masked and
+	// or the last a mailbox or a database showed, masked and
 	// cut, for the report; it is not in the result, which the report is
 	// beside.
 	Response string `json:"-"`
