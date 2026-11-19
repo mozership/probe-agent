@@ -84,7 +84,9 @@ func (n *newsletter) form(w http.ResponseWriter, r *http.Request) {
 
 // subscribe mails a link to confirm the subscription of an address.
 func (n *newsletter) subscribe(w http.ResponseWriter, r *http.Request) {
-	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
+	// The address is kept as it is typed: the part before the @ may tell
+	// apart what differs in case alone.
+	email := strings.TrimSpace(r.FormValue("email"))
 	if !strings.Contains(email, "@") {
 		newsletterPage(w, 422, "Newsletter", `<h1>The Acme Notes newsletter</h1><p role="alert">Enter your email address.</p><p><a href="/newsletter">Back</a></p>`)
 		return
