@@ -16,7 +16,7 @@ name: probe-agent against an Android app
 actions:
   agent: ./action
   browser: github.com/mozership/probe-browser@a9c1dca2ae8f0e79ebfbe4482d37a928237c2f4d # v0.11.1
-  android: github.com/mozership/probe-android@f54bb8ffc7dec6b3322e52a584a284cf4aec12d8 # v0.2.1
+  android: github.com/mozership/probe-android@8dd7285d0ac7cae0488120aeeda9cc818aeb5658 # v0.3.0
   github-notes: github.com/mozership/probe-github-notes@d2df0b2dbbbffd3e368d156e571bf9bf2f784b76 # v0.1.3
 
 secrets:
