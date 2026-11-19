@@ -817,6 +817,11 @@ func readDB(t map[string]any, d *dbReq) []error {
 	case d.DSN == "":
 		errs = append(errs, errors.New("targets.db.dsn is required"))
 	default:
+		// The db action reads a scheme in lower case alone, as
+		// postgresql:// and file: are, so it is given one.
+		if i := strings.Index(d.DSN, ":"); i > 0 {
+			d.DSN = strings.ToLower(d.DSN[:i]) + d.DSN[i:]
+		}
 		d.Driver = dbDriverOf(d.DSN)
 		switch {
 		case d.Driver == "":

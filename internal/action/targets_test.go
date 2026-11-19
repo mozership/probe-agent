@@ -1198,6 +1198,13 @@ func TestParse_RefusesADSNThatIsNotAURL(t *testing.T) {
 	if got := dbDriverOf("MySQL://u@h/d"); got != "mysql" {
 		t.Errorf("driver %q", got)
 	}
+	// A scheme in upper case is given to the db action in lower case.
+	for dsn, want := range map[string]string{"POSTGRESQL://r:PW@h/D?sslmode=disable": "postgresql://r:PW@h/D?sslmode=disable", "FILE:/tmp/A.db": "file:/tmp/A.db"} {
+		r, err := parse(map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"db": map[string]any{"dsn": dsn}}})
+		if err != nil || r.DB.DSN != want {
+			t.Errorf("%s: %+v, %v", dsn, r.DB, err)
+		}
+	}
 }
 
 func TestHideDSN(t *testing.T) {
