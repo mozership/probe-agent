@@ -93,6 +93,12 @@ func (n *newsletter) subscribe(w http.ResponseWriter, r *http.Request) {
 	rand.Read(b)
 	token := hex.EncodeToString(b)
 	link := "http://" + r.Host + "/newsletter/confirm?token=" + token
+	if _, err := n.store.Exec(`INSERT INTO subscriptions (email, status, subscribed_at) VALUES (?, 'pending', ?)
+ON CONFLICT (email) DO UPDATE SET status = 'pending', subscribed_at = excluded.subscribed_at, confirmed_at = NULL`, email, now()); err != nil {
+		log.Printf("newsletter: %s not saved: %v", email, err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 	n.mu.Lock()
 	n.pending[token] = email
 	n.mails = append(n.mails, sentMail{
@@ -104,12 +110,6 @@ func (n *newsletter) subscribe(w http.ResponseWriter, r *http.Request) {
 		HTML:     `<p>Hello,</p><p>Confirm your subscription to the Acme Notes newsletter: <a href="` + link + `">Confirm my subscription</a></p><p>If you did not ask for it, ignore this mail.</p>`,
 	})
 	n.mu.Unlock()
-	if _, err := n.store.Exec(`INSERT INTO subscriptions (email, status, subscribed_at) VALUES (?, 'pending', ?)
-ON CONFLICT (email) DO UPDATE SET status = 'pending', subscribed_at = excluded.subscribed_at, confirmed_at = NULL`, email, now()); err != nil {
-		log.Printf("newsletter: %s not saved: %v", email, err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
 	log.Printf("newsletter: mailed %s a link to confirm", email)
 	newsletterPage(w, 200, "Check your inbox", `<h1>Check your inbox</h1><p>We sent a link to `+html.EscapeString(email)+`. Open it to confirm your subscription.</p>`)
 }
@@ -119,10 +119,6 @@ func (n *newsletter) confirm(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	n.mu.Lock()
 	email, ok := n.pending[token]
-	if ok {
-		delete(n.pending, token)
-		n.subs[email] = true
-	}
 	n.mu.Unlock()
 	if !ok {
 		newsletterPage(w, 404, "Link expired", `<h1>This link has expired</h1><p><a href="/newsletter">Subscribe again</a></p>`)
@@ -133,6 +129,10 @@ func (n *newsletter) confirm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	n.mu.Lock()
+	delete(n.pending, token)
+	n.subs[email] = true
+	n.mu.Unlock()
 	log.Printf("newsletter: %s confirmed", email)
 	newsletterPage(w, 200, "Subscribed", `<h1>You are subscribed</h1><p role="status">The subscription of `+html.EscapeString(email)+` is confirmed.</p>`)
 }

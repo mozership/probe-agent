@@ -590,7 +590,18 @@ func dbTarget(caller *probe.ActionCaller, actions map[string]string, t dbReq) (*
 	if err := builtinCallable(actions, dbAction, "v1.37.0"); err != nil {
 		return nil, err
 	}
-	db := &scenario.DB{Name: dsnShown(t.DSN), Driver: t.Driver}
+	if t.Driver == "sqlite" {
+		// A SQLite file that is not there would be made, empty, by the db
+		// action, which runs where the agent does.
+		if path := sqlitePath(t.DSN); path != "" {
+			if _, err := os.Stat(path); err != nil {
+				return nil, fmt.Errorf("targets.db.dsn names no SQLite file at %s: %w", path, errors.Unwrap(err))
+			}
+		}
+	}
+	shown := dsnShown(t.DSN)
+	hide := func(s string) string { return hideDSN(t.DSN, s) }
+	db := &scenario.DB{Name: shown, Driver: t.Driver}
 	db.Query = func(ctx context.Context, query string, params []any) (scenario.DBResult, error) {
 		with := map[string]any{"dsn": t.DSN, "query": query}
 		if len(params) > 0 {
@@ -601,9 +612,11 @@ func dbTarget(caller *probe.ActionCaller, actions map[string]string, t dbReq) (*
 		}
 		res, err := callRes(ctx, caller, dbAction, with)
 		if err != nil {
-			return scenario.DBResult{}, err
+			return scenario.DBResult{}, errors.New(hide(err.Error()))
 		}
-		return dbResult(res), nil
+		out := dbResult(res)
+		out.Error = hide(out.Error)
+		return out, nil
 	}
 	db.Tables = func(ctx context.Context) ([]scenario.DBTable, error) {
 		res, err := db.Query(ctx, tablesQuery[t.Driver], nil)
@@ -631,7 +644,7 @@ WHERE table_schema = DATABASE()
 ORDER BY table_name, ordinal_position`,
 	"sqlite": `SELECT m.name AS table_name, p.name AS column_name, p.type AS data_type
 FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p
-WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'
+WHERE m.type IN ('table', 'view') AND m.name NOT LIKE 'sqlite_%'
 ORDER BY m.name, p.cid`,
 }
 
@@ -671,26 +684,63 @@ func dbTables(rows []map[string]any) []scenario.DBTable {
 	return tables
 }
 
+// hideDSN returns s, as what the db action says, such as an error that
+// quotes the DSN, with dsn as it is shown, and its password hidden.
+func hideDSN(dsn, s string) string {
+	s = strings.ReplaceAll(s, dsn, dsnShown(dsn))
+	if u, err := url.Parse(dsn); err == nil {
+		if p, ok := u.User.Password(); ok && len(p) >= 3 {
+			s = strings.ReplaceAll(s, p, "***")
+			s = strings.ReplaceAll(s, url.QueryEscape(p), "***")
+		}
+	}
+	return s
+}
+
+// sqlitePath is the file of a SQLite DSN, or "" for one in memory.
+func sqlitePath(dsn string) string {
+	if strings.Contains(dsn, ":memory:") {
+		return ""
+	}
+	path := dsn[len("file:"):]
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	return path
+}
+
 // dsnShown is dsn with its password, of its user or of a parameter,
-// hidden, as the tester and the record see it.
+// hidden, as the tester and the record see it. A DSN that is not a URL
+// has all between its scheme and its host hidden.
 func dsnShown(dsn string) string {
-	u, err := url.Parse(dsn)
-	if err != nil || u.Scheme == "file" || u.Scheme == "" {
+	if strings.HasPrefix(strings.ToLower(dsn), "file:") {
 		return dsn
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		start, end := strings.Index(dsn, "://"), strings.LastIndex(dsn, "@")
+		if start < 0 || end < start {
+			return "(a DSN that is not a URL)"
+		}
+		return dsn[:start+3] + "***" + dsn[end:]
 	}
 	if _, has := u.User.Password(); has {
 		u.User = url.UserPassword(u.User.Username(), "***")
 	}
+	// The query is rewritten only when it holds a password, so that one
+	// without stays as it was given.
 	q := u.Query()
+	hidden := false
 	for k := range q {
 		if strings.EqualFold(k, "password") || strings.EqualFold(k, "sslpassword") {
 			q.Set(k, "***")
+			hidden = true
 		}
 	}
-	if len(q) > 0 {
+	if hidden {
 		u.RawQuery = q.Encode()
 	}
-	return strings.Replace(u.String(), "%2A%2A%2A", "***", -1)
+	return strings.ReplaceAll(u.String(), "%2A%2A%2A", "***")
 }
 
 // mailTarget returns the mailbox of t, read through probe-jmap: the action

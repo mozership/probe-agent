@@ -99,7 +99,8 @@ func (d *dbDriver) Handles(call llm.Call) bool {
 func (d *dbDriver) Brief() string {
 	return `The ` + dialect(d.db.Driver) + ` database ` + d.shownName + `, which you read through the tools that start with db_, to check what your moves on the other targets did. You cannot write to it:
 - db_tables lists its tables and their columns.
-- db_query runs one statement that reads, as SELECT, with no semicolon, and shows its rows. Give LIMIT to a query of a large table; only the first ` + fmt.Sprint(maxDBRows) + ` rows are shown.`
+- db_query runs one statement that reads, as SELECT, with no semicolon, and shows its rows, each as a JSON object. Give LIMIT to a query of a large table; only the first ` + fmt.Sprint(maxDBRows) + ` rows are shown.
+- Give each column a name of its own, as SELECT o.id AS order_id, u.id AS user_id: two of one name come back as one. Cast an integer above 2^53 and an exact time to text, and read a binary column as hex, as they do not come back as they are.`
 }
 
 // dialect names the SQL of driver.
@@ -208,12 +209,7 @@ func (d *dbDriver) query(ctx context.Context, in dbInput) (string, error) {
 	}
 	params := make([]any, len(in.Params))
 	for i, p := range in.Params {
-		s, isStr := p.(string)
-		if !isStr {
-			params[i] = p
-			continue
-		}
-		if params[i], err = d.secrets.fill(s); err != nil {
+		if params[i], err = d.fillAny(p); err != nil {
 			return "", err
 		}
 	}
@@ -221,9 +217,43 @@ func (d *dbDriver) query(ctx context.Context, in dbInput) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// The rows are masked before they are written as JSON, which escapes
+	// what a secret may hold, as & or a quote.
+	for i, row := range res.Rows {
+		res.Rows[i], _ = d.secrets.maskAny(row).(map[string]any)
+	}
 	text := dbText(res)
 	d.last, d.lastText = d.secrets.mask(q), d.secrets.mask(text)
 	return text, nil
+}
+
+// fillAny fills the secrets in the strings of v, however deep.
+func (d *dbDriver) fillAny(v any) (any, error) {
+	switch v := v.(type) {
+	case string:
+		return d.secrets.fill(v)
+	case []any:
+		out := make([]any, len(v))
+		for i, e := range v {
+			f, err := d.fillAny(e)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = f
+		}
+		return out, nil
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, e := range v {
+			f, err := d.fillAny(e)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = f
+		}
+		return out, nil
+	}
+	return v, nil
 }
 
 // dbText tells the answer to a statement: its rows, each as a JSON object,
@@ -246,11 +276,14 @@ func dbText(r DBResult) string {
 			fmt.Fprintf(&b, "\n(%d more rows are not shown; give the query a LIMIT, or narrow it.)", len(r.Rows)-maxDBRows)
 			break
 		}
-		line, err := json.Marshal(row)
-		if err != nil {
-			line = []byte(fmt.Sprint(row))
+		var line strings.Builder
+		enc := json.NewEncoder(&line)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(row); err != nil {
+			line.Reset()
+			line.WriteString(fmt.Sprint(row))
 		}
-		b.WriteString("\n" + string(line))
+		b.WriteString("\n" + strings.TrimSuffix(line.String(), "\n"))
 	}
 	return b.String()
 }

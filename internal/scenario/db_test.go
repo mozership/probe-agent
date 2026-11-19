@@ -136,6 +136,21 @@ func TestDB_TablesThatCannotBeRead(t *testing.T) {
 	}
 }
 
+func TestDB_MasksASecretInTheRows(t *testing.T) {
+	db := &fakeDB{answers: []DBResult{{Rows: []map[string]any{{"note": `Tom&Jerry<1> "x"`, "nested": []any{"Tom&Jerry<1>"}}}}}}
+	cfg := config()
+	cfg.Secrets["NOTE"] = "Tom&Jerry<1>"
+	d := newDBDriver(newLedger(cfg), *db.target())
+	res, _ := d.Do(t.Context(), llm.Call{ID: "1", Name: "db_query", Input: []byte(`{"query":"SELECT note FROM t WHERE a = ? AND b = ?","params":[["{secret:NOTE}"],7]}`)})
+	if res.IsError || strings.Contains(res.Text, "Tom") || res.Text != `1 row:`+"\n"+`{"nested":["{secret:NOTE}"],"note":"{secret:NOTE} \"x\""}` {
+		t.Errorf("rows %q", res.Text)
+	}
+	// A secret in a param, however deep, is filled in.
+	if !reflect.DeepEqual(db.params[0], []any{[]any{"Tom&Jerry<1>"}, 7.0}) {
+		t.Errorf("params %#v", db.params[0])
+	}
+}
+
 func TestDBText(t *testing.T) {
 	if got := dbText(DBResult{}); got != "No rows." {
 		t.Errorf("no rows %q", got)

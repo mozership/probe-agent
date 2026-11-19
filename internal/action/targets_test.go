@@ -1137,6 +1137,10 @@ func TestDSNShown(t *testing.T) {
 		"mysql://root@db.test/shop":                                  "mysql://root@db.test/shop",
 		"postgres://db.test/shop?user=r&password=s3cret":             "postgres://db.test/shop?password=***&user=r",
 		"file:./data/app.db":                                         "file:./data/app.db",
+		"postgres://db.test/shop?application_name=a%20b&sslmode=off": "postgres://db.test/shop?application_name=a%20b&sslmode=off",
+		"postgres://u:s3cr/et@h/d":                                   "postgres://***@h/d",
+		"mysql://u:pw@tcp(h:3306)/d":                                 "mysql://***@tcp(h:3306)/d",
+		"postgres://u:p w/x":                                         "(a DSN that is not a URL)",
 	} {
 		if got := dsnShown(dsn); got != want {
 			t.Errorf("%s: %s, want %s", dsn, got, want)
@@ -1147,7 +1151,7 @@ func TestDSNShown(t *testing.T) {
 func TestDBTarget(t *testing.T) {
 	t.Setenv(probe.ExecutableEnv, "/usr/bin/probe")
 	caller := probe.NewActionCaller(actionrpc.Call{}, "")
-	if _, err := dbTarget(caller, map[string]string{"db": "github.com/x/y@" + strings.Repeat("a", 40)}, dbReq{DSN: "file:a.db", Driver: "sqlite"}); err == nil || !strings.Contains(err.Error(), "give the name db to") {
+	if _, err := dbTarget(caller, map[string]string{"db": "github.com/x/y@" + strings.Repeat("a", 40)}, dbReq{DSN: "file::memory:", Driver: "sqlite"}); err == nil || !strings.Contains(err.Error(), "give the name db to") {
 		t.Errorf("err %v", err)
 	}
 	db, err := dbTarget(caller, nil, dbReq{DSN: "postgres://r:pw@db.test/shop", Driver: "postgres"})
@@ -1183,5 +1187,53 @@ func TestEvidence_WritesTheLastStatementOnTheDatabase(t *testing.T) {
 		if !strings.Contains(string(md), want) {
 			t.Errorf("the report lacks %q:\n%s", want, md)
 		}
+	}
+}
+
+func TestParse_RefusesADSNThatIsNotAURL(t *testing.T) {
+	_, err := parse(map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"db": map[string]any{"dsn": "POSTGRES://u:s3cr/et@h/d"}}})
+	if err == nil || !strings.Contains(err.Error(), "percent-encode a special character of its password") || strings.Contains(err.Error(), "s3cr") {
+		t.Errorf("err %v", err)
+	}
+	if got := dbDriverOf("MySQL://u@h/d"); got != "mysql" {
+		t.Errorf("driver %q", got)
+	}
+}
+
+func TestHideDSN(t *testing.T) {
+	got := hideDSN("postgres://reader:s3cret%2Fx@db.test/shop", `failed to connect to `+"`user=reader database=shop`"+`: password "s3cret/x" refused; dsn postgres://reader:s3cret%2Fx@db.test/shop`)
+	if strings.Contains(got, "s3cret") {
+		t.Errorf("hidden %q", got)
+	}
+	if got := hideDSN("file:a.db", "no such table: x"); got != "no such table: x" {
+		t.Errorf("hidden %q", got)
+	}
+}
+
+func TestDBTarget_AMissingSQLiteFile(t *testing.T) {
+	t.Setenv(probe.ExecutableEnv, "/usr/bin/probe")
+	caller := probe.NewActionCaller(actionrpc.Call{}, "")
+	dir := t.TempDir()
+	if _, err := dbTarget(caller, nil, dbReq{DSN: "file:" + dir + "/typo.db?mode=ro", Driver: "sqlite"}); err == nil || !strings.Contains(err.Error(), "names no SQLite file at "+dir+"/typo.db") {
+		t.Errorf("err %v", err)
+	}
+	if _, err := os.Stat(dir + "/typo.db"); err == nil {
+		t.Error("the file was made")
+	}
+	if err := os.WriteFile(dir+"/app.db", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbTarget(caller, nil, dbReq{DSN: "file:" + dir + "/app.db", Driver: "sqlite"}); err != nil {
+		t.Errorf("err %v", err)
+	}
+	if _, err := dbTarget(caller, nil, dbReq{DSN: "file::memory:", Driver: "sqlite"}); err != nil {
+		t.Errorf("err %v", err)
+	}
+}
+
+func TestDBGuard_KeepsTheRestOfTheGuard(t *testing.T) {
+	g := dbGuard(actionrpc.Guard{AllowActions: []string{"agent"}, Keeps: map[string][]string{"http": {actionrpc.KindReadOnly}}})
+	if !slices.Equal(g.AllowActions, []string{"agent"}) || !slices.Equal(g.Keeps["http"], []string{actionrpc.KindReadOnly}) || !g.Runs("db") {
+		t.Errorf("guard %+v", g)
 	}
 }

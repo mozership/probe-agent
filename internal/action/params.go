@@ -818,8 +818,14 @@ func readDB(t map[string]any, d *dbReq) []error {
 		errs = append(errs, errors.New("targets.db.dsn is required"))
 	default:
 		d.Driver = dbDriverOf(d.DSN)
-		if d.Driver == "" {
+		switch {
+		case d.Driver == "":
 			errs = append(errs, errors.New("targets.db.dsn must start with postgres://, postgresql://, mysql:// or file: for SQLite"))
+		case d.Driver != "sqlite":
+			// The error leaves the DSN out, as it holds the password.
+			if _, err := url.Parse(d.DSN); err != nil {
+				errs = append(errs, errors.New("targets.db.dsn is not a URL the db action can read: percent-encode a special character of its password, such as / ? # @ or a space"))
+			}
 		}
 	}
 	if v, ok := t["timeout"]; ok {
@@ -836,6 +842,7 @@ func readDB(t map[string]any, d *dbReq) []error {
 // dbDriverOf names the driver of dsn by its scheme, as the db action of
 // Probe reads it, or "" for one it does not take.
 func dbDriverOf(dsn string) string {
+	dsn = strings.ToLower(dsn)
 	switch {
 	case strings.HasPrefix(dsn, "postgres://"), strings.HasPrefix(dsn, "postgresql://"):
 		return "postgres"

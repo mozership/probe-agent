@@ -371,7 +371,9 @@ The tester sends nothing: the agent sends Email/query and Email/get alone. As th
 
 ### A database
 
-The tester reads a database to check what its moves on the other targets did, as that an order is saved, not only that a page says so. The agent calls the db action of Probe as a step of the run would, once for each statement, read-only whatever the guard of the run: the action runs one statement that reads, as `SELECT`, with no semicolon, in a read-only transaction, or on a SQLite connection that only queries, so the tester cannot write. It needs Probe v1.37.0 or later.
+The tester reads a database to check what its moves on the other targets did, as that an order is saved, not only that a page says so. The agent calls the db action of Probe as a step of the run would, once for each statement, read-only whatever the guard of the run: the action runs one statement that reads, as `SELECT`, with no semicolon, in a read-only transaction, or on a SQLite connection that only queries, so a statement that writes rows is refused. It needs Probe v1.37.0 or later.
+
+A read-only transaction still lets through what a function does outside it: on PostgreSQL, a superuser can end the sessions of others with `pg_terminate_backend`, or read a file of the server with `pg_read_file`; on MySQL, `SELECT ... INTO OUTFILE` writes a file with the FILE privilege. Give `dsn` a user that can only read the tables of the application: not a superuser, not the owner of the application's role, and without FILE.
 
 ```yaml
 jobs:
@@ -392,13 +394,13 @@ jobs:
 
 | Key | Type | Description |
 |---|---|---|
-| `dsn` | String | The database, as the db action takes it: `postgres://`, `postgresql://`, `mysql://`, or `file:` for SQLite. The tester and the result see it with its password hidden. Give it a user that can only read, as well |
+| `dsn` | String | The database, as the db action takes it: `postgres://`, `postgresql://`, `mysql://`, or `file:` for SQLite, a file that has to be there. A special character of the password, such as `/` or `@`, is percent-encoded. The tester and the result see it with its password hidden |
 | `timeout` | String or Number | The timeout of each statement, as `10s` or a number of seconds; 30 seconds by default, as in the db action |
 
 | Tool | What it does |
 |---|---|
 | `db_tables` | Lists the tables and their columns, with their types |
-| `db_query` | Runs one statement that reads, with `params` for its placeholders, and shows its rows, each as a JSON object, up to 50, or the error of the database |
+| `db_query` | Runs one statement that reads, with `params` for its placeholders, and shows its rows, each as a JSON object, up to 50, or the error of the database. The tester is told to name each column apart, as two of one name come back as one, and to cast an integer above 2^53, an exact time and a binary column to text, as they come back changed |
 
 As the test starts, the tester is told the tables of the database. A row can hold personal data: the tester sees what it reads, as it sees a page, and `secrets` masks what the workflow names. `{secret:NAME}` in a statement or a param is replaced with the value of the secret. The judge checks its quotes against what the tester read, and is given the last statement and its answer, which `report.md` shows. A `cache` is refused.
 
