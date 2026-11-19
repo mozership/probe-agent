@@ -10,6 +10,7 @@ package action
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -633,6 +634,7 @@ func mailReadCalls(id string) []any {
 	return []any{map[string]any{"method": "Email/get", "id": "get", "args": map[string]any{
 		"ids":                 []any{id},
 		"properties":          props,
+		"bodyProperties":      []any{"partId", "type"},
 		"fetchTextBodyValues": true,
 		"fetchHTMLBodyValues": true,
 		"maxBodyValueBytes":   200000,
@@ -656,7 +658,7 @@ func jmapWith(t mailReq, calls []any) map[string]any {
 	if t.AccountID != "" {
 		with["account_id"] = t.AccountID
 	}
-	if t.Timeout > 0 {
+	if t.TimeoutSet {
 		with["timeout"] = t.Timeout.String()
 	}
 	return with
@@ -684,7 +686,13 @@ func jmapResults(name string, cr *probe.CallResult) (map[string]any, error) {
 		}
 		return nil, fmt.Errorf("the mail server answered %s", status)
 	}
+	// A server that answers 200 with what is not JMAP, as the page of a
+	// sign-in, gives no method responses, which probe-jmap fails.
 	results, _ := res["results"].(map[string]any)
+	if status, _ := toInt(cr.Result["status"]); status != 0 || len(results) == 0 {
+		status, _ := res["status"].(string)
+		return nil, fmt.Errorf("the mail server answered %s, but with no JMAP method responses", status)
+	}
 	return results, nil
 }
 
@@ -692,6 +700,9 @@ func jmapResults(name string, cr *probe.CallResult) (map[string]any, error) {
 func mailList(results map[string]any) (scenario.MailList, error) {
 	var list scenario.MailList
 	query, _ := results["query"].(map[string]any)
+	if _, ok := results["get"].(map[string]any); query == nil || !ok {
+		return scenario.MailList{}, errors.New("the mail server answered the search without the results of Email/query and Email/get")
+	}
 	list.Total, _ = toInt(query["total"])
 	got, _ := results["get"].(map[string]any)
 	mails, _ := got["list"].([]any)
@@ -720,29 +731,36 @@ func mailMessage(results map[string]any, id string) (scenario.MailMessage, error
 		return scenario.MailMessage{}, fmt.Errorf("the mail server answered Email/get with a mail that is not an object")
 	}
 	m := scenario.MailMessage{MailSummary: mailSummary(e)}
+	// textBody and htmlBody list the parts to show, each by its partId and
+	// its type: a mail with text alone has its text part in both, and one
+	// with HTML alone its HTML part, so each part is taken by its type, and
+	// once.
 	values, _ := e["bodyValues"].(map[string]any)
-	body := func(key string) string {
+	var texts, htmls []string
+	seen := map[string]bool{}
+	for _, key := range []string{"textBody", "htmlBody"} {
 		parts, _ := e[key].([]any)
-		var texts []string
 		for _, p := range parts {
 			part, _ := p.(map[string]any)
 			partID, _ := part["partId"].(string)
+			if partID == "" || seen[partID] {
+				continue
+			}
+			seen[partID] = true
 			v, _ := values[partID].(map[string]any)
-			if s, _ := v["value"].(string); s != "" {
+			s, _ := v["value"].(string)
+			if s == "" {
+				continue
+			}
+			switch typ, _ := part["type"].(string); strings.ToLower(typ) {
+			case "text/html":
+				htmls = append(htmls, s)
+			case "text/plain", "":
 				texts = append(texts, s)
 			}
 		}
-		return strings.Join(texts, "\n")
 	}
-	m.Text, m.HTML = body("textBody"), body("htmlBody")
-	// A mail with HTML alone has it as its text body too.
-	if m.Text == m.HTML {
-		if strings.Contains(m.HTML, "<") {
-			m.Text = ""
-		} else {
-			m.HTML = ""
-		}
-	}
+	m.Text, m.HTML = strings.Join(texts, "\n"), strings.Join(htmls, "\n")
 	return m, nil
 }
 

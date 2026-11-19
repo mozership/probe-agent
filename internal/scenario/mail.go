@@ -74,9 +74,11 @@ type mailDriver struct {
 	// shownURL is the server as the model and the record see it, with the
 	// secrets in it masked.
 	shownURL string
-	// start is when the test started, which a search for new mail is
-	// after.
-	start time.Time
+	// start is when the test started. A search for new mail is for those
+	// after latest, the mail that came last as it started, by the clock of
+	// the server, which may not be that of the agent.
+	start  time.Time
+	latest *MailSummary
 	// opening is what the mailbox held as the test started.
 	opening string
 	// last is the last mail read, or else the last search, for the judge.
@@ -105,6 +107,7 @@ func (d *mailDriver) Open(ctx context.Context) error {
 		d.opening = "The mailbox at " + d.shownURL + " is empty."
 	default:
 		m := list.Mails[0]
+		d.latest = &m
 		d.opening = d.secrets.mask(fmt.Sprintf("The mailbox at %s holds %s; the latest, %q from %s, came at %s.",
 			d.shownURL, mails(list.Total), m.Subject, strings.Join(m.From, ", "), m.Received.UTC().Format(time.RFC3339)))
 	}
@@ -135,13 +138,13 @@ func (d *mailDriver) Opening() string { return d.opening }
 // mailInput is the input of any tool of the mailbox; each tool reads the
 // fields it takes.
 type mailInput struct {
-	From    string `json:"from"`
-	To      string `json:"to"`
-	Subject string `json:"subject"`
-	Text    string `json:"text"`
-	NewOnly bool   `json:"new_only"`
-	Wait    int    `json:"wait"`
-	ID      string `json:"id"`
+	From    string  `json:"from"`
+	To      string  `json:"to"`
+	Subject string  `json:"subject"`
+	Text    string  `json:"text"`
+	NewOnly bool    `json:"new_only"`
+	Wait    float64 `json:"wait"`
+	ID      string  `json:"id"`
 }
 
 // Do runs a call of a tool of the mailbox.
@@ -191,33 +194,62 @@ func (d *mailDriver) search(ctx context.Context, in mailInput) (string, error) {
 			return "", err
 		}
 	}
-	if in.NewOnly {
-		q.After = d.start
+	newOnly := in.NewOnly && !d.start.IsZero()
+	switch {
+	case !newOnly:
+	case d.latest != nil && !d.latest.Received.IsZero():
+		// A time of JMAP is to the second, and after is strict, so the
+		// search is from the second before the latest mail, which is then
+		// left out.
+		q.After = d.latest.Received.Add(-time.Second)
+	case d.latest == nil && d.opening != "" && !strings.Contains(d.opening, "could not be read"):
+		// The mailbox was empty: every mail is new.
+	default:
+		// The mailbox could not be read: the clock of the agent, with
+		// room for that of the server to be behind.
+		q.After = d.start.Add(-time.Minute)
 	}
-	wait := min(time.Duration(max(in.Wait, 0))*time.Second, maxMailWait)
-	deadline := time.Now().Add(wait)
+	wait := min(time.Duration(max(in.Wait, 0)*float64(time.Second)), maxMailWait)
+	began := time.Now()
+	deadline := began.Add(wait)
 	for {
 		list, err := d.box.Search(ctx, q)
 		if err != nil {
 			return "", err
 		}
+		if newOnly && d.latest != nil {
+			list = d.withoutLatest(list)
+		}
 		if len(list.Mails) > 0 || !time.Now().Before(deadline) {
-			return mailListText(list, wait), nil
+			return mailListText(list, wait > 0, time.Since(began)), nil
 		}
 		select {
 		case <-ctx.Done():
-			return mailListText(list, wait), nil
+			return mailListText(list, wait > 0, time.Since(began)), nil
 		case <-time.After(min(mailPoll, time.Until(deadline))):
 		}
 	}
 }
 
-// mailListText tells the mails of list, of a search that waited wait.
-func mailListText(list MailList, wait time.Duration) string {
+// withoutLatest leaves out of list the mail that came last as the test
+// started.
+func (d *mailDriver) withoutLatest(list MailList) MailList {
+	i := slices.IndexFunc(list.Mails, func(m MailSummary) bool { return m.ID == d.latest.ID })
+	if i < 0 {
+		return list
+	}
+	list.Mails = slices.Delete(slices.Clone(list.Mails), i, i+1)
+	list.Total--
+	return list
+}
+
+// mailListText tells the mails of list, of a search that waited, if it
+// was to wait, as long as took.
+func mailListText(list MailList, waited bool, took time.Duration) string {
 	if len(list.Mails) == 0 {
 		s := "No mail matches"
-		if wait > 0 {
-			s += fmt.Sprintf(", after waiting %s", wait)
+		if waited {
+			s += fmt.Sprintf(", after waiting %s", took.Round(time.Second))
 		}
 		return s + "."
 	}
@@ -264,8 +296,11 @@ func (d *mailDriver) read(ctx context.Context, id string) (string, error) {
 // mailText tells a mail: its headers, its text, and its links.
 func mailText(m MailMessage) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "From: %s\nTo: %s\nSubject: %s\nDate: %s\n\n", strings.Join(m.From, ", "), strings.Join(m.To, ", "),
-		m.Subject, m.Received.UTC().Format(time.RFC3339))
+	fmt.Fprintf(&b, "From: %s\nTo: %s\nSubject: %s\n", strings.Join(m.From, ", "), strings.Join(m.To, ", "), m.Subject)
+	if !m.Received.IsZero() {
+		fmt.Fprintf(&b, "Date: %s\n", m.Received.UTC().Format(time.RFC3339))
+	}
+	b.WriteString("\n")
 	text := strings.TrimSpace(m.Text)
 	if text == "" && m.HTML != "" {
 		text = htmlText(m.HTML)
@@ -283,8 +318,9 @@ func mailText(m MailMessage) string {
 	return b.String()
 }
 
-// urlPattern finds a URL in plain text.
-var urlPattern = regexp.MustCompile(`https?://[^\s<>"'()\[\]]+`)
+// urlPattern finds a URL in plain text, which may hold parentheses, as
+// one of Wikipedia does.
+var urlPattern = regexp.MustCompile(`https?://[^\s<>"'\[\]]+`)
 
 // mailLinks lists the links of m, of its HTML and of its text, each once,
 // in the order they come.
@@ -292,6 +328,11 @@ func mailLinks(m MailMessage) []string {
 	var links []string
 	add := func(l string) {
 		l = strings.TrimRight(strings.TrimSpace(l), ".,;:!?")
+		// A closing parenthesis with no opening one in the URL closes
+		// the text around it.
+		for strings.HasSuffix(l, ")") && strings.Count(l, "(") < strings.Count(l, ")") {
+			l = strings.TrimRight(strings.TrimSuffix(l, ")"), ".,;:!?")
+		}
 		if u, err := url.Parse(l); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 			return
 		}
@@ -348,12 +389,16 @@ func htmlText(s string) string {
 		case html.StartTagToken, html.EndTagToken, html.SelfClosingTagToken:
 			name, _ := z.TagName()
 			switch string(name) {
-			case "style", "script", "head":
+			case "style", "script", "title":
 				if tt == html.StartTagToken {
 					skip++
 				} else if tt == html.EndTagToken && skip > 0 {
 					skip--
 				}
+			case "body":
+				// What a head left open, as a title never closed, ends
+				// here.
+				skip = 0
 			case "br", "p", "div", "tr", "li", "h1", "h2", "h3", "h4", "table":
 				b.WriteString("\n")
 			}

@@ -184,17 +184,67 @@ func TestMail_AnEmptyMailboxAndASearchThatTimesOut(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	res, _ := d.Do(ctx, llm.Call{ID: "1", Name: "mail_search", Input: []byte(`{"wait": 60}`)})
-	if res.IsError || res.Text != "No mail matches, after waiting 1m0s." {
+	if res.IsError || res.Text != "No mail matches, after waiting 0s." {
 		t.Errorf("search %+v", res)
+	}
+}
+
+func TestMail_NewOnlyIsByTheClockOfTheServer(t *testing.T) {
+	// The clock of the server is an hour behind that of the agent.
+	behind := time.Now().Add(-time.Hour).Truncate(time.Second)
+	box := &fakeMail{mails: []MailMessage{
+		{MailSummary: MailSummary{ID: "m1", Subject: "Old", Received: behind}},
+		{MailSummary: MailSummary{ID: "m2", Subject: "New", Received: behind}},
+	}, arrivals: []int{0, 2}}
+	d := newMailDriver(newLedger(config()), *box.target())
+	if err := d.Open(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// The new mail came in the same second as the old one, by a clock an
+	// hour behind.
+	res, _ := d.Do(t.Context(), llm.Call{ID: "1", Name: "mail_search", Input: []byte(`{"new_only": true, "wait": 1.5}`)})
+	if res.IsError || !strings.HasPrefix(res.Text, "1 mail matches:\n- id=m2 ") {
+		t.Errorf("search %+v", res)
+	}
+	if q := box.searches[1]; !q.After.Equal(behind.Add(-time.Second)) {
+		t.Errorf("after %v, want a second before %v", q.After, behind)
+	}
+
+	// A mailbox that was empty: every mail is new.
+	box = &fakeMail{}
+	d = newMailDriver(newLedger(config()), *box.target())
+	_ = d.Open(t.Context())
+	_, _ = d.Do(t.Context(), llm.Call{ID: "1", Name: "mail_search", Input: []byte(`{"new_only": true}`)})
+	if !box.searches[1].After.IsZero() {
+		t.Errorf("after %v", box.searches[1].After)
+	}
+	// One that could not be read: a minute before the test, by the clock
+	// of the agent.
+	box = &fakeMail{err: errors.New("down")}
+	d = newMailDriver(newLedger(config()), *box.target())
+	_ = d.Open(t.Context())
+	box.err = nil
+	_, _ = d.Do(t.Context(), llm.Call{ID: "1", Name: "mail_search", Input: []byte(`{"new_only": true}`)})
+	if after := box.searches[1].After; !after.Equal(d.start.Add(-time.Minute)) {
+		t.Errorf("after %v, start %v", after, d.start)
+	}
+}
+
+func TestMailText(t *testing.T) {
+	// A mail of text alone, with a link in angle brackets and no date.
+	got := mailText(MailMessage{MailSummary: MailSummary{From: []string{"a@x.test"}, Subject: "Hi"}, Text: "Confirm here:\n<https://example.com/confirm?token=abc>\nSupport <support@example.com>."})
+	want := "From: a@x.test\nTo: \nSubject: Hi\n\nConfirm here:\n<https://example.com/confirm?token=abc>\nSupport <support@example.com>.\n\nLinks:\n- https://example.com/confirm?token=abc"
+	if got != want {
+		t.Errorf("mail:\n%s\nwant:\n%s", got, want)
 	}
 }
 
 func TestMailLinks(t *testing.T) {
 	m := MailMessage{
-		Text: "Open https://app.test/a?x=1. Or (https://app.test/b), or ftp://no.test/c, or https://app.test/a?x=1 again.",
+		Text: "Open https://app.test/a?x=1. Or (https://app.test/b), or ftp://no.test/c, or https://app.test/a?x=1 again. See https://en.wikipedia.org/wiki/Foo_(bar).",
 		HTML: `<p><a href="https://app.test/b">b</a> <a href="mailto:x@y">mail</a> <a href="/relative">r</a> <A HREF="https://app.test/d">d</A></p>`,
 	}
-	want := []string{"https://app.test/b", "https://app.test/d", "https://app.test/a?x=1"}
+	want := []string{"https://app.test/b", "https://app.test/d", "https://app.test/a?x=1", "https://en.wikipedia.org/wiki/Foo_(bar)"}
 	if got := mailLinks(m); !reflect.DeepEqual(got, want) {
 		t.Errorf("links %q, want %q", got, want)
 	}
@@ -203,6 +253,11 @@ func TestMailLinks(t *testing.T) {
 func TestHTMLText(t *testing.T) {
 	got := htmlText(`<html><head><title>T</title></head><body><script>x()</script><h1>Hi&amp;bye</h1><table><tr><td>a</td><td>b</td></tr></table>line<br>next</body></html>`)
 	if want := "Hi&bye\na b\nline\nnext"; got != want {
+		t.Errorf("text %q, want %q", got, want)
+	}
+	// A head that is never closed, and a title.
+	got = htmlText(`<html><head><meta charset="utf-8"><title>Mail</title><style>p{}</style><body><p>Confirm your subscription</p></body></html>`)
+	if want := "Confirm your subscription"; got != want {
 		t.Errorf("text %q, want %q", got, want)
 	}
 }

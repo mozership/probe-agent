@@ -199,7 +199,7 @@ func (n *newsletter) call(name string, args map[string]any, results map[string]m
 	switch name {
 	case "Email/query":
 		filter, _ := args["filter"].(map[string]any)
-		var ids []string
+		ids := []string{}
 		for i := len(n.mails) - 1; i >= 0; i-- {
 			if m := n.mails[i]; m.matches(filter) {
 				ids = append(ids, m.ID)

@@ -359,12 +359,12 @@ jobs:
 | `basic_auth` | Object | `username` and `password` for HTTP Basic authentication |
 | `headers` | Object | Headers sent with each request, such as `Authorization: Bearer <token>` |
 | `account_id` | String | The account to read; the primary account of mail by default |
-| `timeout` | String or Number | The timeout of each call, as `10s` or a number of seconds; 30 seconds by default, as in probe-jmap |
+| `timeout` | String or Number | The timeout of each call, as `10s` or a number of seconds; 30 seconds by default, as in probe-jmap, and `0` removes it |
 
 | Tool | What it does |
 |---|---|
-| `mail_search` | Lists the mails that match a sender, a recipient, a subject or a text, the latest first, with their ids and the start of their text. With `new_only`, only those that came after the test started; with `wait`, it waits up to that many seconds, at most 120 and within the timeout of the test, for one to come |
-| `mail_read` | Shows a mail by its id: its headers, its text, or the text of its HTML when it has no other, and its links |
+| `mail_search` | Lists the mails that match a sender, a recipient, a subject or a text, the latest first, with their ids and the start of their text. With `new_only`, only those that came after the test started, after the latest mail the mailbox held then, by the clock of the server; with `wait`, it waits up to that many seconds, at most 120 and within the timeout of the test, for one to come |
+| `mail_read` | Shows a mail by its id: its headers, its plain text, or the text of its HTML when it has none, and the links of both |
 
 The tester sends nothing: the agent sends Email/query and Email/get alone. As the test starts, the tester is told how many mails the mailbox holds and which came last. `{secret:NAME}` in a search is replaced with the value of the secret, and what the mailbox shows is read with the values masked. The judge checks its quotes against what the tester read, and is given the last mail read, or the last search, which `report.md` shows. A `cache` is refused.
 

@@ -141,8 +141,10 @@ type mailReq struct {
 	Headers map[string]string
 	// AccountID is the account to read; empty for the primary one.
 	AccountID string
-	// Timeout bounds each call; zero for the default of probe-jmap.
-	Timeout time.Duration
+	// Timeout bounds each call, when TimeoutSet; 0 removes the bound, as
+	// in probe-jmap, whose default is taken without one.
+	Timeout    time.Duration
+	TimeoutSet bool
 }
 
 // graphqlReq is targets.graphql.
@@ -773,7 +775,7 @@ func readMail(t map[string]any, m *mailReq) []error {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("targets.mail.timeout: %w", err))
 		} else {
-			m.Timeout = d
+			m.Timeout, m.TimeoutSet = d, true
 		}
 	}
 	return errs

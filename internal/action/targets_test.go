@@ -873,7 +873,7 @@ func TestParse_TargetsMail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &mailReq{URL: "https://mail.test", Username: "bob", Password: "pw", Headers: map[string]string{"X-Tenant": "7"}, AccountID: "A1", Timeout: 10 * time.Second}
+	want := &mailReq{URL: "https://mail.test", Username: "bob", Password: "pw", Headers: map[string]string{"X-Tenant": "7"}, AccountID: "A1", Timeout: 10 * time.Second, TimeoutSet: true}
 	if !reflect.DeepEqual(r.Mail, want) {
 		t.Fatalf("mail %+v", r.Mail)
 	}
@@ -884,7 +884,7 @@ func TestParse_TargetsMail(t *testing.T) {
 
 func TestJMAPWith(t *testing.T) {
 	calls := []any{map[string]any{"method": "Email/get"}}
-	got := jmapWith(mailReq{URL: "https://mail.test", Username: "bob", Password: "pw", Headers: map[string]string{"X-Tenant": "7"}, AccountID: "A1", Timeout: 5 * time.Second}, calls)
+	got := jmapWith(mailReq{URL: "https://mail.test", Username: "bob", Password: "pw", Headers: map[string]string{"X-Tenant": "7"}, AccountID: "A1", Timeout: 5 * time.Second, TimeoutSet: true}, calls)
 	want := map[string]any{
 		"url": "https://mail.test", "calls": calls, "basic_auth": map[string]any{"username": "bob", "password": "pw"},
 		"headers": map[string]any{"X-Tenant": "7"}, "account_id": "A1", "timeout": "5s",
@@ -893,6 +893,10 @@ func TestJMAPWith(t *testing.T) {
 		t.Errorf("with %v, want %v", got, want)
 	}
 	if got := jmapWith(mailReq{URL: "http://m.test"}, calls); !reflect.DeepEqual(got, map[string]any{"url": "http://m.test", "calls": calls}) {
+		t.Errorf("with %v", got)
+	}
+	// A timeout of 0 removes the bound of probe-jmap.
+	if got := jmapWith(mailReq{URL: "http://m.test", TimeoutSet: true}, calls); got["timeout"] != "0s" {
 		t.Errorf("with %v", got)
 	}
 }
@@ -947,6 +951,14 @@ func TestJMAPResults(t *testing.T) {
 	if _, err := jmapResults("jmap", res(map[string]any{"code": 401, "status": "401 Unauthorized"})); err == nil || err.Error() != "the mail server answered 401 Unauthorized" {
 		t.Errorf("err %v", err)
 	}
+	// A page of a sign-in, answered with 200, is no JMAP.
+	signIn := &probe.CallResult{Result: map[string]any{"status": 1, "res": map[string]any{"code": 200, "status": "200 OK", "errors": []any{}, "results": map[string]any{}, "body": "<html>Sign in</html>"}}}
+	if _, err := jmapResults("jmap", signIn); err == nil || err.Error() != "the mail server answered 200 OK, but with no JMAP method responses" {
+		t.Errorf("err %v", err)
+	}
+	if _, err := mailList(map[string]any{"get": map[string]any{}}); err == nil {
+		t.Error("a search without Email/query was taken")
+	}
 	if _, err := jmapResults("jm", &probe.CallResult{Result: map[string]any{}}); err == nil || err.Error() != "jm returned no res" {
 		t.Errorf("err %v", err)
 	}
@@ -955,20 +967,30 @@ func TestJMAPResults(t *testing.T) {
 func TestMailMessage(t *testing.T) {
 	read := map[string]any{"get": map[string]any{"list": []any{map[string]any{
 		"id": "m1", "subject": "Hi",
-		"textBody":   []any{map[string]any{"partId": "1"}},
-		"htmlBody":   []any{map[string]any{"partId": "2"}},
+		"textBody":   []any{map[string]any{"partId": "1", "type": "text/plain"}},
+		"htmlBody":   []any{map[string]any{"partId": "2", "type": "text/html"}},
 		"bodyValues": map[string]any{"1": map[string]any{"value": "Open https://a.test"}, "2": map[string]any{"value": "<a href=\"https://a.test\">Open</a>"}},
 	}}}}
 	m, err := mailMessage(read, "m1")
 	if err != nil || m.ID != "m1" || m.Text != "Open https://a.test" || m.HTML != `<a href="https://a.test">Open</a>` {
 		t.Errorf("mail %+v, %v", m, err)
 	}
-	// A mail of HTML alone has it as its text body as well.
+	// A mail of HTML alone has it as its text body as well, and one of text
+	// alone its text as its HTML body, each read by its type.
+	html := map[string]any{"partId": "2", "type": "text/html"}
 	read = map[string]any{"get": map[string]any{"list": []any{map[string]any{
-		"id": "m2", "textBody": []any{map[string]any{"partId": "2"}}, "htmlBody": []any{map[string]any{"partId": "2"}},
+		"id": "m2", "textBody": []any{html}, "htmlBody": []any{html},
 		"bodyValues": map[string]any{"2": map[string]any{"value": "<p>Hi</p>"}},
 	}}}}
 	if m, err := mailMessage(read, "m2"); err != nil || m.Text != "" || m.HTML != "<p>Hi</p>" {
+		t.Errorf("mail %+v, %v", m, err)
+	}
+	plain := map[string]any{"partId": "1", "type": "text/plain"}
+	read = map[string]any{"get": map[string]any{"list": []any{map[string]any{
+		"id": "m3", "textBody": []any{plain}, "htmlBody": []any{plain},
+		"bodyValues": map[string]any{"1": map[string]any{"value": "Open <https://a.test>"}},
+	}}}}
+	if m, err := mailMessage(read, "m3"); err != nil || m.Text != "Open <https://a.test>" || m.HTML != "" {
 		t.Errorf("mail %+v, %v", m, err)
 	}
 	if _, err := mailMessage(map[string]any{"get": map[string]any{"list": []any{}}}, "m9"); err == nil || err.Error() != "the mailbox has no mail m9" {
