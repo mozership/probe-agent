@@ -1,18 +1,37 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 )
 
 func TestNewsletter(t *testing.T) {
+	t.Setenv("DB_PATH", filepath.Join(t.TempDir(), "e2e.sqlite"))
 	srv := httptest.NewServer(newMux())
+	status := func(email string) string {
+		t.Helper()
+		db, err := sql.Open("sqlite", os.Getenv("DB_PATH"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		var s string
+		var confirmed sql.NullString
+		if err := db.QueryRow(`SELECT status, confirmed_at FROM subscriptions WHERE email = ?`, email).Scan(&s, &confirmed); err != nil {
+			return err.Error()
+		}
+		return fmt.Sprintf("%s %v", s, confirmed.Valid)
+	}
 	defer srv.Close()
 	jmap := func(auth bool, calls ...any) (int, map[string]any) {
 		t.Helper()
@@ -53,12 +72,15 @@ func TestNewsletter(t *testing.T) {
 	}
 	page, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(page), "We sent a link to ann@example.com") {
+	if !strings.Contains(string(page), "We sent a link to Ann@Example.com") {
 		t.Fatalf("the page after subscribing:\n%s", page)
+	}
+	if got := status("Ann@Example.com"); got != "pending false" {
+		t.Errorf("the subscription after subscribing: %s", got)
 	}
 
 	search := []any{
-		[]any{"Email/query", map[string]any{"accountId": mailAccount, "filter": map[string]any{"to": "ann@", "subject": "confirm", "after": "2000-01-01T00:00:00Z"}, "limit": 5, "calculateTotal": true}, "q"},
+		[]any{"Email/query", map[string]any{"accountId": mailAccount, "filter": map[string]any{"to": "Ann@", "subject": "confirm", "after": "2000-01-01T00:00:00Z"}, "limit": 5, "calculateTotal": true}, "q"},
 		[]any{"Email/get", map[string]any{"accountId": mailAccount, "#ids": map[string]any{"resultOf": "q", "name": "Email/query", "path": "/ids"}, "properties": []any{"id", "subject", "from"}}, "g"},
 	}
 	_, out := jmap(true, search...)
@@ -89,8 +111,11 @@ func TestNewsletter(t *testing.T) {
 	}
 	page, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(page), "The subscription of ann@example.com is confirmed.") {
+	if !strings.Contains(string(page), "The subscription of Ann@Example.com is confirmed.") {
 		t.Errorf("the page of the link:\n%s", page)
+	}
+	if got := status("Ann@Example.com"); got != "confirmed true" {
+		t.Errorf("the subscription after confirming: %s", got)
 	}
 	if resp, _ = http.Get(link); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("the link again: %d", resp.StatusCode)

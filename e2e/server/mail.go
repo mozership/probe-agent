@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -37,16 +38,18 @@ type sentMail struct {
 	HTML     string
 }
 
-// newsletter keeps the subscriptions and the mailbox.
+// newsletter keeps the subscriptions and the mailbox. The subscriptions
+// are written to store as well.
 type newsletter struct {
 	mu      sync.Mutex
 	mails   []sentMail
 	pending map[string]string
 	subs    map[string]bool
+	store   *sql.DB
 }
 
-func newNewsletter() *newsletter {
-	return &newsletter{pending: map[string]string{}, subs: map[string]bool{}}
+func newNewsletter(store *sql.DB) *newsletter {
+	return &newsletter{pending: map[string]string{}, subs: map[string]bool{}, store: store}
 }
 
 func (n *newsletter) handle(mux *http.ServeMux) {
@@ -81,7 +84,9 @@ func (n *newsletter) form(w http.ResponseWriter, r *http.Request) {
 
 // subscribe mails a link to confirm the subscription of an address.
 func (n *newsletter) subscribe(w http.ResponseWriter, r *http.Request) {
-	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
+	// The address is kept as it is typed: the part before the @ may tell
+	// apart what differs in case alone.
+	email := strings.TrimSpace(r.FormValue("email"))
 	if !strings.Contains(email, "@") {
 		newsletterPage(w, 422, "Newsletter", `<h1>The Acme Notes newsletter</h1><p role="alert">Enter your email address.</p><p><a href="/newsletter">Back</a></p>`)
 		return
@@ -90,6 +95,12 @@ func (n *newsletter) subscribe(w http.ResponseWriter, r *http.Request) {
 	rand.Read(b)
 	token := hex.EncodeToString(b)
 	link := "http://" + r.Host + "/newsletter/confirm?token=" + token
+	if _, err := n.store.Exec(`INSERT INTO subscriptions (email, status, subscribed_at) VALUES (?, 'pending', ?)
+ON CONFLICT (email) DO UPDATE SET status = 'pending', subscribed_at = excluded.subscribed_at, confirmed_at = NULL`, email, now()); err != nil {
+		log.Printf("newsletter: %s not saved: %v", email, err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 	n.mu.Lock()
 	n.pending[token] = email
 	n.mails = append(n.mails, sentMail{
@@ -110,15 +121,20 @@ func (n *newsletter) confirm(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	n.mu.Lock()
 	email, ok := n.pending[token]
-	if ok {
-		delete(n.pending, token)
-		n.subs[email] = true
-	}
 	n.mu.Unlock()
 	if !ok {
 		newsletterPage(w, 404, "Link expired", `<h1>This link has expired</h1><p><a href="/newsletter">Subscribe again</a></p>`)
 		return
 	}
+	if _, err := n.store.Exec(`UPDATE subscriptions SET status = 'confirmed', confirmed_at = ? WHERE email = ?`, now(), email); err != nil {
+		log.Printf("newsletter: %s not saved as confirmed: %v", email, err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	n.mu.Lock()
+	delete(n.pending, token)
+	n.subs[email] = true
+	n.mu.Unlock()
 	log.Printf("newsletter: %s confirmed", email)
 	newsletterPage(w, 200, "Subscribed", `<h1>You are subscribed</h1><p role="status">The subscription of `+html.EscapeString(email)+` is confirmed.</p>`)
 }

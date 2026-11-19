@@ -14,10 +14,13 @@
 // describes and whose ListNotes breaks it on purpose; see grpc.go.
 //
 // The newsletter at /newsletter mails a link to confirm a subscription to a
-// mailbox read over JMAP; see mail.go.
+// mailbox read over JMAP, and keeps the subscriptions in a SQLite database
+// at DB_PATH; see mail.go and store.go.
 //
-// It listens on 127.0.0.1:18090, or on the address ADDR names, and serves
-// gRPC on 127.0.0.1:18091, or on the address GRPC_ADDR names.
+// It listens on 127.0.0.1:18090, or on the address ADDR names, serves gRPC
+// on 127.0.0.1:18091, or on the address GRPC_ADDR names, and keeps the
+// subscriptions in /tmp/probe-agent-e2e.sqlite, or in the file DB_PATH
+// names.
 package main
 
 import (
@@ -249,7 +252,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	(&notesAPI{}).handle(mux)
 	(&graphqlNotes{}).handle(mux)
-	newNewsletter().handle(mux)
+	newNewsletter(openStore()).handle(mux)
 	return mux
 }
 
@@ -266,6 +269,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// The workflows read the subscriptions at this path, unless DB_PATH
+	// names another.
+	if os.Getenv("DB_PATH") == "" {
+		os.Setenv("DB_PATH", "/tmp/probe-agent-e2e.sqlite")
+	}
+	log.Printf("keeping the subscriptions in %s", os.Getenv("DB_PATH"))
 	log.Printf("serving gRPC on %s", grpcAddr)
 	go func() { log.Fatal(newGRPCServer().Serve(lis)) }()
 	log.Printf("listening on %s", addr)

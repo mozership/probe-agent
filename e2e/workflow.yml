@@ -32,6 +32,11 @@
 # the browser, and follow the link of the mail it sends, which it reads in
 # the mailbox of the server through probe-jmap.
 #
+# The job Database has the tester subscribe on the browser, and check in
+# the SQLite database of the server, through the db action of Probe, that
+# the subscription is saved and waits to be confirmed. DB_DSN names
+# another database than the one the server keeps by default.
+#
 # PROVIDER and MODEL run the tests with another model, as
 # PROVIDER=openai MODEL=gpt-5.4 with OPENAI_API_KEY set. The recording
 # would be replayed whatever the model, so give CACHE_MODE=refresh for the
@@ -62,6 +67,7 @@ vars:
   provider: "{{PROVIDER ?? 'anthropic'}}"
   model: "{{MODEL ?? ''}}"
   github_token: "{{GITHUB_TOKEN ?? ''}}"
+  db: "{{DB_DSN ?? 'file:/tmp/probe-agent-e2e.sqlite'}}"
 
 jobs:
 - name: Sign-up
@@ -430,13 +436,49 @@ jobs:
       len(filter(res.steps, .tool == "mail_read")) > 0 &&
       len(filter(res.steps, .target == "browser")) > 0
 
+- name: Database
+  id: database
+  defaults:
+    agent:
+      evidence_dir: out/agent
+      provider: "{{vars.provider}}"
+      model: "{{vars.model}}"
+      timeout: 4m
+  steps:
+  - name: Wait for the server
+    uses: http
+    with:
+      url: "{{vars.url}}"
+      get: /health
+    retry: {max_attempts: 30, interval: 1s}
+    test: res.code == 200
+  - name: A subscription waits in the database to be confirmed
+    uses: agent
+    with:
+      task: |
+        Subscribe to the newsletter with the address db+{{vars.id}}@example.com,
+        and check in the database what was saved of the subscription.
+      expect: |
+        The database holds the subscription of db+{{vars.id}}@example.com,
+        not yet confirmed.
+      targets:
+        browser:
+          url: "{{vars.url}}/newsletter"
+        db:
+          dsn: "{{vars.db}}"
+    timeout: 5m
+    test: |
+      res.verdict == "pass" &&
+      len(filter(res.steps, .tool == "db_query")) > 0 &&
+      len(filter(res.steps, .target == "browser")) > 0
+
 # The notes the tests left: the critical one of the sign-up the server
 # fails, and those of the findings of Carol. The tests that passed left
 # none. On a pull request, CI puts them in a comment of it with
 # probe-github-notes, which needs GITHUB_TOKEN; without one, as run by hand,
 # the step is skipped.
 - name: Notes
-  needs: [signup, persona, signed-in, api, grpc, graphql, mail]
+  needs: [signup, persona, signed-in, api, grpc, graphql, mail, database]
   always: true
   steps:
   - name: The notes of the tests that did not pass
@@ -451,6 +493,7 @@ jobs:
       && len(filter(notes, .job_id == "grpc")) > 0
       && len(filter(notes, .job_id == "graphql")) == 0
       && len(filter(notes, .job_id == "mail")) == 0
+      && len(filter(notes, .job_id == "database")) == 0
 
   - name: Put the notes on the pull request
     uses: github-notes

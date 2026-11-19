@@ -59,6 +59,7 @@ const (
 	targetGRPC    = "grpc"
 	targetGraphQL = "graphql"
 	targetMail    = "mail"
+	targetDB      = "db"
 )
 
 // browserParams are the keys of targets.browser. A step once gave them at
@@ -80,6 +81,9 @@ var graphqlParams = []string{"url", "headers", "timeout"}
 
 // mailParams are the keys of targets.mail.
 var mailParams = []string{"url", "basic_auth", "headers", "account_id", "timeout"}
+
+// dbParams are the keys of targets.db.
+var dbParams = []string{"dsn", "timeout"}
 
 // Params returns the keys the action takes in with.
 func Params() []string {
@@ -129,6 +133,18 @@ type req struct {
 	GraphQL *graphqlReq
 	// Mail is the mailbox the test reads, if any.
 	Mail *mailReq
+	// DB is the database the test reads, if any.
+	DB *dbReq
+}
+
+// dbReq is targets.db.
+type dbReq struct {
+	// DSN is the database, as the db action of Probe takes it.
+	DSN string
+	// Driver is postgres, mysql or sqlite, by the scheme of DSN.
+	Driver string
+	// Timeout bounds each statement; zero for the default of the db action.
+	Timeout time.Duration
 }
 
 // mailReq is targets.mail.
@@ -225,6 +241,9 @@ func (r req) kinds() []string {
 	}
 	if r.Mail != nil {
 		k = append(k, targetMail)
+	}
+	if r.DB != nil {
+		k = append(k, targetDB)
 	}
 	return k
 }
@@ -345,6 +364,10 @@ func parse(with map[string]any) (req, error) {
 		if m, ok := targets[targetMail]; ok {
 			r.Mail = &mailReq{}
 			errs = append(errs, readMail(m, r.Mail)...)
+		}
+		if d, ok := targets[targetDB]; ok {
+			r.DB = &dbReq{}
+			errs = append(errs, readDB(d, r.DB)...)
 		}
 	}
 	strIn(browser, prefix, "url", &r.URL)
@@ -479,10 +502,10 @@ func parse(with map[string]any) (req, error) {
 func readTargets(v any) (map[string]map[string]any, []error) {
 	m, ok := v.(map[string]any)
 	if !ok {
-		return nil, []error{errors.New("targets must be a map from the kind of each target, browser, ios, android, http, grpc, graphql or mail, to what the workflow fixes for it")}
+		return nil, []error{errors.New("targets must be a map from the kind of each target, browser, ios, android, http, grpc, graphql, mail or db, to what the workflow fixes for it")}
 	}
 	if len(m) == 0 {
-		return nil, []error{errors.New("targets names no target; name browser, ios, android, http, grpc, graphql, mail or more than one")}
+		return nil, []error{errors.New("targets names no target; name browser, ios, android, http, grpc, graphql, mail, db or more than one")}
 	}
 	var errs []error
 	out := map[string]map[string]any{}
@@ -501,8 +524,10 @@ func readTargets(v any) (map[string]map[string]any, []error) {
 			keys = graphqlParams
 		case targetMail:
 			keys = mailParams
+		case targetDB:
+			keys = dbParams
 		default:
-			errs = append(errs, fmt.Errorf("unknown target %s; the targets are browser, ios, android, http, grpc, graphql and mail", kind))
+			errs = append(errs, fmt.Errorf("unknown target %s; the targets are browser, ios, android, http, grpc, graphql, mail and db", kind))
 			continue
 		}
 		t, ok := m[kind].(map[string]any)
@@ -779,6 +804,59 @@ func readMail(t map[string]any, m *mailReq) []error {
 		}
 	}
 	return errs
+}
+
+// readDB reads targets.db t into d.
+func readDB(t map[string]any, d *dbReq) []error {
+	var errs []error
+	s, isStr := t["dsn"].(string)
+	d.DSN = strings.TrimSpace(s)
+	switch {
+	case t["dsn"] != nil && !isStr:
+		errs = append(errs, errors.New("targets.db.dsn must be a string"))
+	case d.DSN == "":
+		errs = append(errs, errors.New("targets.db.dsn is required"))
+	default:
+		// The db action reads a scheme in lower case alone, as
+		// postgresql:// and file: are, so it is given one.
+		if i := strings.Index(d.DSN, ":"); i > 0 {
+			d.DSN = strings.ToLower(d.DSN[:i]) + d.DSN[i:]
+		}
+		d.Driver = dbDriverOf(d.DSN)
+		switch {
+		case d.Driver == "":
+			errs = append(errs, errors.New("targets.db.dsn must start with postgres://, postgresql://, mysql:// or file: for SQLite"))
+		case d.Driver != "sqlite":
+			// The error leaves the DSN out, as it holds the password.
+			if _, err := url.Parse(d.DSN); err != nil {
+				errs = append(errs, errors.New("targets.db.dsn is not a URL the db action can read: percent-encode a special character of its password, such as / ? # @ or a space"))
+			}
+		}
+	}
+	if v, ok := t["timeout"]; ok {
+		dur, err := actionrpc.ParseTimeout(v)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("targets.db.timeout: %w", err))
+		} else {
+			d.Timeout = dur
+		}
+	}
+	return errs
+}
+
+// dbDriverOf names the driver of dsn by its scheme, as the db action of
+// Probe reads it, or "" for one it does not take.
+func dbDriverOf(dsn string) string {
+	dsn = strings.ToLower(dsn)
+	switch {
+	case strings.HasPrefix(dsn, "postgres://"), strings.HasPrefix(dsn, "postgresql://"):
+		return "postgres"
+	case strings.HasPrefix(dsn, "mysql://"):
+		return "mysql"
+	case strings.HasPrefix(dsn, "file:"):
+		return "sqlite"
+	}
+	return ""
 }
 
 // readProto reads targets.grpc.proto into g: files, the .proto files, and

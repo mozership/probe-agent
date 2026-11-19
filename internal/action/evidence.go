@@ -248,6 +248,13 @@ func markdown(r req, o scenario.Outcome, dir string) string {
 					w("```\n%s\n```\n\n", strings.ReplaceAll(t.Response, "```", "` ` `"))
 				}
 			}
+		case "db":
+			w("## Last statement on the database\n\n")
+			if t.Query == "" {
+				w("No statement was run on %s.\n\n", t.URL)
+			} else {
+				w("On %s:\n\n```sql\n%s\n```\n\n```\n%s\n```\n\n", t.URL, strings.ReplaceAll(t.Query, "```", "` ` `"), strings.ReplaceAll(t.Response, "```", "` ` `"))
+			}
 		case "mail":
 			w("## Last read of the mailbox\n\n")
 			if t.Response == "" {

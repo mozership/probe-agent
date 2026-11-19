@@ -1040,3 +1040,207 @@ func TestEvidence_WritesTheLastReadOfTheMailbox(t *testing.T) {
 		}
 	}
 }
+
+func TestParse_TargetsDB(t *testing.T) {
+	r, err := parse(map[string]any{
+		"task": "t", "expect": "e",
+		"targets": map[string]any{
+			"db":      map[string]any{"dsn": " postgresql://reader:pw@db.test/shop ", "timeout": "10s"},
+			"browser": map[string]any{"url": "https://app.test/"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &dbReq{DSN: "postgresql://reader:pw@db.test/shop", Driver: "postgres", Timeout: 10 * time.Second}
+	if !reflect.DeepEqual(r.DB, want) {
+		t.Fatalf("db %+v", r.DB)
+	}
+	if got := r.kinds(); !slices.Equal(got, []string{"browser", "db"}) {
+		t.Errorf("kinds %v", got)
+	}
+	for dsn, driver := range map[string]string{"mysql://u@h/d": "mysql", "file:./a.db": "sqlite", "postgres://h/d": "postgres", "redis://h": ""} {
+		if got := dbDriverOf(dsn); got != driver {
+			t.Errorf("driver of %s: %q, want %q", dsn, got, driver)
+		}
+	}
+	for with, want := range map[string]map[string]any{
+		"targets.db.dsn is required":                 {"timeout": "5s"},
+		"targets.db.dsn must start with postgres://": {"dsn": "redis://h"},
+		"targets.db.dsn must be a string":            {"dsn": 1.0},
+		"targets.db.timeout: invalid timeout 0":      {"dsn": "file:a.db", "timeout": "0"},
+		"unknown parameter targets.db.query":         {"dsn": "file:a.db", "query": "SELECT 1"},
+		"cache is for a test of a browser alone":     nil,
+	} {
+		targets := map[string]any{"db": want}
+		w := map[string]any{"task": "t", "expect": "e", "targets": targets}
+		if want == nil {
+			targets["db"] = map[string]any{"dsn": "file:a.db"}
+			targets["browser"] = map[string]any{"url": "http://a.test"}
+			w["cache"] = "c.json"
+		}
+		if _, err := parse(w); err == nil || !strings.Contains(err.Error(), with) {
+			t.Errorf("%v: err %v, want %q", want, err, with)
+		}
+	}
+}
+
+func TestDBGuard(t *testing.T) {
+	g := dbGuard(actionrpc.Guard{AllowHosts: []string{"db.test"}})
+	if !g.ReadOnly || !g.Runs("db") || !slices.Equal(g.AllowHosts, []string{"db.test"}) {
+		t.Errorf("guard %+v", g)
+	}
+	// The guard of the run is left as it was.
+	run := actionrpc.Guard{}
+	_ = dbGuard(run)
+	if run.ReadOnly || run.Keeps != nil {
+		t.Errorf("the guard of the run %+v", run)
+	}
+}
+
+func TestDBResult(t *testing.T) {
+	got := dbResult(map[string]any{"code": 0, "rows_affected": 1, "rows": []any{map[string]any{"id": 1.0, "status": "paid"}, "not a row"}})
+	if !reflect.DeepEqual(got, scenario.DBResult{Rows: []map[string]any{{"id": 1.0, "status": "paid"}}}) {
+		t.Errorf("result %+v", got)
+	}
+	if got := dbResult(map[string]any{"code": 1, "rows": []any{}, "error": `pq: relation "x" does not exist`}); got.Error != `pq: relation "x" does not exist` || got.Rows != nil {
+		t.Errorf("result %+v", got)
+	}
+	if got := dbResult(map[string]any{"code": 1}); got.Error != "the statement failed" {
+		t.Errorf("result %+v", got)
+	}
+}
+
+func TestDBTables(t *testing.T) {
+	got := dbTables([]map[string]any{
+		{"table_name": "orders", "column_name": "id", "data_type": "INTEGER"},
+		{"table_name": "orders", "column_name": "note", "data_type": nil},
+		{"table_name": "users", "column_name": "email", "data_type": "TEXT"},
+	})
+	want := []scenario.DBTable{
+		{Name: "orders", Columns: [][2]string{{"id", "INTEGER"}, {"note", ""}}},
+		{Name: "users", Columns: [][2]string{{"email", "TEXT"}}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("tables %+v", got)
+	}
+	for driver, q := range tablesQuery {
+		if strings.Contains(q, ";") || !strings.HasPrefix(q, "SELECT ") {
+			t.Errorf("the query of %s would be refused under read-only: %s", driver, q)
+		}
+	}
+}
+
+func TestDSNShown(t *testing.T) {
+	for dsn, want := range map[string]string{
+		"postgres://reader:s3cret@db.test:5432/shop?sslmode=disable": "postgres://reader:***@db.test:5432/shop?sslmode=disable",
+		"mysql://root@db.test/shop":                                  "mysql://root@db.test/shop",
+		"postgres://db.test/shop?user=r&password=s3cret":             "postgres://db.test/shop?password=***&user=r",
+		"file:./data/app.db":                                         "file:./data/app.db",
+		"postgres://db.test/shop?application_name=a%20b&sslmode=off": "postgres://db.test/shop?application_name=a%20b&sslmode=off",
+		"postgres://u:s3cr/et@h/d":                                   "postgres://***@h/d",
+		"mysql://u:pw@tcp(h:3306)/d":                                 "mysql://***@tcp(h:3306)/d",
+		"postgres://u:p w/x":                                         "(a DSN that is not a URL)",
+	} {
+		if got := dsnShown(dsn); got != want {
+			t.Errorf("%s: %s, want %s", dsn, got, want)
+		}
+	}
+}
+
+func TestDBTarget(t *testing.T) {
+	t.Setenv(probe.ExecutableEnv, "/usr/bin/probe")
+	caller := probe.NewActionCaller(actionrpc.Call{}, "")
+	if _, err := dbTarget(caller, map[string]string{"db": "github.com/x/y@" + strings.Repeat("a", 40)}, dbReq{DSN: "file::memory:", Driver: "sqlite"}); err == nil || !strings.Contains(err.Error(), "give the name db to") {
+		t.Errorf("err %v", err)
+	}
+	db, err := dbTarget(caller, nil, dbReq{DSN: "postgres://r:pw@db.test/shop", Driver: "postgres"})
+	if err != nil || db.Name != "postgres://r:***@db.test/shop" || db.Driver != "postgres" || db.Query == nil || db.Tables == nil {
+		t.Errorf("db %+v, %v", db, err)
+	}
+}
+
+func TestResult_HidesThePasswordOfTheDatabase(t *testing.T) {
+	r := req{Task: "t", Expect: "e", DB: &dbReq{DSN: "postgres://r:pw@db.test/shop?key=s3cret-key"}, Secrets: map[string]string{"KEY": "s3cret-key"}}
+	ret, err := result(r, outcome(), files{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ret["req"].(map[string]any)["db"]; got != "postgres://r:***@db.test/shop?key=<secret:KEY>" {
+		t.Errorf("req.db %v", got)
+	}
+}
+
+func TestEvidence_WritesTheLastStatementOnTheDatabase(t *testing.T) {
+	ev, err := newEvidence(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := outcome()
+	o.Targets = []scenario.TargetState{{Kind: "db", URL: "file:a.db", Query: "SELECT 1", Response: "1 row:\n{\"1\":1}"}, {Kind: "db", URL: "file:b.db"}}
+	f, err := ev.write(req{Task: "t", Expect: "e"}, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	md, _ := os.ReadFile(f.Report)
+	for _, want := range []string{"## Last statement on the database\n\nOn file:a.db:\n\n```sql\nSELECT 1\n```\n\n```\n1 row:\n{\"1\":1}\n```", "No statement was run on file:b.db."} {
+		if !strings.Contains(string(md), want) {
+			t.Errorf("the report lacks %q:\n%s", want, md)
+		}
+	}
+}
+
+func TestParse_RefusesADSNThatIsNotAURL(t *testing.T) {
+	_, err := parse(map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"db": map[string]any{"dsn": "POSTGRES://u:s3cr/et@h/d"}}})
+	if err == nil || !strings.Contains(err.Error(), "percent-encode a special character of its password") || strings.Contains(err.Error(), "s3cr") {
+		t.Errorf("err %v", err)
+	}
+	if got := dbDriverOf("MySQL://u@h/d"); got != "mysql" {
+		t.Errorf("driver %q", got)
+	}
+	// A scheme in upper case is given to the db action in lower case.
+	for dsn, want := range map[string]string{"POSTGRESQL://r:PW@h/D?sslmode=disable": "postgresql://r:PW@h/D?sslmode=disable", "FILE:/tmp/A.db": "file:/tmp/A.db"} {
+		r, err := parse(map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"db": map[string]any{"dsn": dsn}}})
+		if err != nil || r.DB.DSN != want {
+			t.Errorf("%s: %+v, %v", dsn, r.DB, err)
+		}
+	}
+}
+
+func TestHideDSN(t *testing.T) {
+	got := hideDSN("postgres://reader:s3cret%2Fx@db.test/shop", `failed to connect to `+"`user=reader database=shop`"+`: password "s3cret/x" refused; dsn postgres://reader:s3cret%2Fx@db.test/shop`)
+	if strings.Contains(got, "s3cret") {
+		t.Errorf("hidden %q", got)
+	}
+	if got := hideDSN("file:a.db", "no such table: x"); got != "no such table: x" {
+		t.Errorf("hidden %q", got)
+	}
+}
+
+func TestDBTarget_AMissingSQLiteFile(t *testing.T) {
+	t.Setenv(probe.ExecutableEnv, "/usr/bin/probe")
+	caller := probe.NewActionCaller(actionrpc.Call{}, "")
+	dir := t.TempDir()
+	if _, err := dbTarget(caller, nil, dbReq{DSN: "file:" + dir + "/typo.db?mode=ro", Driver: "sqlite"}); err == nil || !strings.Contains(err.Error(), "names no SQLite file at "+dir+"/typo.db") {
+		t.Errorf("err %v", err)
+	}
+	if _, err := os.Stat(dir + "/typo.db"); err == nil {
+		t.Error("the file was made")
+	}
+	if err := os.WriteFile(dir+"/app.db", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbTarget(caller, nil, dbReq{DSN: "file:" + dir + "/app.db", Driver: "sqlite"}); err != nil {
+		t.Errorf("err %v", err)
+	}
+	if _, err := dbTarget(caller, nil, dbReq{DSN: "file::memory:", Driver: "sqlite"}); err != nil {
+		t.Errorf("err %v", err)
+	}
+}
+
+func TestDBGuard_KeepsTheRestOfTheGuard(t *testing.T) {
+	g := dbGuard(actionrpc.Guard{AllowActions: []string{"agent"}, Keeps: map[string][]string{"http": {actionrpc.KindReadOnly}}})
+	if !slices.Equal(g.AllowActions, []string{"agent"}) || !slices.Equal(g.Keeps["http"], []string{actionrpc.KindReadOnly}) || !g.Runs("db") {
+		t.Errorf("guard %+v", g)
+	}
+}
