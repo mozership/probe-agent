@@ -1,8 +1,8 @@
 # probe-agent
 
-A [Probe](https://github.com/mozership/probe) action that tests an application from a task written in natural language. A model, the tester, uses the application through a real Chrome, an app on an iOS simulator or an Android emulator or device, an HTTP API, a gRPC API, or more than one of them, to carry out the task; another call of the model, the judge, then decides from what they showed whether the expectation holds. See [Targets](#targets) for an iOS app, an Android app, an HTTP API and a gRPC API.
+A [Probe](https://github.com/mozership/probe) action that tests an application from a task written in natural language. A model, the tester, uses the application through a real Chrome, an app on an iOS simulator or an Android emulator or device, an HTTP API, a gRPC API, a GraphQL API, or more than one of them, to carry out the task; another call of the model, the judge, then decides from what they showed whether the expectation holds. See [Targets](#targets) for an iOS app, an Android app, an HTTP API, a gRPC API and a GraphQL API.
 
-Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It drives Chrome through [probe-browser](https://github.com/mozership/probe-browser), an iOS app through [probe-ios](https://github.com/mozership/probe-ios), and an Android app through [probe-android](https://github.com/mozership/probe-android), which the workflow names under `actions` as it names the agent, and calls an HTTP API and a gRPC API through the [http](https://probe.linyo.ws/reference/actions/http) and [grpc](https://probe.linyo.ws/reference/actions/grpc) actions of Probe; it calls them as a step of the run would, which needs Probe v1.37.0 or later.
+Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It drives Chrome through [probe-browser](https://github.com/mozership/probe-browser), an iOS app through [probe-ios](https://github.com/mozership/probe-ios), an Android app through [probe-android](https://github.com/mozership/probe-android), and a GraphQL API through [probe-graphql](https://github.com/mozership/probe-graphql), which the workflow names under `actions` as it names the agent, and calls an HTTP API and a gRPC API through the [http](https://probe.linyo.ws/reference/actions/http) and [grpc](https://probe.linyo.ws/reference/actions/grpc) actions of Probe; it calls them as a step of the run would, which needs Probe v1.37.0 or later.
 
 It has two modes:
 
@@ -81,7 +81,7 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `targets` | Object | Yes | - | What the test drives: a browser, an iOS or Android app, an HTTP API, a gRPC API, or more than one of them; see [Targets](#targets) |
+| `targets` | Object | Yes | - | What the test drives: a browser, an iOS or Android app, an HTTP, gRPC or GraphQL API, or more than one of them; see [Targets](#targets) |
 | `task` | String | Scenario | - | What the tester does, in natural language |
 | `expect` | String | Scenario | - | What has to hold afterwards, in natural language |
 | `persona` | String | Persona | - | Who the tester plays, in natural language: what they know, and how they go about things |
@@ -111,6 +111,7 @@ The model is called with the API key of its provider, which the action takes fro
 | `android` | An app on an Android emulator or device | `app` (required), the package name; `device`, by its serial or model, which has to be given when adb lists more than one; `timeout`, as for `ios` | [probe-android](https://github.com/mozership/probe-android) |
 | `http` | An HTTP API | `url` (required), the base URL; `openapi`, `headers`, `cookies` and `timeout`, see below | The built-in [http](https://probe.linyo.ws/reference/actions/http) |
 | `grpc` | A gRPC API | `addr` (required); `protocol`, `tls`, `insecure`, `cert_file`, `key_file`, `ca_file`, `metadata`, `proto` and `timeout`, see below | The built-in [grpc](https://probe.linyo.ws/reference/actions/grpc) |
+| `graphql` | A GraphQL API | `url` (required), the endpoint; `headers` and `timeout`, see below | [probe-graphql](https://github.com/mozership/probe-graphql) |
 
 Up to v0.8.0, `url`, `allow_hosts`, `storage_state`, `headless`, `window_w` and `window_h` could be given at the top of `with`, as a short form of `targets.browser`. They are no longer taken there: a step that gives one is refused, and told where it goes.
 
@@ -284,6 +285,45 @@ The services are listed as the test starts, and the tester is told them. They ar
 
 With `proto`, what the `.proto` files do not allow in a call or its response, or in the server's definition of the method, is told to the tester, the judge and the reviewer, and in a persona test a response that breaks them is a finding without the reviewer, as for an [HTTP API](#an-http-api). The judge is given the last answer, which `report.md` shows; nothing is called again at the end. A `cache` is refused.
 
+### A GraphQL API
+
+The agent calls the API through probe-graphql, which it calls as a step of the run would, under the guard of the run, once for each query of the tester. Name probe-graphql under `actions` of the workflow, by any name, as probe-ios; the agent finds it by its reference. It needs probe-graphql v0.2.1 or later.
+
+```yaml
+actions:
+  agent: github.com/mozership/probe-agent@<commit SHA>
+  graphql: github.com/mozership/probe-graphql@<commit SHA>
+jobs:
+- name: notes
+  steps:
+  - name: A client writes a note and reads it back
+    uses: agent
+    with:
+      task: Write a note that says "Buy milk", and read it back by its id
+      expect: The note read back says "Buy milk"
+      targets:
+        graphql:
+          url: https://staging.example.com/graphql
+          headers:
+            Authorization: "Bearer {{vars.api_token}}"
+    test: res.verdict == "pass"
+```
+
+| Key | Type | Description |
+|---|---|---|
+| `url` | String | The endpoint, `http` or `https`. The tester cannot change it, and a redirect to another host or port, or from `https` to `http`, is refused, so that the headers the workflow fixes do not go there |
+| `headers` | Object | Headers sent with each request, by name, such as a credential. The tester cannot change them |
+| `timeout` | String or Number | The timeout of each request, as `10s` or a number of seconds; 30 seconds by default, as in probe-graphql |
+
+| Tool | What it does |
+|---|---|
+| `graphql_schema` | Tells the schema as SDL, whole or one type of it, with the arguments of the fields, their descriptions and what is deprecated |
+| `graphql_query` | Sends a query or a mutation, with its `variables` as a JSON object, `operation_name` and `headers`, and returns the HTTP status, the errors and the data of the response |
+
+The schema is read by introspection as the test starts, and the tester is told the fields of its query, mutation and subscription types. An API that answers no introspection, as many in production do not, can still be called: the tester is told why the schema could not be read, and `graphql_schema` tries again. Errors in a response are the API's answer, which the tester reads as such, before the data. `{secret:NAME}` in the document, the variables or a header is replaced with the value of the secret as the request is sent, escaped as a string of JSON or GraphQL holds it, and the response is read with the values masked.
+
+The judge checks its quotes against the schema and the responses, and is given the last response, which `report.md` shows; nothing is sent again at the end, as a mutation can change what the API holds. A `cache` is refused.
+
 ## Models
 
 The agent is built for Claude, which is trained to use a browser through the browser toolset of the Claude API. The other providers are reached through their APIs compatible with OpenAI's Chat Completions, or through OpenAI's Responses API for `openai`, by which its models both reason and call tools; their models are offered the same members of the toolset as tools of the agent's own, so that they run the same tests; how well they carry out a task depends on the model.
@@ -332,8 +372,8 @@ A recording is of the steps, not of the model, so a test recorded with one model
 | `res.evidence` | List | What the judge quoted: `quote`, and `verified`, whether a page showed it |
 | `res.stopped` | String | How the tester stopped: `done`, `blocked`, `max_steps`, `timeout`, `no_finish`, `refused`, or `stale` for a recording that no longer matched under `cache_mode: strict` |
 | `res.summary` | String | What the tester said it did and saw |
-| `res.steps` | List | Each call to a target: `index`, `tool`, `target` (`browser`, `ios`, `android`, `http` or `grpc`), `input`, `result` or `error`, `url`, `screenshot` and the tester's `notes` |
-| `res.targets` | List | The last state of each target: `kind`; `url` and `title` of the browser; `app` and `device` of an app; `method`, `url` and `status` of the last request to an HTTP API; `address`, `method` and `code` of the last call to a gRPC API; and `screenshot` |
+| `res.steps` | List | Each call to a target: `index`, `tool`, `target` (`browser`, `ios`, `android`, `http`, `grpc` or `graphql`), `input`, `result` or `error`, `url`, `screenshot` and the tester's `notes` |
+| `res.targets` | List | The last state of each target: `kind`; `url` and `title` of the browser; `app` and `device` of an app; `method`, `url` and `status` of the last request to an HTTP API; `address`, `method` and `code` of the last call to a gRPC API; `url`, `method`, the operation such as `mutation CreateNote`, and `status` of the last query to a GraphQL API; and `screenshot` |
 | `res.url`, `res.title` | String | The page the tester left the browser on, empty without a browser |
 | `res.console_errors` | List | The errors the pages wrote to their console, as the browser action reports them |
 | `res.network_errors` | List | The requests that failed or were answered with 400 or more: `method`, `url`, `status`, `error` |
@@ -522,6 +562,8 @@ probe-ios and probe-android keep to no guard either, and the agent calls them un
 The http action keeps to the guard, and the agent calls it under the guard of the run, kept to the host of `targets.http.url`, so the requests of the tester keep to it although the agent is named by `--allow-action`: under `--read-only`, a request other than `GET`, `HEAD` or `OPTIONS` is refused, and the tester is told so; under `--allow-host`, so is one to a host the guard does not allow.
 
 The grpc action keeps to the guard too, and the agent calls it under the guard of the run: under `--read-only`, a method is called only when its definition declares it free of side effects, which `grpc_describe` tells the tester, and listing the services is allowed; under `--allow-host`, `addr` has to be a host the guard allows.
+
+probe-graphql keeps to the guard as well, as its `action.yml` declares, and the agent calls it under the guard of the run, kept to the host of `targets.graphql.url`, as it calls the http action: under `--read-only`, a mutation or a subscription is refused before it is sent, and the tester is told so; under `--allow-host`, so is a request to a host the guard does not allow.
 
 ## Development
 

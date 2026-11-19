@@ -163,7 +163,7 @@ type Step struct {
 	Index int    `json:"index"`
 	Tool  string `json:"tool"`
 	// Target is the kind of the target the step used: browser, ios,
-	// android, http or grpc.
+	// android, http, grpc or graphql.
 	Target string `json:"target"`
 	// Notes are what the tester wrote before the call.
 	Notes      []string       `json:"notes,omitempty"`
@@ -209,8 +209,8 @@ func (r *run) driverOf(call llm.Call) Driver {
 	return nil
 }
 
-// Targets are what a test drives: a browser, an iOS app, an HTTP API, or
-// more than one of them.
+// Targets are what a test drives: a browser, an app, an HTTP, gRPC or
+// GraphQL API, or more than one of them.
 type Targets struct {
 	// Browser is the tab of the browser, driven from Config.StartURL.
 	Browser page.Page
@@ -222,6 +222,8 @@ type Targets struct {
 	HTTP *HTTP
 	// GRPC is a gRPC API.
 	GRPC *GRPC
+	// GraphQL is a GraphQL API.
+	GraphQL *GraphQL
 }
 
 // Run runs the test of cfg on the targets t with m. It returns an error
@@ -250,6 +252,9 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 	}
 	if t.GRPC != nil {
 		r.drivers = append(r.drivers, newGRPCDriver(r.ledger, *t.GRPC))
+	}
+	if t.GraphQL != nil {
+		r.drivers = append(r.drivers, newGraphQLDriver(r.ledger, *t.GraphQL))
 	}
 	if len(r.drivers) == 0 {
 		return Outcome{}, errors.New("the test has no target")
@@ -537,11 +542,13 @@ type section struct {
 
 // TargetState is the last state of a target of a test.
 type TargetState struct {
-	// Kind is browser, ios, android, http or grpc.
+	// Kind is browser, ios, android, http, grpc or graphql.
 	Kind string `json:"kind"`
 	// URL and Title are of the page the browser was left on. URL is of the
 	// last request to an HTTP API, and Method and Status of it and its
-	// response.
+	// response; of a GraphQL API, URL is its endpoint, Method the last
+	// operation sent, as mutation CreateNote, and Status the HTTP status
+	// of its response.
 	URL    string `json:"url,omitempty"`
 	Title  string `json:"title,omitempty"`
 	Method string `json:"method,omitempty"`
@@ -550,7 +557,7 @@ type TargetState struct {
 	// users.v1.UserService/GetUser, and Code the status it answered.
 	Address string `json:"address,omitempty"`
 	Code    string `json:"code,omitempty"`
-	// Response is the last response of an HTTP or a gRPC API, masked and
+	// Response is the last response of an HTTP, a gRPC or a GraphQL API, masked and
 	// cut, for the report; it is not in the result, which the report is
 	// beside.
 	Response string `json:"-"`

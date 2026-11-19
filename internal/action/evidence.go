@@ -238,6 +238,16 @@ func markdown(r req, o scenario.Outcome, dir string) string {
 					w("```\n%s\n```\n\n", strings.ReplaceAll(t.Response, "```", "` ` `"))
 				}
 			}
+		case "graphql":
+			w("## Last response of the GraphQL API\n\n")
+			if t.Method == "" {
+				w("No query was sent to <%s>.\n\n", t.URL)
+			} else {
+				w("%s at <%s> → %d\n\n", t.Method, t.URL, t.Status)
+				if t.Response != "" {
+					w("```\n%s\n```\n\n", strings.ReplaceAll(t.Response, "```", "` ` `"))
+				}
+			}
 		case "http":
 			w("## Last response of the API\n\n")
 			if t.URL == "" {

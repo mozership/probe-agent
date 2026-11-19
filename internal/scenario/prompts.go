@@ -1,6 +1,9 @@
 package scenario
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // The prompts of a test with one browser alone are those of testerSystem
 // and personaSystem. A test of other targets, or of more than one, is told
@@ -62,12 +65,15 @@ func (r *run) aim() string {
 	return "task"
 }
 
+// apiKinds are the kinds of the targets that are APIs.
+var apiKinds = []string{"http", "grpc", "graphql"}
+
 // seenIn says where the tester ends for what it did to be seen.
 func (r *run) seenIn() string {
 	switch {
 	case len(r.drivers) > 1:
 		return "on the targets"
-	case r.drivers[0].Kind() == "http", r.drivers[0].Kind() == "grpc":
+	case slices.Contains(apiKinds, r.drivers[0].Kind()):
 		return "in the responses of the API"
 	}
 	return "in the " + r.targetWord()
@@ -82,7 +88,7 @@ func (r *run) targetWord() string {
 	switch r.drivers[0].Kind() {
 	case "ios", "android":
 		return "app"
-	case "http", "grpc":
+	case "http", "grpc", "graphql":
 		return "API"
 	}
 	return "browser"
