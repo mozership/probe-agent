@@ -75,9 +75,9 @@ func TestRun_ReadsAMailbox(t *testing.T) {
 				HTML:        `<html><head><style>p{}</style></head><body><p>Hello Alice,</p><p>Your code is hunter2-long. <a href="https://app.test/confirm?t=1">Confirm</a></p></body></html>`,
 			},
 		},
-		// The mail to confirm comes on the third search: the one of Open,
-		// and two of the tester's, the second of which waits for it.
-		arrivals: []int{0, 4},
+		// The mail to confirm comes on the fifth search: the two of Open,
+		// and three of the tester's, the second of which waits for it.
+		arrivals: []int{0, 5},
 	}
 	m := &fakeModel{scripts: [][]llm.Reply{
 		{
@@ -102,12 +102,15 @@ func TestRun_ReadsAMailbox(t *testing.T) {
 			t.Errorf("evidence %q is not verified", e.Quote)
 		}
 	}
-	// Open, the first search, and the second, which asks until the mail
-	// comes.
-	if len(box.searches) != 4 {
+	// Open, which reads the latest mail and those of its second, the first
+	// search, and the second, which asks until the mail comes.
+	if len(box.searches) != 5 {
 		t.Fatalf("searches %+v", box.searches)
 	}
-	q := box.searches[1]
+	if near := box.searches[1]; !near.After.Equal(past.Add(-2*time.Second)) || near.Limit != 100 {
+		t.Errorf("the search of Open for the mails of the latest %+v", near)
+	}
+	q := box.searches[2]
 	if q.To != "alice@example.com" || q.After.IsZero() || q.Limit != 20 {
 		t.Errorf("the search %+v", q)
 	}
@@ -193,9 +196,10 @@ func TestMail_NewOnlyIsByTheClockOfTheServer(t *testing.T) {
 	// The clock of the server is an hour behind that of the agent.
 	behind := time.Now().Add(-time.Hour).Truncate(time.Second)
 	box := &fakeMail{mails: []MailMessage{
+		{MailSummary: MailSummary{ID: "m0", Subject: "Older", Received: behind}},
 		{MailSummary: MailSummary{ID: "m1", Subject: "Old", Received: behind}},
 		{MailSummary: MailSummary{ID: "m2", Subject: "New", Received: behind}},
-	}, arrivals: []int{0, 2}}
+	}, arrivals: []int{0, 0, 3}}
 	d := newMailDriver(newLedger(config()), *box.target())
 	if err := d.Open(t.Context()); err != nil {
 		t.Fatal(err)
@@ -206,7 +210,7 @@ func TestMail_NewOnlyIsByTheClockOfTheServer(t *testing.T) {
 	if res.IsError || !strings.HasPrefix(res.Text, "1 mail matches:\n- id=m2 ") {
 		t.Errorf("search %+v", res)
 	}
-	if q := box.searches[1]; !q.After.Equal(behind.Add(-time.Second)) {
+	if q := box.searches[2]; !q.After.Equal(behind.Add(-time.Second)) {
 		t.Errorf("after %v, want a second before %v", q.After, behind)
 	}
 
