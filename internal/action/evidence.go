@@ -248,6 +248,13 @@ func markdown(r req, o scenario.Outcome, dir string) string {
 					w("```\n%s\n```\n\n", strings.ReplaceAll(t.Response, "```", "` ` `"))
 				}
 			}
+		case "mail":
+			w("## Last read of the mailbox\n\n")
+			if t.Response == "" {
+				w("Nothing was read at <%s>.\n\n", t.URL)
+			} else {
+				w("At <%s>:\n\n```\n%s\n```\n\n", t.URL, strings.ReplaceAll(t.Response, "```", "` ` `"))
+			}
 		case "http":
 			w("## Last response of the API\n\n")
 			if t.URL == "" {

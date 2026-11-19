@@ -163,7 +163,7 @@ type Step struct {
 	Index int    `json:"index"`
 	Tool  string `json:"tool"`
 	// Target is the kind of the target the step used: browser, ios,
-	// android, http, grpc or graphql.
+	// android, http, grpc, graphql or mail.
 	Target string `json:"target"`
 	// Notes are what the tester wrote before the call.
 	Notes      []string       `json:"notes,omitempty"`
@@ -210,7 +210,7 @@ func (r *run) driverOf(call llm.Call) Driver {
 }
 
 // Targets are what a test drives: a browser, an app, an HTTP, gRPC or
-// GraphQL API, or more than one of them.
+// GraphQL API, a mailbox, or more than one of them.
 type Targets struct {
 	// Browser is the tab of the browser, driven from Config.StartURL.
 	Browser page.Page
@@ -224,6 +224,8 @@ type Targets struct {
 	GRPC *GRPC
 	// GraphQL is a GraphQL API.
 	GraphQL *GraphQL
+	// Mail is a mailbox.
+	Mail *Mail
 }
 
 // Run runs the test of cfg on the targets t with m. It returns an error
@@ -255,6 +257,9 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 	}
 	if t.GraphQL != nil {
 		r.drivers = append(r.drivers, newGraphQLDriver(r.ledger, *t.GraphQL))
+	}
+	if t.Mail != nil {
+		r.drivers = append(r.drivers, newMailDriver(r.ledger, *t.Mail))
 	}
 	if len(r.drivers) == 0 {
 		return Outcome{}, errors.New("the test has no target")
@@ -542,7 +547,7 @@ type section struct {
 
 // TargetState is the last state of a target of a test.
 type TargetState struct {
-	// Kind is browser, ios, android, http, grpc or graphql.
+	// Kind is browser, ios, android, http, grpc, graphql or mail.
 	Kind string `json:"kind"`
 	// URL and Title are of the page the browser was left on. URL is of the
 	// last request to an HTTP API, and Method and Status of it and its
@@ -557,7 +562,8 @@ type TargetState struct {
 	// users.v1.UserService/GetUser, and Code the status it answered.
 	Address string `json:"address,omitempty"`
 	Code    string `json:"code,omitempty"`
-	// Response is the last response of an HTTP, a gRPC or a GraphQL API, masked and
+	// Response is the last response of an HTTP, a gRPC or a GraphQL API,
+	// or the last a mailbox showed, of which URL is the server, masked and
 	// cut, for the report; it is not in the result, which the report is
 	// beside.
 	Response string `json:"-"`

@@ -2,7 +2,7 @@
 # what the model will click, so a step that uses it is refused under
 # --read-only or --allow-host unless --allow-action names it.
 name: agent
-description: Test an application from a task, or a persona and a goal, written in natural language, with a model that uses it through a browser, an iOS or Android app, an HTTP, gRPC or GraphQL API, or more than one of them
+description: Test an application from a task, or a persona and a goal, written in natural language, with a model that uses it through a browser, an iOS or Android app, an HTTP, gRPC or GraphQL API, a mailbox, or more than one of them
 params: [task, expect, persona, goal, targets, secrets, cache, cache_mode, provider, model, effort, base_url, vision, max_steps, timeout, evidence_dir]
 runs:
   using: binary

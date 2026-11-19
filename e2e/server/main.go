@@ -13,6 +13,9 @@
 // It serves notes.v1.Notes over gRPC as well, which e2e/api/notes.proto
 // describes and whose ListNotes breaks it on purpose; see grpc.go.
 //
+// The newsletter at /newsletter mails a link to confirm a subscription to a
+// mailbox read over JMAP; see mail.go.
+//
 // It listens on 127.0.0.1:18090, or on the address ADDR names, and serves
 // gRPC on 127.0.0.1:18091, or on the address GRPC_ADDR names.
 package main
@@ -246,6 +249,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	(&notesAPI{}).handle(mux)
 	(&graphqlNotes{}).handle(mux)
+	newNewsletter().handle(mux)
 	return mux
 }
 

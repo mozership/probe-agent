@@ -3,13 +3,14 @@
 // it came out, with its evidence written to files. The browser is driven
 // through probe-browser, an iOS app through probe-ios, an Android app
 // through probe-android, an HTTP API and a gRPC API through the http and
-// grpc actions of Probe, and a GraphQL API through probe-graphql, which the
-// agent calls as a step of the run would.
+// grpc actions of Probe, a GraphQL API through probe-graphql, and a mailbox
+// through probe-jmap, which the agent calls as a step of the run would.
 package action
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -65,8 +66,8 @@ func (a *Action) Run(with map[string]any) (map[string]any, error) {
 // RunStep runs the test the step asks for. The browser and an iOS app are
 // driven through probe-browser and probe-ios, by the names the workflow
 // gives them under actions, an HTTP API and a gRPC API through the http
-// and grpc actions of Probe, and a GraphQL API through probe-graphql, as a
-// step of the run would call them.
+// and grpc actions of Probe, a GraphQL API through probe-graphql, and a
+// mailbox through probe-jmap, as a step of the run would call them.
 func (a *Action) RunStep(call actionrpc.Call) (map[string]any, map[string]any, error) {
 	actionrpc.LogParams(a.log, "received agent action request", forLog(call.With))
 	ret, err := a.run(call)
@@ -129,6 +130,17 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 			return nil, err
 		}
 	}
+	var box *scenario.Mail
+	if r.Mail != nil {
+		// probe-jmap is called by a caller of its own, kept to the host of
+		// the server, as probe-graphql is.
+		mc := call
+		mc.Guard = hostGuard(call.Guard, r.Mail.URL)
+		mailCaller := probe.NewActionCaller(mc, "", probe.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
+		if box, err = mailTarget(mailCaller, call.Actions, *r.Mail); err != nil {
+			return nil, err
+		}
+	}
 	var browser string
 	if r.Browser {
 		if browser, err = actionNamed(call.Actions, probeBrowser, "targets.browser drives the browser", "browser"); err != nil {
@@ -157,7 +169,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	targets := scenario.Targets{IOS: ios, Android: android, HTTP: api, GRPC: rpc, GraphQL: gql}
+	targets := scenario.Targets{IOS: ios, Android: android, HTTP: api, GRPC: rpc, GraphQL: gql, Mail: box}
 	if r.Browser {
 		tab, err := page.NewBrowser(func(ctx context.Context, with map[string]any) (map[string]any, error) {
 			return callRes(ctx, caller, browser, with)
@@ -215,6 +227,7 @@ const (
 	probeAndroid = "github.com/mozership/probe-android"
 	probeBrowser = "github.com/mozership/probe-browser"
 	probeGraphQL = "github.com/mozership/probe-graphql"
+	probeJMAP    = "github.com/mozership/probe-jmap"
 )
 
 // callRes calls the action name with with, and returns its res. A failed
@@ -547,6 +560,244 @@ func graphqlResponse(name string, cr *probe.CallResult) (scenario.GraphQLRespons
 	return out, nil
 }
 
+// mailTarget returns the mailbox of t, read through probe-jmap: the action
+// the workflow names under actions whose reference is that of probe-jmap,
+// whatever its name. Its action.yml declares that it keeps to the guard,
+// which the caller reads on its first call. The calls it is given only
+// read: Email/query and Email/get.
+func mailTarget(caller *probe.ActionCaller, actions map[string]string, t mailReq) (*scenario.Mail, error) {
+	name, err := actionNamed(actions, probeJMAP, "targets.mail reads the mailbox", "jmap")
+	if err != nil {
+		return nil, err
+	}
+	results := func(ctx context.Context, calls []any) (map[string]any, error) {
+		cr, err := caller.Call(ctx, name, jmapWith(t, calls))
+		if err != nil {
+			return nil, err
+		}
+		return jmapResults(name, cr)
+	}
+	box := &scenario.Mail{URL: t.URL}
+	box.Search = func(ctx context.Context, q scenario.MailQuery) (scenario.MailList, error) {
+		res, err := results(ctx, mailSearchCalls(q))
+		if err != nil {
+			return scenario.MailList{}, err
+		}
+		return mailList(res)
+	}
+	box.Read = func(ctx context.Context, id string) (scenario.MailMessage, error) {
+		res, err := results(ctx, mailReadCalls(id))
+		if err != nil {
+			return scenario.MailMessage{}, err
+		}
+		return mailMessage(res, id)
+	}
+	return box, nil
+}
+
+// mailSummaryProps are the properties of a mail a search lists.
+var mailSummaryProps = []any{"id", "from", "to", "subject", "receivedAt", "preview"}
+
+// mailSearchCalls are the calls of probe-jmap that search the mailbox for
+// q: Email/query, the latest first, and Email/get of the mails it found.
+func mailSearchCalls(q scenario.MailQuery) []any {
+	filter := map[string]any{}
+	for k, v := range map[string]string{"from": q.From, "to": q.To, "subject": q.Subject, "text": q.Text} {
+		if v != "" {
+			filter[k] = v
+		}
+	}
+	if !q.After.IsZero() {
+		filter["after"] = q.After.UTC().Format(time.RFC3339)
+	}
+	query := map[string]any{
+		"filter":         filter,
+		"sort":           []any{map[string]any{"property": "receivedAt", "isAscending": false}},
+		"calculateTotal": true,
+	}
+	if q.Limit > 0 {
+		query["limit"] = q.Limit
+	}
+	return []any{
+		map[string]any{"method": "Email/query", "id": "query", "args": query},
+		map[string]any{"method": "Email/get", "id": "get", "args": map[string]any{
+			"#ids":       map[string]any{"resultOf": "query", "path": "/ids"},
+			"properties": mailSummaryProps,
+		}},
+	}
+}
+
+// mailReadCalls are the calls of probe-jmap that read the mail of id, with
+// the values of its text and HTML bodies.
+func mailReadCalls(id string) []any {
+	props := append(slices.Clone(mailSummaryProps), "textBody", "htmlBody", "bodyValues")
+	return []any{map[string]any{"method": "Email/get", "id": "get", "args": map[string]any{
+		"ids":                 []any{id},
+		"properties":          props,
+		"bodyProperties":      []any{"partId", "type"},
+		"fetchTextBodyValues": true,
+		"fetchHTMLBodyValues": true,
+		"maxBodyValueBytes":   200000,
+	}}}
+}
+
+// jmapWith is the with of a call of probe-jmap that sends calls to the
+// server of t.
+func jmapWith(t mailReq, calls []any) map[string]any {
+	with := map[string]any{"url": t.URL, "calls": calls}
+	if t.Username != "" {
+		with["basic_auth"] = map[string]any{"username": t.Username, "password": t.Password}
+	}
+	if len(t.Headers) > 0 {
+		h := map[string]any{}
+		for k, v := range t.Headers {
+			h[k] = v
+		}
+		with["headers"] = h
+	}
+	if t.AccountID != "" {
+		with["account_id"] = t.AccountID
+	}
+	if t.TimeoutSet {
+		with["timeout"] = t.Timeout.String()
+	}
+	return with
+}
+
+// jmapResults returns the results of the calls of probe-jmap, called by
+// name, by call id. A server that did not answer them all is an error,
+// told as it answered.
+func jmapResults(name string, cr *probe.CallResult) (map[string]any, error) {
+	res, ok := cr.Result["res"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s returned no res", name)
+	}
+	if errs, _ := res["errors"].([]any); len(errs) > 0 {
+		b, err := json.Marshal(errs)
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("the mail server answered with errors: %s", b)
+	}
+	if code, _ := toInt(res["code"]); code < 200 || code > 299 {
+		status, _ := res["status"].(string)
+		if status == "" {
+			status = fmt.Sprint(code)
+		}
+		return nil, fmt.Errorf("the mail server answered %s", status)
+	}
+	// A server that answers 200 with what is not JMAP, as the page of a
+	// sign-in, gives no method responses, which probe-jmap fails.
+	results, _ := res["results"].(map[string]any)
+	if status, _ := toInt(cr.Result["status"]); status != 0 || len(results) == 0 {
+		status, _ := res["status"].(string)
+		return nil, fmt.Errorf("the mail server answered %s, but with no JMAP method responses", status)
+	}
+	return results, nil
+}
+
+// mailList reads the results of mailSearchCalls.
+func mailList(results map[string]any) (scenario.MailList, error) {
+	var list scenario.MailList
+	query, _ := results["query"].(map[string]any)
+	if _, ok := results["get"].(map[string]any); query == nil || !ok {
+		return scenario.MailList{}, errors.New("the mail server answered the search without the results of Email/query and Email/get")
+	}
+	list.Total, _ = toInt(query["total"])
+	got, _ := results["get"].(map[string]any)
+	mails, _ := got["list"].([]any)
+	for _, m := range mails {
+		e, ok := m.(map[string]any)
+		if !ok {
+			return scenario.MailList{}, fmt.Errorf("the mail server answered Email/get with a mail that is not an object")
+		}
+		list.Mails = append(list.Mails, mailSummary(e))
+	}
+	if list.Total < len(list.Mails) {
+		list.Total = len(list.Mails)
+	}
+	return list, nil
+}
+
+// mailMessage reads the result of mailReadCalls for the mail of id.
+func mailMessage(results map[string]any, id string) (scenario.MailMessage, error) {
+	got, _ := results["get"].(map[string]any)
+	mails, _ := got["list"].([]any)
+	if len(mails) == 0 {
+		return scenario.MailMessage{}, fmt.Errorf("the mailbox has no mail %s", id)
+	}
+	e, ok := mails[0].(map[string]any)
+	if !ok {
+		return scenario.MailMessage{}, fmt.Errorf("the mail server answered Email/get with a mail that is not an object")
+	}
+	m := scenario.MailMessage{MailSummary: mailSummary(e)}
+	// textBody and htmlBody list the parts to show, each by its partId and
+	// its type: a mail with text alone has its text part in both, and one
+	// with HTML alone its HTML part, so each part is taken by its type, and
+	// once.
+	values, _ := e["bodyValues"].(map[string]any)
+	var texts, htmls []string
+	seen := map[string]bool{}
+	for _, key := range []string{"textBody", "htmlBody"} {
+		parts, _ := e[key].([]any)
+		for _, p := range parts {
+			part, _ := p.(map[string]any)
+			partID, _ := part["partId"].(string)
+			if partID == "" || seen[partID] {
+				continue
+			}
+			seen[partID] = true
+			v, _ := values[partID].(map[string]any)
+			s, _ := v["value"].(string)
+			if s == "" {
+				continue
+			}
+			switch typ, _ := part["type"].(string); strings.ToLower(typ) {
+			case "text/html":
+				htmls = append(htmls, s)
+			case "text/plain", "":
+				texts = append(texts, s)
+			}
+		}
+	}
+	m.Text, m.HTML = strings.Join(texts, "\n"), strings.Join(htmls, "\n")
+	return m, nil
+}
+
+// mailSummary reads the properties of mailSummaryProps of a mail.
+func mailSummary(e map[string]any) scenario.MailSummary {
+	var m scenario.MailSummary
+	m.ID, _ = e["id"].(string)
+	m.Subject, _ = e["subject"].(string)
+	m.Preview, _ = e["preview"].(string)
+	if s, _ := e["receivedAt"].(string); s != "" {
+		m.Received, _ = time.Parse(time.RFC3339, s)
+	}
+	m.From, m.To = addresses(e["from"]), addresses(e["to"])
+	return m
+}
+
+// addresses reads a list of JMAP addresses, each as Name <email>, or the
+// email alone when it has no name.
+func addresses(v any) []string {
+	list, _ := v.([]any)
+	var out []string
+	for _, a := range list {
+		addr, _ := a.(map[string]any)
+		email, _ := addr["email"].(string)
+		name, _ := addr["name"].(string)
+		switch {
+		case name != "" && email != "":
+			out = append(out, name+" <"+email+">")
+		case email != "":
+			out = append(out, email)
+		case name != "":
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // httpWith is the with of a call of the http action that sends req to the
 // API of t, with the headers and the cookies t fixes, and keeps the cookies
 // the API sets for the next call.
@@ -730,6 +981,11 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 		var gql strings.Builder
 		_, _ = io.WriteString(secretsHidden(&gql, r.Secrets), r.GraphQL.URL)
 		reqMap["graphql"] = gql.String()
+	}
+	if r.Mail != nil {
+		var mail strings.Builder
+		_, _ = io.WriteString(secretsHidden(&mail, r.Secrets), r.Mail.URL)
+		reqMap["mail"] = mail.String()
 	}
 	if r.HTTP != nil {
 		// The base URL can hold a secret, as a token in its query.
