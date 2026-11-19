@@ -245,6 +245,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("/help", help)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	(&notesAPI{}).handle(mux)
+	(&graphqlNotes{}).handle(mux)
 	return mux
 }
 

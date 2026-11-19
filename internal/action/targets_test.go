@@ -177,6 +177,26 @@ func TestParse_RefusesTargets(t *testing.T) {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"addr": "a.test:443", "service": "S"}}},
 			want: "unknown parameter targets.grpc.service",
 		},
+		"no url of the GraphQL API": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"graphql": map[string]any{"timeout": "5s"}}},
+			want: "targets.graphql.url is required",
+		},
+		"a bad url of the GraphQL API": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"graphql": map[string]any{"url": "ws://a.test/graphql"}}},
+			want: "targets.graphql.url \"ws://a.test/graphql\" must be an http or https URL",
+		},
+		"headers of the GraphQL API not a map": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"graphql": map[string]any{"url": "http://a.test/graphql", "headers": "X: y"}}},
+			want: "targets.graphql.headers must be a map",
+		},
+		"an unknown key of the GraphQL API": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"graphql": map[string]any{"url": "http://a.test/graphql", "query": "{ a }"}}},
+			want: "unknown parameter targets.graphql.query; the parameters of graphql are url, headers, timeout",
+		},
+		"a cache with a GraphQL API": {
+			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"graphql": map[string]any{"url": "http://a.test/graphql"}}},
+			want: "cache is for a test of a browser alone",
+		},
 		"no url of the API": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"headers": map[string]any{"X": "y"}}}},
 			want: "targets.http.url is required",
@@ -682,5 +702,130 @@ func TestSecretsHidden(t *testing.T) {
 	}
 	if got := b.String(); got != `{"value":"pin <secret:PIN> for <secret:EMAIL>, pw <secret:PW>"}`+"\n" {
 		t.Errorf("got %s", got)
+	}
+}
+
+func TestParse_TargetsGraphQL(t *testing.T) {
+	r, err := parse(map[string]any{
+		"task": "t", "expect": "e",
+		"targets": map[string]any{
+			"graphql": map[string]any{"url": " https://api.test/graphql ", "headers": map[string]any{"Authorization": "Bearer t", "X-Version": 2.0}, "timeout": "10s"},
+			"browser": map[string]any{"url": "https://app.test/"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := r.GraphQL
+	if g == nil || g.URL != "https://api.test/graphql" || !reflect.DeepEqual(g.Headers, map[string]string{"Authorization": "Bearer t", "X-Version": "2"}) || g.Timeout != 10*time.Second {
+		t.Fatalf("graphql %+v", g)
+	}
+	if got := r.kinds(); !slices.Equal(got, []string{"browser", "graphql"}) {
+		t.Errorf("kinds %v", got)
+	}
+}
+
+func TestGraphQLWith(t *testing.T) {
+	g := graphqlReq{URL: "https://api.test/graphql", Headers: map[string]string{"Authorization": "Bearer t"}, Timeout: 5 * time.Second}
+	got, err := graphqlWith(g, scenario.GraphQLRequest{
+		Query: "query N($id: ID!) { note(id: $id) { id } }", Variables: `{"id":"n1"}`, OperationName: "N",
+		Headers: map[string]string{"X-Trace": "1", "Authorization": "mine"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"url": "https://api.test/graphql", "query": "query N($id: ID!) { note(id: $id) { id } }",
+		"variables": map[string]any{"id": "n1"}, "operation_name": "N",
+		"headers": map[string]any{"X-Trace": "1", "Authorization": "Bearer t"}, "timeout": "5s",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("with %v, want %v", got, want)
+	}
+	got, err = graphqlWith(graphqlReq{URL: "http://a.test/graphql"}, scenario.GraphQLRequest{Query: "{ a }"})
+	if err != nil || !reflect.DeepEqual(got, map[string]any{"url": "http://a.test/graphql", "query": "{ a }"}) {
+		t.Errorf("with %v, %v", got, err)
+	}
+	if _, err := graphqlWith(g, scenario.GraphQLRequest{Query: "{ a }", Variables: "[1]"}); err == nil {
+		t.Error("variables that are not an object were taken")
+	}
+}
+
+func TestGraphQLResponse(t *testing.T) {
+	got, err := graphqlResponse("graphql", &probe.CallResult{Result: map[string]any{"res": map[string]any{
+		"code": 200, "status": "200 OK", "data": map[string]any{"note": nil},
+		"errors":  []any{map[string]any{"message": "no note is n9"}},
+		"body":    map[string]any{"data": map[string]any{"note": nil}},
+		"rawbody": `{"data":{"note":null}}`,
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := scenario.GraphQLResponse{Code: 200, Status: "200 OK", Data: `{"note":null}`, Errors: []string{`{"message":"no note is n9"}`}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("response %+v, want %+v", got, want)
+	}
+	// A body that is not JSON holds no data, and is kept as it is.
+	got, err = graphqlResponse("graphql", &probe.CallResult{Result: map[string]any{"res": map[string]any{
+		"code": 502, "status": "502 Bad Gateway", "data": nil, "errors": []any{}, "body": "upstream down",
+	}}})
+	if err != nil || !reflect.DeepEqual(got, scenario.GraphQLResponse{Code: 502, Status: "502 Bad Gateway", Body: "upstream down"}) {
+		t.Errorf("response %+v, %v", got, err)
+	}
+	if _, err := graphqlResponse("gql", &probe.CallResult{Result: map[string]any{}}); err == nil || err.Error() != "gql returned no res" {
+		t.Errorf("err %v", err)
+	}
+}
+
+func TestHostGuard(t *testing.T) {
+	g := hostGuard(actionrpc.Guard{}, "https://api.test/graphql")
+	// The guard holds no keeps of its own: those of an external action are
+	// read from its action.yml.
+	if !slices.Equal(g.AllowHosts, []string{"api.test:443"}) || len(g.Keeps) != 0 || g.AllowsHost("api.test:80") {
+		t.Errorf("guard %+v", g)
+	}
+	g = hostGuard(actionrpc.Guard{ReadOnly: true, AllowHosts: []string{"other.test"}}, "http://api.test:8080/graphql")
+	if !g.ReadOnly || !slices.Equal(g.AllowHosts, []string{"other.test"}) {
+		t.Errorf("guard %+v", g)
+	}
+}
+
+func TestGraphQLTarget(t *testing.T) {
+	caller := probe.NewActionCaller(actionrpc.Call{}, "")
+	if _, err := graphqlTarget(caller, nil, graphqlReq{URL: "http://a.test/graphql"}); err == nil || !strings.Contains(err.Error(), "targets.graphql calls the API through probe-graphql: name it under actions of the workflow, as graphql: github.com/mozership/probe-graphql@<commit SHA>") {
+		t.Errorf("without probe-graphql: err %v", err)
+	}
+	actions := map[string]string{"gql": "github.com/mozership/probe-graphql@" + strings.Repeat("a", 40)}
+	api, err := graphqlTarget(caller, actions, graphqlReq{URL: "http://a.test/graphql", Headers: map[string]string{"X-Version": "2", "Authorization": "Bearer t"}})
+	if err != nil || api.URL != "http://a.test/graphql" || !slices.Equal(api.Fixed, []string{"Authorization", "X-Version"}) || api.Call == nil {
+		t.Errorf("api %+v, %v", api, err)
+	}
+}
+
+func TestResult_MasksTheURLOfTheGraphQLAPI(t *testing.T) {
+	r := req{Task: "t", Expect: "e", GraphQL: &graphqlReq{URL: "https://api.test/graphql?key=s3cret-key"}, Secrets: map[string]string{"KEY": "s3cret-key"}}
+	ret, err := result(r, outcome(), files{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ret["req"].(map[string]any)["graphql"]; got != "https://api.test/graphql?key=<secret:KEY>" {
+		t.Errorf("req.graphql %v", got)
+	}
+}
+
+func TestEvidence_WritesTheLastResponseOfTheGraphQLAPI(t *testing.T) {
+	ev, err := newEvidence(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := outcome()
+	o.Targets = []scenario.TargetState{{Kind: "graphql", URL: "http://a.test/graphql", Method: "mutation CreateNote", Status: 200, Response: "mutation CreateNote -> 200 OK\n\nData: {}"}}
+	f, err := ev.write(req{Task: "t", Expect: "e"}, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	md, _ := os.ReadFile(f.Report)
+	if want := "## Last response of the GraphQL API\n\nmutation CreateNote at <http://a.test/graphql> → 200\n\n```\nmutation CreateNote -> 200 OK\n\nData: {}\n```"; !strings.Contains(string(md), want) {
+		t.Errorf("the report lacks %q:\n%s", want, md)
 	}
 }

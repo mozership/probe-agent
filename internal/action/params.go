@@ -57,6 +57,7 @@ const (
 	targetAndroid = "android"
 	targetHTTP    = "http"
 	targetGRPC    = "grpc"
+	targetGraphQL = "graphql"
 )
 
 // browserParams are the keys of targets.browser. A step once gave them at
@@ -72,6 +73,9 @@ var httpParams = []string{"url", "openapi", "headers", "cookies", "timeout"}
 
 // grpcParams are the keys of targets.grpc.
 var grpcParams = []string{"addr", "protocol", "tls", "insecure", "cert_file", "key_file", "ca_file", "metadata", "proto", "timeout"}
+
+// graphqlParams are the keys of targets.graphql.
+var graphqlParams = []string{"url", "headers", "timeout"}
 
 // Params returns the keys the action takes in with.
 func Params() []string {
@@ -117,6 +121,18 @@ type req struct {
 	HTTP *httpReq
 	// GRPC is the gRPC API the test calls, if any.
 	GRPC *grpcReq
+	// GraphQL is the GraphQL API the test calls, if any.
+	GraphQL *graphqlReq
+}
+
+// graphqlReq is targets.graphql.
+type graphqlReq struct {
+	// URL is the endpoint of the API.
+	URL string
+	// Headers are sent with each request.
+	Headers map[string]string
+	// Timeout bounds each request; zero for the default of probe-graphql.
+	Timeout time.Duration
 }
 
 // grpcReq is targets.grpc.
@@ -181,6 +197,9 @@ func (r req) kinds() []string {
 	}
 	if r.GRPC != nil {
 		k = append(k, targetGRPC)
+	}
+	if r.GraphQL != nil {
+		k = append(k, targetGraphQL)
 	}
 	return k
 }
@@ -293,6 +312,10 @@ func parse(with map[string]any) (req, error) {
 		if g, ok := targets[targetGRPC]; ok {
 			r.GRPC = &grpcReq{}
 			errs = append(errs, readGRPC(g, r.GRPC)...)
+		}
+		if g, ok := targets[targetGraphQL]; ok {
+			r.GraphQL = &graphqlReq{}
+			errs = append(errs, readGraphQL(g, r.GraphQL)...)
 		}
 	}
 	strIn(browser, prefix, "url", &r.URL)
@@ -427,10 +450,10 @@ func parse(with map[string]any) (req, error) {
 func readTargets(v any) (map[string]map[string]any, []error) {
 	m, ok := v.(map[string]any)
 	if !ok {
-		return nil, []error{errors.New("targets must be a map from the kind of each target, browser, ios, android, http or grpc, to what the workflow fixes for it")}
+		return nil, []error{errors.New("targets must be a map from the kind of each target, browser, ios, android, http, grpc or graphql, to what the workflow fixes for it")}
 	}
 	if len(m) == 0 {
-		return nil, []error{errors.New("targets names no target; name browser, ios, android, http, grpc or more than one")}
+		return nil, []error{errors.New("targets names no target; name browser, ios, android, http, grpc, graphql or more than one")}
 	}
 	var errs []error
 	out := map[string]map[string]any{}
@@ -445,8 +468,10 @@ func readTargets(v any) (map[string]map[string]any, []error) {
 			keys = httpParams
 		case targetGRPC:
 			keys = grpcParams
+		case targetGraphQL:
+			keys = graphqlParams
 		default:
-			errs = append(errs, fmt.Errorf("unknown target %s; the targets are browser, ios, android, http and grpc", kind))
+			errs = append(errs, fmt.Errorf("unknown target %s; the targets are browser, ios, android, http, grpc and graphql", kind))
 			continue
 		}
 		t, ok := m[kind].(map[string]any)
@@ -619,6 +644,49 @@ func readGRPC(t map[string]any, g *grpcReq) []error {
 	}
 	if v, ok := t["proto"]; ok {
 		errs = append(errs, readProto(v, g)...)
+	}
+	return errs
+}
+
+// readGraphQL reads targets.graphql t into g.
+func readGraphQL(t map[string]any, g *graphqlReq) []error {
+	var errs []error
+	s, isStr := t["url"].(string)
+	g.URL = strings.TrimSpace(s)
+	switch {
+	case t["url"] != nil && !isStr:
+		errs = append(errs, errors.New("targets.graphql.url must be a string"))
+	case g.URL == "":
+		errs = append(errs, errors.New("targets.graphql.url is required"))
+	default:
+		if u, err := url.Parse(g.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, fmt.Errorf("targets.graphql.url %q must be an http or https URL", g.URL))
+		}
+	}
+	if v, ok := t["headers"]; ok {
+		m, isMap := v.(map[string]any)
+		if !isMap {
+			errs = append(errs, errors.New("targets.graphql.headers must be a map of names to values"))
+		}
+		g.Headers = map[string]string{}
+		for _, name := range slices.Sorted(maps.Keys(m)) {
+			switch val := m[name].(type) {
+			case string:
+				g.Headers[name] = val
+			case int, int64, float64, bool:
+				g.Headers[name] = fmt.Sprint(val)
+			default:
+				errs = append(errs, fmt.Errorf("targets.graphql.headers.%s must be a string", name))
+			}
+		}
+	}
+	if v, ok := t["timeout"]; ok {
+		d, err := actionrpc.ParseTimeout(v)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("targets.graphql.timeout: %w", err))
+		} else {
+			g.Timeout = d
+		}
 	}
 	return errs
 }

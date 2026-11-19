@@ -2,9 +2,9 @@
 // with, readies the targets and the model, runs the test, and returns how
 // it came out, with its evidence written to files. The browser is driven
 // through probe-browser, an iOS app through probe-ios, an Android app
-// through probe-android, and an HTTP API and a gRPC API through the http
-// and grpc actions of Probe, which the agent calls as a step of the run
-// would.
+// through probe-android, an HTTP API and a gRPC API through the http and
+// grpc actions of Probe, and a GraphQL API through probe-graphql, which the
+// agent calls as a step of the run would.
 package action
 
 import (
@@ -64,8 +64,9 @@ func (a *Action) Run(with map[string]any) (map[string]any, error) {
 
 // RunStep runs the test the step asks for. The browser and an iOS app are
 // driven through probe-browser and probe-ios, by the names the workflow
-// gives them under actions, and an HTTP API and a gRPC API through the
-// http and grpc actions of Probe, as a step of the run would call them.
+// gives them under actions, an HTTP API and a gRPC API through the http
+// and grpc actions of Probe, and a GraphQL API through probe-graphql, as a
+// step of the run would call them.
 func (a *Action) RunStep(call actionrpc.Call) (map[string]any, map[string]any, error) {
 	actionrpc.LogParams(a.log, "received agent action request", forLog(call.With))
 	ret, err := a.run(call)
@@ -117,6 +118,17 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 			return nil, err
 		}
 	}
+	var gql *scenario.GraphQL
+	if r.GraphQL != nil {
+		// probe-graphql is called by a caller of its own, kept to the host
+		// of the endpoint, as the http action is.
+		gc := call
+		gc.Guard = hostGuard(call.Guard, r.GraphQL.URL)
+		gqlCaller := probe.NewActionCaller(gc, "", probe.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
+		if gql, err = graphqlTarget(gqlCaller, call.Actions, *r.GraphQL); err != nil {
+			return nil, err
+		}
+	}
 	var browser string
 	if r.Browser {
 		if browser, err = actionNamed(call.Actions, probeBrowser, "targets.browser drives the browser", "browser"); err != nil {
@@ -145,7 +157,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	targets := scenario.Targets{IOS: ios, Android: android, HTTP: api, GRPC: rpc}
+	targets := scenario.Targets{IOS: ios, Android: android, HTTP: api, GRPC: rpc, GraphQL: gql}
 	if r.Browser {
 		tab, err := page.NewBrowser(func(ctx context.Context, with map[string]any) (map[string]any, error) {
 			return callRes(ctx, caller, browser, with)
@@ -202,6 +214,7 @@ const (
 	probeIOS     = "github.com/mozership/probe-ios"
 	probeAndroid = "github.com/mozership/probe-android"
 	probeBrowser = "github.com/mozership/probe-browser"
+	probeGraphQL = "github.com/mozership/probe-graphql"
 )
 
 // callRes calls the action name with with, and returns its res. A failed
@@ -415,6 +428,16 @@ func grpcResponse(cr *probe.CallResult) (scenario.GRPCResponse, error) {
 // any other host. A run that does not allow the host keeps its own hosts,
 // which refuse it all the same.
 func apiGuard(g actionrpc.Guard, raw string) actionrpc.Guard {
+	// The http action keeps to both kinds of guard, as its package
+	// declares, which a guard of a run with none may not hold.
+	return hostGuard(g, raw).WithKeeps(httpAction, []string{actionrpc.KindReadOnly, actionrpc.KindAllowHost})
+}
+
+// hostGuard returns g kept to the host of the URL raw, at the port of its
+// scheme when it names none, for an action that keeps to the guard, to
+// refuse a request, or a redirect, to any other host or port, or from
+// https to http.
+func hostGuard(g actionrpc.Guard, raw string) actionrpc.Guard {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
 		return g
@@ -432,9 +455,96 @@ func apiGuard(g actionrpc.Guard, raw string) actionrpc.Guard {
 	if len(g.AllowHosts) == 0 || g.AllowsHost(host) {
 		g.AllowHosts = []string{host}
 	}
-	// The http action keeps to both kinds of guard, as its package
-	// declares, which a guard of a run with none may not hold.
-	return g.WithKeeps(httpAction, []string{actionrpc.KindReadOnly, actionrpc.KindAllowHost})
+	return g
+}
+
+// graphqlTarget returns the API of t, called through probe-graphql: the
+// action the workflow names under actions whose reference is that of
+// probe-graphql, whatever its name. Its action.yml declares that it keeps
+// to the guard, which the caller reads on its first call.
+func graphqlTarget(caller *probe.ActionCaller, actions map[string]string, t graphqlReq) (*scenario.GraphQL, error) {
+	name, err := actionNamed(actions, probeGraphQL, "targets.graphql calls the API", "graphql")
+	if err != nil {
+		return nil, err
+	}
+	api := &scenario.GraphQL{URL: t.URL, Fixed: slices.Sorted(maps.Keys(t.Headers))}
+	api.Call = func(ctx context.Context, req scenario.GraphQLRequest) (scenario.GraphQLResponse, error) {
+		with, err := graphqlWith(t, req)
+		if err != nil {
+			return scenario.GraphQLResponse{}, err
+		}
+		cr, err := caller.Call(ctx, name, with)
+		if err != nil {
+			return scenario.GraphQLResponse{}, err
+		}
+		return graphqlResponse(name, cr)
+	}
+	return api, nil
+}
+
+// graphqlWith is the with of a call of probe-graphql that sends req to the
+// API of t, with the headers t fixes.
+func graphqlWith(t graphqlReq, req scenario.GraphQLRequest) (map[string]any, error) {
+	with := map[string]any{"url": t.URL, "query": req.Query}
+	if req.Variables != "" {
+		var vars map[string]any
+		if err := json.Unmarshal([]byte(req.Variables), &vars); err != nil {
+			return nil, fmt.Errorf("the variables must be a JSON object: %w", err)
+		}
+		with["variables"] = vars
+	}
+	if req.OperationName != "" {
+		with["operation_name"] = req.OperationName
+	}
+	headers := map[string]any{}
+	for k, v := range req.Headers {
+		headers[k] = v
+	}
+	for k, v := range t.Headers {
+		headers[k] = v
+	}
+	if len(headers) > 0 {
+		with["headers"] = headers
+	}
+	if t.Timeout > 0 {
+		with["timeout"] = t.Timeout.String()
+	}
+	return with, nil
+}
+
+// graphqlResponse reads the response of a call of probe-graphql, called
+// by name.
+func graphqlResponse(name string, cr *probe.CallResult) (scenario.GraphQLResponse, error) {
+	res, ok := cr.Result["res"].(map[string]any)
+	if !ok {
+		return scenario.GraphQLResponse{}, fmt.Errorf("%s returned no res", name)
+	}
+	var out scenario.GraphQLResponse
+	out.Code, _ = toInt(res["code"])
+	out.Status, _ = res["status"].(string)
+	if res["data"] != nil {
+		b, err := json.Marshal(res["data"])
+		if err != nil {
+			return scenario.GraphQLResponse{}, err
+		}
+		out.Data = string(b)
+	}
+	errs, _ := res["errors"].([]any)
+	for _, e := range errs {
+		b, err := json.Marshal(e)
+		if err != nil {
+			return scenario.GraphQLResponse{}, err
+		}
+		out.Errors = append(out.Errors, string(b))
+	}
+	// A body that is JSON comes parsed, with the text it was parsed from in
+	// rawbody; one that is not comes as it is, and holds no data.
+	if _, isJSON := res["rawbody"]; !isJSON {
+		if body, ok := res["body"].(string); ok {
+			out.Body = body
+		}
+	}
+	return out, nil
 }
 
 // httpWith is the with of a call of the http action that sends req to the
@@ -615,6 +725,11 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 		var addr strings.Builder
 		_, _ = io.WriteString(secretsHidden(&addr, r.Secrets), r.GRPC.Addr)
 		reqMap["addr"] = addr.String()
+	}
+	if r.GraphQL != nil {
+		var gql strings.Builder
+		_, _ = io.WriteString(secretsHidden(&gql, r.Secrets), r.GraphQL.URL)
+		reqMap["graphql"] = gql.String()
 	}
 	if r.HTTP != nil {
 		// The base URL can hold a secret, as a token in its query.
