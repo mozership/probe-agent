@@ -1,6 +1,7 @@
 package action
 
 import (
+	"encoding/json"
 	"os"
 	"reflect"
 	"slices"
@@ -195,6 +196,34 @@ func TestParse_RefusesTargets(t *testing.T) {
 		},
 		"a cache with a GraphQL API": {
 			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"graphql": map[string]any{"url": "http://a.test/graphql"}}},
+			want: "cache is for a test of a browser alone",
+		},
+		"no url of the mailbox": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"mail": map[string]any{"timeout": "5s"}}},
+			want: "targets.mail.url is required",
+		},
+		"a bad url of the mailbox": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"mail": map[string]any{"url": "imap://mail.test"}}},
+			want: "targets.mail.url \"imap://mail.test\" must be the http or https URL of a JMAP server",
+		},
+		"basic_auth of the mailbox not a map": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"mail": map[string]any{"url": "http://mail.test", "basic_auth": "u:p"}}},
+			want: "targets.mail.basic_auth must be a map of username and password",
+		},
+		"basic_auth of the mailbox without a password": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"mail": map[string]any{"url": "http://mail.test", "basic_auth": map[string]any{"username": "u"}}}},
+			want: "targets.mail.basic_auth must be a map of username and password",
+		},
+		"an empty account of the mailbox": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"mail": map[string]any{"url": "http://mail.test", "account_id": " "}}},
+			want: "targets.mail.account_id must be the id of an account",
+		},
+		"an unknown key of the mailbox": {
+			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"mail": map[string]any{"url": "http://mail.test", "imap": true}}},
+			want: "unknown parameter targets.mail.imap; the parameters of mail are url, basic_auth, headers, account_id, timeout",
+		},
+		"a cache with a mailbox": {
+			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"browser": map[string]any{"url": "http://a.test"}, "mail": map[string]any{"url": "http://mail.test"}}},
 			want: "cache is for a test of a browser alone",
 		},
 		"no url of the API": {
@@ -827,5 +856,165 @@ func TestEvidence_WritesTheLastResponseOfTheGraphQLAPI(t *testing.T) {
 	md, _ := os.ReadFile(f.Report)
 	if want := "## Last response of the GraphQL API\n\nmutation CreateNote at <http://a.test/graphql> → 200\n\n```\nmutation CreateNote -> 200 OK\n\nData: {}\n```"; !strings.Contains(string(md), want) {
 		t.Errorf("the report lacks %q:\n%s", want, md)
+	}
+}
+
+func TestParse_TargetsMail(t *testing.T) {
+	r, err := parse(map[string]any{
+		"task": "t", "expect": "e",
+		"targets": map[string]any{
+			"mail": map[string]any{
+				"url": " https://mail.test ", "basic_auth": map[string]any{"username": "bob", "password": "pw"},
+				"headers": map[string]any{"X-Tenant": 7.0}, "account_id": "A1", "timeout": "10s",
+			},
+			"browser": map[string]any{"url": "https://app.test/"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &mailReq{URL: "https://mail.test", Username: "bob", Password: "pw", Headers: map[string]string{"X-Tenant": "7"}, AccountID: "A1", Timeout: 10 * time.Second}
+	if !reflect.DeepEqual(r.Mail, want) {
+		t.Fatalf("mail %+v", r.Mail)
+	}
+	if got := r.kinds(); !slices.Equal(got, []string{"browser", "mail"}) {
+		t.Errorf("kinds %v", got)
+	}
+}
+
+func TestJMAPWith(t *testing.T) {
+	calls := []any{map[string]any{"method": "Email/get"}}
+	got := jmapWith(mailReq{URL: "https://mail.test", Username: "bob", Password: "pw", Headers: map[string]string{"X-Tenant": "7"}, AccountID: "A1", Timeout: 5 * time.Second}, calls)
+	want := map[string]any{
+		"url": "https://mail.test", "calls": calls, "basic_auth": map[string]any{"username": "bob", "password": "pw"},
+		"headers": map[string]any{"X-Tenant": "7"}, "account_id": "A1", "timeout": "5s",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("with %v, want %v", got, want)
+	}
+	if got := jmapWith(mailReq{URL: "http://m.test"}, calls); !reflect.DeepEqual(got, map[string]any{"url": "http://m.test", "calls": calls}) {
+		t.Errorf("with %v", got)
+	}
+}
+
+func TestMailSearchCalls(t *testing.T) {
+	after := time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("JST", 9*3600))
+	got := mailSearchCalls(scenario.MailQuery{To: "alice@example.com", Subject: "Confirm", After: after, Limit: 20})
+	b, _ := json.Marshal(got)
+	want := `[{"args":{"calculateTotal":true,"filter":{"after":"2026-01-01T18:04:05Z","subject":"Confirm","to":"alice@example.com"},"limit":20,"sort":[{"isAscending":false,"property":"receivedAt"}]},"id":"query","method":"Email/query"},` +
+		`{"args":{"#ids":{"path":"/ids","resultOf":"query"},"properties":["id","from","to","subject","receivedAt","preview"]},"id":"get","method":"Email/get"}]`
+	if string(b) != want {
+		t.Errorf("calls\n%s\nwant\n%s", b, want)
+	}
+	b, _ = json.Marshal(mailReadCalls("m1"))
+	if !strings.Contains(string(b), `"ids":["m1"]`) || !strings.Contains(string(b), `"fetchHTMLBodyValues":true`) || !strings.Contains(string(b), `"bodyValues"`) {
+		t.Errorf("read calls %s", b)
+	}
+	// The read does not change the properties of the search.
+	if len(mailSummaryProps) != 6 {
+		t.Errorf("props %v", mailSummaryProps)
+	}
+}
+
+func TestJMAPResults(t *testing.T) {
+	res := func(r map[string]any) *probe.CallResult { return &probe.CallResult{Result: map[string]any{"res": r}} }
+	search, err := jmapResults("jmap", res(map[string]any{"code": 200, "status": "200 OK", "errors": []any{}, "results": map[string]any{
+		"query": map[string]any{"ids": []any{"m2", "m1"}, "total": 5},
+		"get": map[string]any{"list": []any{
+			map[string]any{"id": "m2", "subject": "Hi", "receivedAt": "2026-01-02T03:04:05Z", "preview": "p",
+				"from": []any{map[string]any{"name": "Acme", "email": "no-reply@acme.test"}}, "to": []any{map[string]any{"email": "a@x.test"}, map[string]any{"name": "B"}}},
+			map[string]any{"id": "m1"},
+		}},
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := mailList(search)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := scenario.MailList{Total: 5, Mails: []scenario.MailSummary{
+		{ID: "m2", Subject: "Hi", Preview: "p", Received: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), From: []string{"Acme <no-reply@acme.test>"}, To: []string{"a@x.test", "B"}},
+		{ID: "m1"},
+	}}
+	if !reflect.DeepEqual(list, want) {
+		t.Errorf("list %+v\nwant %+v", list, want)
+	}
+
+	if _, err := jmapResults("jmap", res(map[string]any{"code": 200, "errors": []any{map[string]any{"kind": "method", "type": "unknownMethod"}}})); err == nil || !strings.Contains(err.Error(), `answered with errors: [{"kind":"method","type":"unknownMethod"}]`) {
+		t.Errorf("err %v", err)
+	}
+	if _, err := jmapResults("jmap", res(map[string]any{"code": 401, "status": "401 Unauthorized"})); err == nil || err.Error() != "the mail server answered 401 Unauthorized" {
+		t.Errorf("err %v", err)
+	}
+	if _, err := jmapResults("jm", &probe.CallResult{Result: map[string]any{}}); err == nil || err.Error() != "jm returned no res" {
+		t.Errorf("err %v", err)
+	}
+}
+
+func TestMailMessage(t *testing.T) {
+	read := map[string]any{"get": map[string]any{"list": []any{map[string]any{
+		"id": "m1", "subject": "Hi",
+		"textBody":   []any{map[string]any{"partId": "1"}},
+		"htmlBody":   []any{map[string]any{"partId": "2"}},
+		"bodyValues": map[string]any{"1": map[string]any{"value": "Open https://a.test"}, "2": map[string]any{"value": "<a href=\"https://a.test\">Open</a>"}},
+	}}}}
+	m, err := mailMessage(read, "m1")
+	if err != nil || m.ID != "m1" || m.Text != "Open https://a.test" || m.HTML != `<a href="https://a.test">Open</a>` {
+		t.Errorf("mail %+v, %v", m, err)
+	}
+	// A mail of HTML alone has it as its text body as well.
+	read = map[string]any{"get": map[string]any{"list": []any{map[string]any{
+		"id": "m2", "textBody": []any{map[string]any{"partId": "2"}}, "htmlBody": []any{map[string]any{"partId": "2"}},
+		"bodyValues": map[string]any{"2": map[string]any{"value": "<p>Hi</p>"}},
+	}}}}
+	if m, err := mailMessage(read, "m2"); err != nil || m.Text != "" || m.HTML != "<p>Hi</p>" {
+		t.Errorf("mail %+v, %v", m, err)
+	}
+	if _, err := mailMessage(map[string]any{"get": map[string]any{"list": []any{}}}, "m9"); err == nil || err.Error() != "the mailbox has no mail m9" {
+		t.Errorf("err %v", err)
+	}
+}
+
+func TestMailTarget(t *testing.T) {
+	caller := probe.NewActionCaller(actionrpc.Call{}, "")
+	if _, err := mailTarget(caller, nil, mailReq{URL: "http://mail.test"}); err == nil || !strings.Contains(err.Error(), "targets.mail reads the mailbox through probe-jmap: name it under actions of the workflow, as jmap: github.com/mozership/probe-jmap@<commit SHA>") {
+		t.Errorf("without probe-jmap: err %v", err)
+	}
+	actions := map[string]string{"mail": "github.com/mozership/probe-jmap@" + strings.Repeat("a", 40)}
+	box, err := mailTarget(caller, actions, mailReq{URL: "http://mail.test"})
+	if err != nil || box.URL != "http://mail.test" || box.Search == nil || box.Read == nil {
+		t.Errorf("box %+v, %v", box, err)
+	}
+}
+
+func TestResult_MasksTheURLOfTheMailbox(t *testing.T) {
+	r := req{Task: "t", Expect: "e", Mail: &mailReq{URL: "https://mail.test/jmap?key=s3cret-key", Password: "pw"}, Secrets: map[string]string{"KEY": "s3cret-key"}}
+	ret, err := result(r, outcome(), files{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ret["req"].(map[string]any)
+	if got["mail"] != "https://mail.test/jmap?key=<secret:KEY>" {
+		t.Errorf("req.mail %v", got["mail"])
+	}
+}
+
+func TestEvidence_WritesTheLastReadOfTheMailbox(t *testing.T) {
+	ev, err := newEvidence(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := outcome()
+	o.Targets = []scenario.TargetState{{Kind: "mail", URL: "http://mail.test", Response: "From: a\nSubject: Hi"}, {Kind: "mail", URL: "http://other.test"}}
+	f, err := ev.write(req{Task: "t", Expect: "e"}, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	md, _ := os.ReadFile(f.Report)
+	for _, want := range []string{"## Last read of the mailbox\n\nAt <http://mail.test>:\n\n```\nFrom: a\nSubject: Hi\n```", "Nothing was read at <http://other.test>."} {
+		if !strings.Contains(string(md), want) {
+			t.Errorf("the report lacks %q:\n%s", want, md)
+		}
 	}
 }

@@ -58,6 +58,7 @@ const (
 	targetHTTP    = "http"
 	targetGRPC    = "grpc"
 	targetGraphQL = "graphql"
+	targetMail    = "mail"
 )
 
 // browserParams are the keys of targets.browser. A step once gave them at
@@ -76,6 +77,9 @@ var grpcParams = []string{"addr", "protocol", "tls", "insecure", "cert_file", "k
 
 // graphqlParams are the keys of targets.graphql.
 var graphqlParams = []string{"url", "headers", "timeout"}
+
+// mailParams are the keys of targets.mail.
+var mailParams = []string{"url", "basic_auth", "headers", "account_id", "timeout"}
 
 // Params returns the keys the action takes in with.
 func Params() []string {
@@ -123,6 +127,22 @@ type req struct {
 	GRPC *grpcReq
 	// GraphQL is the GraphQL API the test calls, if any.
 	GraphQL *graphqlReq
+	// Mail is the mailbox the test reads, if any.
+	Mail *mailReq
+}
+
+// mailReq is targets.mail.
+type mailReq struct {
+	// URL is the JMAP server, or its session URL.
+	URL string
+	// Username and Password are for HTTP Basic authentication, if given.
+	Username, Password string
+	// Headers are sent with each request.
+	Headers map[string]string
+	// AccountID is the account to read; empty for the primary one.
+	AccountID string
+	// Timeout bounds each call; zero for the default of probe-jmap.
+	Timeout time.Duration
 }
 
 // graphqlReq is targets.graphql.
@@ -200,6 +220,9 @@ func (r req) kinds() []string {
 	}
 	if r.GraphQL != nil {
 		k = append(k, targetGraphQL)
+	}
+	if r.Mail != nil {
+		k = append(k, targetMail)
 	}
 	return k
 }
@@ -316,6 +339,10 @@ func parse(with map[string]any) (req, error) {
 		if g, ok := targets[targetGraphQL]; ok {
 			r.GraphQL = &graphqlReq{}
 			errs = append(errs, readGraphQL(g, r.GraphQL)...)
+		}
+		if m, ok := targets[targetMail]; ok {
+			r.Mail = &mailReq{}
+			errs = append(errs, readMail(m, r.Mail)...)
 		}
 	}
 	strIn(browser, prefix, "url", &r.URL)
@@ -450,10 +477,10 @@ func parse(with map[string]any) (req, error) {
 func readTargets(v any) (map[string]map[string]any, []error) {
 	m, ok := v.(map[string]any)
 	if !ok {
-		return nil, []error{errors.New("targets must be a map from the kind of each target, browser, ios, android, http, grpc or graphql, to what the workflow fixes for it")}
+		return nil, []error{errors.New("targets must be a map from the kind of each target, browser, ios, android, http, grpc, graphql or mail, to what the workflow fixes for it")}
 	}
 	if len(m) == 0 {
-		return nil, []error{errors.New("targets names no target; name browser, ios, android, http, grpc, graphql or more than one")}
+		return nil, []error{errors.New("targets names no target; name browser, ios, android, http, grpc, graphql, mail or more than one")}
 	}
 	var errs []error
 	out := map[string]map[string]any{}
@@ -470,8 +497,10 @@ func readTargets(v any) (map[string]map[string]any, []error) {
 			keys = grpcParams
 		case targetGraphQL:
 			keys = graphqlParams
+		case targetMail:
+			keys = mailParams
 		default:
-			errs = append(errs, fmt.Errorf("unknown target %s; the targets are browser, ios, android, http, grpc and graphql", kind))
+			errs = append(errs, fmt.Errorf("unknown target %s; the targets are browser, ios, android, http, grpc, graphql and mail", kind))
 			continue
 		}
 		t, ok := m[kind].(map[string]any)
@@ -686,6 +715,65 @@ func readGraphQL(t map[string]any, g *graphqlReq) []error {
 			errs = append(errs, fmt.Errorf("targets.graphql.timeout: %w", err))
 		} else {
 			g.Timeout = d
+		}
+	}
+	return errs
+}
+
+// readMail reads targets.mail t into m.
+func readMail(t map[string]any, m *mailReq) []error {
+	var errs []error
+	s, isStr := t["url"].(string)
+	m.URL = strings.TrimSpace(s)
+	switch {
+	case t["url"] != nil && !isStr:
+		errs = append(errs, errors.New("targets.mail.url must be a string"))
+	case m.URL == "":
+		errs = append(errs, errors.New("targets.mail.url is required"))
+	default:
+		if u, err := url.Parse(m.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, fmt.Errorf("targets.mail.url %q must be the http or https URL of a JMAP server", m.URL))
+		}
+	}
+	if v, ok := t["basic_auth"]; ok {
+		a, isMap := v.(map[string]any)
+		user, userOK := a["username"].(string)
+		pass, passOK := a["password"].(string)
+		if !isMap || !userOK || !passOK || len(a) != 2 || user == "" {
+			errs = append(errs, errors.New("targets.mail.basic_auth must be a map of username and password"))
+		}
+		m.Username, m.Password = user, pass
+	}
+	if v, ok := t["headers"]; ok {
+		h, isMap := v.(map[string]any)
+		if !isMap {
+			errs = append(errs, errors.New("targets.mail.headers must be a map of names to values"))
+		}
+		m.Headers = map[string]string{}
+		for _, name := range slices.Sorted(maps.Keys(h)) {
+			switch val := h[name].(type) {
+			case string:
+				m.Headers[name] = val
+			case int, int64, float64, bool:
+				m.Headers[name] = fmt.Sprint(val)
+			default:
+				errs = append(errs, fmt.Errorf("targets.mail.headers.%s must be a string", name))
+			}
+		}
+	}
+	if v, ok := t["account_id"]; ok {
+		s, isStr := v.(string)
+		if !isStr || strings.TrimSpace(s) == "" {
+			errs = append(errs, errors.New("targets.mail.account_id must be the id of an account"))
+		}
+		m.AccountID = strings.TrimSpace(s)
+	}
+	if v, ok := t["timeout"]; ok {
+		d, err := actionrpc.ParseTimeout(v)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("targets.mail.timeout: %w", err))
+		} else {
+			m.Timeout = d
 		}
 	}
 	return errs

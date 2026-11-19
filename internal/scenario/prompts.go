@@ -80,7 +80,7 @@ func (r *run) seenIn() string {
 }
 
 // targetWord names the targets of the test in a word: the browser, the
-// app, the API, or the targets.
+// app, the API, the mailbox, or the targets.
 func (r *run) targetWord() string {
 	if len(r.drivers) != 1 {
 		return "targets"
@@ -90,6 +90,8 @@ func (r *run) targetWord() string {
 		return "app"
 	case "http", "grpc", "graphql":
 		return "API"
+	case "mail":
+		return "mailbox"
 	}
 	return "browser"
 }

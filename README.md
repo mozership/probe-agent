@@ -1,8 +1,8 @@
 # probe-agent
 
-A [Probe](https://github.com/mozership/probe) action that tests an application from a task written in natural language. A model, the tester, uses the application through a real Chrome, an app on an iOS simulator or an Android emulator or device, an HTTP API, a gRPC API, a GraphQL API, or more than one of them, to carry out the task; another call of the model, the judge, then decides from what they showed whether the expectation holds. See [Targets](#targets) for an iOS app, an Android app, an HTTP API, a gRPC API and a GraphQL API.
+A [Probe](https://github.com/mozership/probe) action that tests an application from a task written in natural language. A model, the tester, uses the application through a real Chrome, an app on an iOS simulator or an Android emulator or device, an HTTP API, a gRPC API, a GraphQL API, a mailbox, or more than one of them, to carry out the task; another call of the model, the judge, then decides from what they showed whether the expectation holds. See [Targets](#targets) for an iOS app, an Android app, an HTTP API, a gRPC API, a GraphQL API and a mailbox.
 
-Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It drives Chrome through [probe-browser](https://github.com/mozership/probe-browser), an iOS app through [probe-ios](https://github.com/mozership/probe-ios), an Android app through [probe-android](https://github.com/mozership/probe-android), and a GraphQL API through [probe-graphql](https://github.com/mozership/probe-graphql), which the workflow names under `actions` as it names the agent, and calls an HTTP API and a gRPC API through the [http](https://probe.linyo.ws/reference/actions/http) and [grpc](https://probe.linyo.ws/reference/actions/grpc) actions of Probe; it calls them as a step of the run would, which needs Probe v1.37.0 or later.
+Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It drives Chrome through [probe-browser](https://github.com/mozership/probe-browser), an iOS app through [probe-ios](https://github.com/mozership/probe-ios), an Android app through [probe-android](https://github.com/mozership/probe-android), a GraphQL API through [probe-graphql](https://github.com/mozership/probe-graphql), and a mailbox through [probe-jmap](https://github.com/mozership/probe-jmap), which the workflow names under `actions` as it names the agent, and calls an HTTP API and a gRPC API through the [http](https://probe.linyo.ws/reference/actions/http) and [grpc](https://probe.linyo.ws/reference/actions/grpc) actions of Probe; it calls them as a step of the run would, which needs Probe v1.37.0 or later.
 
 It has two modes:
 
@@ -81,7 +81,7 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `targets` | Object | Yes | - | What the test drives: a browser, an iOS or Android app, an HTTP, gRPC or GraphQL API, or more than one of them; see [Targets](#targets) |
+| `targets` | Object | Yes | - | What the test drives: a browser, an iOS or Android app, an HTTP, gRPC or GraphQL API, a mailbox, or more than one of them; see [Targets](#targets) |
 | `task` | String | Scenario | - | What the tester does, in natural language |
 | `expect` | String | Scenario | - | What has to hold afterwards, in natural language |
 | `persona` | String | Persona | - | Who the tester plays, in natural language: what they know, and how they go about things |
@@ -112,6 +112,7 @@ The model is called with the API key of its provider, which the action takes fro
 | `http` | An HTTP API | `url` (required), the base URL; `openapi`, `headers`, `cookies` and `timeout`, see below | The built-in [http](https://probe.linyo.ws/reference/actions/http) |
 | `grpc` | A gRPC API | `addr` (required); `protocol`, `tls`, `insecure`, `cert_file`, `key_file`, `ca_file`, `metadata`, `proto` and `timeout`, see below | The built-in [grpc](https://probe.linyo.ws/reference/actions/grpc) |
 | `graphql` | A GraphQL API | `url` (required), the endpoint; `headers` and `timeout`, see below | [probe-graphql](https://github.com/mozership/probe-graphql) |
+| `mail` | A mailbox, read over JMAP | `url` (required), the JMAP server; `basic_auth`, `headers`, `account_id` and `timeout`, see below | [probe-jmap](https://github.com/mozership/probe-jmap) |
 
 Up to v0.8.0, `url`, `allow_hosts`, `storage_state`, `headless`, `window_w` and `window_h` could be given at the top of `with`, as a short form of `targets.browser`. They are no longer taken there: a step that gives one is refused, and told where it goes.
 
@@ -324,6 +325,49 @@ The schema is read by introspection as the test starts, and the tester is told t
 
 The judge checks its quotes against the schema and the responses, and is given the last response, which `report.md` shows; nothing is sent again at the end, as a mutation can change what the API holds. A `cache` is refused.
 
+### A mailbox
+
+The tester reads a mailbox, as a user reads the mail an application sends, to sign up and follow the link of the mail that comes. It reads the mailbox over [JMAP](https://jmap.io/) through probe-jmap, which the agent calls as a step of the run would, under the guard of the run, once for each search and each mail read. Name probe-jmap under `actions` of the workflow, by any name, as probe-graphql. It needs probe-jmap v0.3.1 or later.
+
+```yaml
+actions:
+  agent: github.com/mozership/probe-agent@<commit SHA>
+  browser: github.com/mozership/probe-browser@<commit SHA>
+  jmap: github.com/mozership/probe-jmap@<commit SHA>
+jobs:
+- name: newsletter
+  steps:
+  - name: A reader confirms a subscription
+    uses: agent
+    with:
+      task: Subscribe with news@example.com, and confirm the subscription with the link of the mail that comes
+      expect: The page says the subscription is confirmed
+      targets:
+        browser:
+          url: https://staging.example.com/newsletter
+        mail:
+          url: https://mail.staging.example.com
+          basic_auth:
+            username: "{{vars.mail_user}}"
+            password: "{{vars.mail_password}}"
+    test: res.verdict == "pass"
+```
+
+| Key | Type | Description |
+|---|---|---|
+| `url` | String | The JMAP server, `http` or `https`, whose session is at `/.well-known/jmap`, or the session URL itself, as probe-jmap takes it. A request to another host or port, as an API URL the session names elsewhere, is refused |
+| `basic_auth` | Object | `username` and `password` for HTTP Basic authentication |
+| `headers` | Object | Headers sent with each request, such as `Authorization: Bearer <token>` |
+| `account_id` | String | The account to read; the primary account of mail by default |
+| `timeout` | String or Number | The timeout of each call, as `10s` or a number of seconds; 30 seconds by default, as in probe-jmap |
+
+| Tool | What it does |
+|---|---|
+| `mail_search` | Lists the mails that match a sender, a recipient, a subject or a text, the latest first, with their ids and the start of their text. With `new_only`, only those that came after the test started; with `wait`, it waits up to that many seconds, at most 120 and within the timeout of the test, for one to come |
+| `mail_read` | Shows a mail by its id: its headers, its text, or the text of its HTML when it has no other, and its links |
+
+The tester sends nothing: the agent sends Email/query and Email/get alone. As the test starts, the tester is told how many mails the mailbox holds and which came last. `{secret:NAME}` in a search is replaced with the value of the secret, and what the mailbox shows is read with the values masked. The judge checks its quotes against what the tester read, and is given the last mail read, or the last search, which `report.md` shows. A `cache` is refused.
+
 ## Models
 
 The agent is built for Claude, which is trained to use a browser through the browser toolset of the Claude API. The other providers are reached through their APIs compatible with OpenAI's Chat Completions, or through OpenAI's Responses API for `openai`, by which its models both reason and call tools; their models are offered the same members of the toolset as tools of the agent's own, so that they run the same tests; how well they carry out a task depends on the model.
@@ -372,8 +416,8 @@ A recording is of the steps, not of the model, so a test recorded with one model
 | `res.evidence` | List | What the judge quoted: `quote`, and `verified`, whether a page showed it |
 | `res.stopped` | String | How the tester stopped: `done`, `blocked`, `max_steps`, `timeout`, `no_finish`, `refused`, or `stale` for a recording that no longer matched under `cache_mode: strict` |
 | `res.summary` | String | What the tester said it did and saw |
-| `res.steps` | List | Each call to a target: `index`, `tool`, `target` (`browser`, `ios`, `android`, `http`, `grpc` or `graphql`), `input`, `result` or `error`, `url`, `screenshot` and the tester's `notes` |
-| `res.targets` | List | The last state of each target: `kind`; `url` and `title` of the browser; `app` and `device` of an app; `method`, `url` and `status` of the last request to an HTTP API; `address`, `method` and `code` of the last call to a gRPC API; `url`, `method`, the operation such as `mutation CreateNote`, and `status` of the last query to a GraphQL API; and `screenshot` |
+| `res.steps` | List | Each call to a target: `index`, `tool`, `target` (`browser`, `ios`, `android`, `http`, `grpc`, `graphql` or `mail`), `input`, `result` or `error`, `url`, `screenshot` and the tester's `notes` |
+| `res.targets` | List | The last state of each target: `kind`; `url` and `title` of the browser; `app` and `device` of an app; `method`, `url` and `status` of the last request to an HTTP API; `address`, `method` and `code` of the last call to a gRPC API; `url`, `method`, the operation such as `mutation CreateNote`, and `status` of the last query to a GraphQL API; `url` of a mailbox; and `screenshot` |
 | `res.url`, `res.title` | String | The page the tester left the browser on, empty without a browser |
 | `res.console_errors` | List | The errors the pages wrote to their console, as the browser action reports them |
 | `res.network_errors` | List | The requests that failed or were answered with 400 or more: `method`, `url`, `status`, `error` |
@@ -564,6 +608,8 @@ The http action keeps to the guard, and the agent calls it under the guard of th
 The grpc action keeps to the guard too, and the agent calls it under the guard of the run: under `--read-only`, a method is called only when its definition declares it free of side effects, which `grpc_describe` tells the tester, and listing the services is allowed; under `--allow-host`, `addr` has to be a host the guard allows.
 
 probe-graphql keeps to the guard as well, as its `action.yml` declares, and the agent calls it under the guard of the run, kept to the host of `targets.graphql.url`, as it calls the http action: under `--read-only`, a mutation or a subscription is refused before it is sent, and the tester is told so; under `--allow-host`, so is a request to a host the guard does not allow.
+
+probe-jmap keeps to the guard too, and the agent calls it under the guard of the run, kept to the host of `targets.mail.url`. It only reads, so `--read-only` lets it through; under `--allow-host`, the host of the server has to be one the guard allows.
 
 ## Development
 
