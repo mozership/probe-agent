@@ -223,6 +223,15 @@ func TestOperationOf(t *testing.T) {
 		{"mutation CreateNote { a }", "", "mutation CreateNote"},
 		{"query A { a }\nmutation B { b }", "B", "mutation B"},
 		{"query A { a }", "C", "operation C"},
+		{"query A { a } mutation B { b }", "B", "mutation B"},
+		{"fragment F on Note { id } mutation M { m { ...F } }", "", "mutation M"},
+		{"# query Q { q }\nmutation M { m }", "", "mutation M"},
+		{`{ a(s: "} mutation X {") }`, "X", "operation X"},
+		{"query Q($d: In = {a: 1}) @dir { q }", "", "query Q"},
+		{"mutation @dir { m }", "", "mutation"},
+		{"\"\"\"A query.\"\"\" query Q { q }", "", "query Q"},
+		{"{ a } { b }", "", "query"},
+		{`"""a \""" mutation X { x }""" query Q { q }`, "", "query Q"},
 	} {
 		if got := operationOf(c.query, c.name); got != c.want {
 			t.Errorf("operationOf(%q, %q) = %q, want %q", c.query, c.name, got, c.want)

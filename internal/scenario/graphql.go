@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -266,24 +265,103 @@ func (d *graphqlDriver) query(ctx context.Context, in graphqlInput) (string, err
 	return text, nil
 }
 
-// operationRe finds an operation of a document: its type, and its name if
-// it has one.
-var operationRe = regexp.MustCompile(`(?m)^\s*(query|mutation|subscription)\b\s*([_A-Za-z][_0-9A-Za-z]*)?`)
-
 // operationOf names the operation of query that the response is to, as
-// mutation CreateNote: the one name names, or the first of the document.
-// A document that starts with a selection is a query.
+// mutation CreateNote: the one name names, or the first of the document. A
+// selection set that starts a definition is a query.
 func operationOf(query, name string) string {
-	matches := operationRe.FindAllStringSubmatch(query, -1)
-	for _, m := range matches {
-		if name == "" || m[2] == name {
-			return strings.TrimSpace(m[1] + " " + m[2])
+	ops := operations(query)
+	for _, op := range ops {
+		if name == "" || op[1] == name {
+			return strings.TrimSpace(op[0] + " " + op[1])
 		}
 	}
 	if name != "" {
 		return "operation " + name
 	}
 	return "query"
+}
+
+// operations reads the operations a document defines, each its type and
+// its name, which is empty for one that has none. It reads the tokens of
+// the document at its top level, past its strings and comments, and does
+// not check that the document is valid, which the API does.
+func operations(doc string) [][2]string {
+	var ops [][2]string
+	// braces and parens are how deep the reading is; pending is the
+	// keyword of a definition whose selection set has not started.
+	braces, parens := 0, 0
+	pending, named := "", false
+	for i := 0; i < len(doc); {
+		c := doc[i]
+		switch {
+		case c == '#':
+			for i < len(doc) && doc[i] != '\n' && doc[i] != '\r' {
+				i++
+			}
+			continue
+		case strings.HasPrefix(doc[i:], `"""`):
+			end := strings.Index(doc[i+3:], `"""`)
+			for end >= 0 && strings.HasSuffix(doc[:i+3+end], `\`) {
+				next := strings.Index(doc[i+3+end+3:], `"""`)
+				if next < 0 {
+					end = -1
+					break
+				}
+				end += 3 + next
+			}
+			if end < 0 {
+				return ops
+			}
+			i += 3 + end + 3
+			continue
+		case c == '"':
+			i++
+			for i < len(doc) && doc[i] != '"' && doc[i] != '\n' {
+				if doc[i] == '\\' {
+					i++
+				}
+				i++
+			}
+			i++
+			continue
+		case c == '(':
+			parens++
+		case c == ')':
+			parens--
+		case c == '{' && parens == 0:
+			if braces == 0 {
+				switch {
+				case pending == "":
+					ops = append(ops, [2]string{"query", ""})
+				case pending != "fragment" && !named:
+					ops = append(ops, [2]string{pending, ""})
+				}
+				pending, named = "", false
+			}
+			braces++
+		case c == '}' && parens == 0:
+			braces--
+		case c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z':
+			j := i
+			for j < len(doc) && (doc[j] == '_' || doc[j] >= 'A' && doc[j] <= 'Z' || doc[j] >= 'a' && doc[j] <= 'z' || doc[j] >= '0' && doc[j] <= '9') {
+				j++
+			}
+			word := doc[i:j]
+			if braces == 0 && parens == 0 {
+				switch {
+				case pending == "" && (word == "query" || word == "mutation" || word == "subscription" || word == "fragment"):
+					pending, named = word, false
+				case pending != "" && pending != "fragment" && !named && (i == 0 || doc[i-1] != '@' && doc[i-1] != '$'):
+					ops = append(ops, [2]string{pending, word})
+					named = true
+				}
+			}
+			i = j
+			continue
+		}
+		i++
+	}
+	return ops
 }
 
 // graphqlText is what the tester is told of the response to op.
