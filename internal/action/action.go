@@ -232,7 +232,22 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 		f.Recording = r.Cache
 		a.log.Info("recorded the test", "cache", r.Cache, "steps", len(o.Recording.Steps))
 	}
-	return result(r, o, f, time.Since(start))
+	ret, err := result(r, o, f, time.Since(start))
+	if err != nil {
+		return nil, err
+	}
+	// The job summary is for people to read the cost of the tests by; a
+	// test that cannot write it still passes or fails as it did.
+	if path := os.Getenv("GITHUB_STEP_SUMMARY"); path != "" && r.JobSummary {
+		replay := ""
+		if c := cacheOf(r, o, f.Recording != ""); c != nil {
+			replay = c.Status
+		}
+		if err := writeSummary(path, call.Step, r, o, replay); err != nil {
+			a.log.Warn("the usage could not be written to the job summary", "error", err)
+		}
+	}
+	return ret, nil
 }
 
 // probeIOS and probeBrowser are the repositories of probe-ios and
@@ -1274,6 +1289,7 @@ func shortReport(r req, o scenario.Outcome, f files) string {
 		b.WriteString("\n")
 	}
 	fmt.Fprintf(&b, "  %d steps, stopped: %s, %s\n", len(o.Steps), o.Stopped, o.Duration.Round(time.Second))
+	fmt.Fprintf(&b, "  %s\n", usageLine(o.Usage))
 	fmt.Fprintf(&b, "  report: %s", f.Report)
 	return b.String()
 }
