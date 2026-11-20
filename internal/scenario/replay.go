@@ -370,7 +370,7 @@ func (r *run) checks(evidence []Evidence, f []observation) *Checks {
 	quotes := []string{}
 	for _, e := range evidence {
 		q := r.secrets.mask(e.Quote)
-		if e.Verified && normalize(q) != "" && strings.Contains(seen, normalize(q)) && !slices.Contains(quotes, q) {
+		if e.Verified && checkNorm(q) != "" && strings.Contains(seen, checkNorm(q)) && !slices.Contains(quotes, q) {
 			quotes = append(quotes, q)
 		}
 	}
@@ -389,7 +389,7 @@ func (r *run) unmet(c *Checks, f []observation) string {
 	}
 	seen := r.checkText(f)
 	for _, q := range c.Quotes {
-		if !strings.Contains(seen, normalize(q)) {
+		if !strings.Contains(seen, checkNorm(q)) {
 			return fmt.Sprintf("the targets do not show %s, which the judge of the recorded run quoted", quote(q))
 		}
 	}
@@ -415,7 +415,19 @@ func (r *run) checkText(f []observation) string {
 			}
 		}
 	}
-	return normalize(strings.Join(texts, "\n"))
+	return checkNorm(strings.Join(texts, "\n"))
+}
+
+// mixedToken is a word of letters and digits, as the ID n12 or a UUID,
+// which a record is given anew each run.
+var mixedToken = regexp.MustCompile(`(?i)\b(?:[a-z][a-z0-9_-]*[0-9]|[0-9][0-9_-]*[a-z])[a-z0-9_-]*\b`)
+
+// checkNorm normalizes a text for the checks: a word of letters and digits
+// reads as #, so that a quote of the ID of the record the recorded run
+// made holds on a replay that made another. A number alone is kept, as
+// what a count says.
+func checkNorm(s string) string {
+	return mixedToken.ReplaceAllString(normalize(s), "#")
 }
 
 // mintedRun is what changes from run to run in the text of an error: a
@@ -434,7 +446,9 @@ func (r *run) errorKinds() []string {
 		if call == "" {
 			call = b.call
 		}
-		k := mintedRun.ReplaceAllString(fmt.Sprintf("contract: %s %s %s %s", call, b.In, b.Field, b.Reason), "#")
+		// What a validator says can quote the value of a field, and so a
+		// secret, which the recording is not to keep.
+		k := mintedRun.ReplaceAllString(r.secrets.mask(fmt.Sprintf("contract: %s %s %s %s", call, b.In, b.Field, b.Reason)), "#")
 		if !slices.Contains(out, k) {
 			out = append(out, k)
 		}

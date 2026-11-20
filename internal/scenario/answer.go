@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"bytes"
 	"regexp"
 	"strconv"
 	"strings"
@@ -64,8 +65,9 @@ var answerRef = regexp.MustCompile(`\{answer:(\d+)\}`)
 var valueToken = regexp.MustCompile(`[A-Za-z0-9_~+=-]+(?:\.[A-Za-z0-9_~+=-]+)*`)
 
 // keyBefore matches what comes before a value of a key at the end of a
-// text: the key, and what joins it to the value, as "id": " or id=.
-var keyBefore = regexp.MustCompile(`["']?([A-Za-z_][\w.-]*)["']?\s*[:=]\s*["']?$`)
+// text: the key, and what joins it to the value, as "id": " or id=, and the
+// path the value ends, as in Location: /notes/57, whose segment it is.
+var keyBefore = regexp.MustCompile(`["']?([A-Za-z_][\w.-]*)["']?\s*[:=]\s*["']?([^\s"',=]*/)?$`)
 
 // idKey and camelIDKey are keys whose value is an identifier, as id,
 // note_id or noteId, which a number of an input is taken from alone; a
@@ -75,32 +77,52 @@ var (
 	camelIDKey = regexp.MustCompile(`[a-z0-9](?:Id|ID|Ids|IDs|Key|Token|Code|Ref|Uuid|UUID|Slug|Number|No)$`)
 )
 
-// keyValue matches a value after key in an answer.
+// keyValue matches a value after key in an answer: a segment of a path
+// after a key that ends with one.
 func keyValue(key string) *regexp.Regexp {
-	return regexp.MustCompile(`(?:^|[^\w.-])` + regexp.QuoteMeta(key) + `([^\s"',}\])]+)`)
+	value := `([^\s"',}\])]+)`
+	if strings.HasSuffix(key, "/") {
+		value = `([^\s"',}\])/?#]+)`
+	}
+	return regexp.MustCompile(`(?:^|[^\w.-])` + regexp.QuoteMeta(key) + value)
 }
 
 // recordCall keeps a call of the tester or of a replay to a target that
 // answers, with its answer, for the recording and the checks of the run.
-func (r *run) recordCall(d replayer, call llm.Call, res llm.Result) {
+// texts is how many texts the targets had shown before the call, which its
+// own answer is not among.
+func (r *run) recordCall(d replayer, call llm.Call, res llm.Result, texts int) {
 	if res.IsError {
 		return
 	}
+	// The numbers are kept as they were written, as an ID of 64 bits
+	// that a float would round.
+	dec := json.NewDecoder(bytes.NewReader(call.Input))
+	dec.UseNumber()
 	var in map[string]any
-	if json.Unmarshal(call.Input, &in) != nil {
+	if dec.Decode(&in) != nil {
 		return
 	}
 	in, _ = r.secrets.maskAny(in).(map[string]any)
-	rec := Recorded{Target: d.Kind(), Tool: call.Name, Outcome: d.outcome(call, res)}
-	rec.Input, rec.Refs, rec.Gap = r.bind(in)
-	if rec.Gap != "" {
-		// The input holds a value of this run, which is not kept.
-		rec.Input, rec.Refs = nil, nil
+	seen := r.texts[:min(texts, len(r.texts))]
+	bound := func(answers []string) Recorded {
+		rec := Recorded{Target: d.Kind(), Tool: call.Name, Outcome: d.outcome(call, res)}
+		rec.Input, rec.Refs, rec.Gap = r.bind(in, answers, seen)
+		if rec.Gap != "" {
+			// The input holds a value of this run, which is not kept.
+			rec.Input, rec.Refs = nil, nil
+		}
+		return rec
 	}
-	if n := len(r.recorded); n > 0 && rec.Gap == "" && d.reads(call) && sameCall(r.recorded[n-1], rec) {
-		rec.Wait = true
-		r.recorded[n-1], r.answers[n-1] = rec, res.Text
-		return
+	rec := bound(r.answers)
+	// A call sent again, as to wait for an export, is bound to what the
+	// call before it was bound to, not to that call's answer.
+	if n := len(r.recorded); n > 0 && d.reads(call) && r.recorded[n-1].Target == d.Kind() {
+		if again := bound(r.answers[:n-1]); again.Gap == "" && sameCall(r.recorded[n-1], again) {
+			again.Wait = true
+			r.recorded[n-1], r.answers[n-1] = again, res.Text
+			return
+		}
 	}
 	r.keep(rec, res.Text)
 }
@@ -118,31 +140,40 @@ func sameStep(a, b Recorded) bool {
 	return err1 == nil && err2 == nil && string(ja) == string(jb)
 }
 
+// binding is what an input is bound against: the instruction of the test,
+// the answers to the calls before it, and what the targets showed before
+// it.
+type binding struct {
+	instruction string
+	answers     []string
+	seen        []string
+}
+
 // bind returns the input with each value taken from an earlier answer as
 // {answer:N}, and where those values are; or why the input holds a value
 // of this run that cannot be taken again.
-func (r *run) bind(in map[string]any) (map[string]any, []Ref, string) {
-	instruction := flatten(r.secrets.mask(r.cfg.Task) + "\n" + r.secrets.mask(r.cfg.Expect))
+func (r *run) bind(in map[string]any, answers, seen []string) (map[string]any, []Ref, string) {
+	b := binding{instruction: flatten(r.secrets.mask(r.cfg.Task) + "\n" + r.secrets.mask(r.cfg.Expect)), answers: answers, seen: seen}
 	var refs []Ref
 	gap := ""
-	var walk func(v any) any
-	walk = func(v any) any {
+	var walk func(key string, v any) any
+	walk = func(key string, v any) any {
 		switch v := v.(type) {
 		case map[string]any:
 			out := make(map[string]any, len(v))
 			for k, e := range v {
-				out[k] = walk(e)
+				out[k] = walk(k, e)
 			}
 			return out
 		case []any:
 			out := make([]any, len(v))
 			for i, e := range v {
-				out[i] = walk(e)
+				out[i] = walk(key, e)
 			}
 			return out
-		case float64:
-			s := strconv.FormatFloat(v, 'f', -1, 64)
-			if ref, why := r.valueOf(s, instruction); why != "" {
+		case json.Number, float64:
+			s := fmt.Sprint(v)
+			if ref, why := b.valueOf(s, key); why != "" {
 				gap = why
 			} else if ref != nil {
 				ref.Number = true
@@ -151,26 +182,33 @@ func (r *run) bind(in map[string]any) (map[string]any, []Ref, string) {
 			}
 			return v
 		case string:
-			return r.bindString(v, instruction, &refs, &gap)
+			return b.bindString(v, &refs, &gap)
 		}
 		return v
 	}
-	out, _ := walk(in).(map[string]any)
+	out, _ := walk("", in).(map[string]any)
 	return out, refs, gap
 }
 
 // bindString binds the values of a string of an input.
-func (r *run) bindString(s, instruction string, refs *[]Ref, gap *string) string {
+func (b binding) bindString(s string, refs *[]Ref, gap *string) string {
+	instruction := b.instruction
 	if m := dateOrTime.FindString(s); m != "" && !strings.Contains(instruction, flatten(m)) {
 		*gap = "it holds a date or a time, which may have been reckoned from the date"
 		return s
 	}
 	// The placeholders of the secrets are the test's, not values to bind.
 	blanked := placeholder.ReplaceAllStringFunc(s, func(m string) string { return strings.Repeat(" ", len(m)) })
-	var b strings.Builder
+	var out strings.Builder
 	last := 0
 	for _, loc := range valueToken.FindAllStringIndex(blanked, -1) {
-		ref, why := r.valueOf(s[loc[0]:loc[1]], instruction)
+		// The key of a value of a query or of JSON in the string, as page
+		// in ?page=2.
+		key := ""
+		if m := keyBefore.FindStringSubmatch(s[:loc[0]]); m != nil && m[2] == "" {
+			key = m[1]
+		}
+		ref, why := b.valueOf(s[loc[0]:loc[1]], key)
 		if why != "" {
 			*gap = why
 		}
@@ -178,36 +216,49 @@ func (r *run) bindString(s, instruction string, refs *[]Ref, gap *string) string
 			continue
 		}
 		*refs = append(*refs, *ref)
-		b.WriteString(s[last:loc[0]])
-		fmt.Fprintf(&b, "{answer:%d}", len(*refs))
+		out.WriteString(s[last:loc[0]])
+		fmt.Fprintf(&out, "{answer:%d}", len(*refs))
 		last = loc[1]
 	}
-	b.WriteString(s[last:])
-	return b.String()
+	out.WriteString(s[last:])
+	return out.String()
+}
+
+// identifier says whether key names an identifier, as id, note_id or
+// noteId.
+func identifier(key string) bool {
+	return idKey.MatchString(key) || camelIDKey.MatchString(key)
 }
 
 // valueOf returns where token is in an earlier answer, when the tester
 // took it from one; or why it may have read it off a target otherwise; or
 // neither, for a value of the test, as one the task gives or the tester
-// made up.
-func (r *run) valueOf(token, instruction string) (*Ref, string) {
+// made up. key is the key the input gives the value under, if any.
+func (b binding) valueOf(token, key string) (*Ref, string) {
 	digit := strings.ContainsAny(token, "0123456789")
-	if (!digit && !mintedValue(token)) || hasWord(instruction, strings.ToLower(token)) {
+	if (!digit && !mintedValue(token)) || hasWord(b.instruction, strings.ToLower(token)) {
 		return nil, ""
 	}
-	// A number is as often a count or an amount the tester chose, which
-	// an earlier answer may hold by chance, as an identifier.
+	// A number is as often a count or an amount the tester chose, which an
+	// earlier answer may hold by chance, as an identifier: it is taken
+	// from an answer only under a key of one, and only where the input
+	// gives it under none, or under one of an identifier too.
 	number := digitsPattern.MatchString(token)
-	for i := len(r.answers) - 1; i >= 0; i-- {
-		if ref := keyed(r.answers[i], token, !number); ref != nil {
-			ref.Step = i + 1
-			return ref, ""
+	if !number || key == "" || identifier(key) {
+		for i := len(b.answers) - 1; i >= 0; i-- {
+			if ref := keyed(b.answers[i], token, !number); ref != nil {
+				ref.Step = i + 1
+				return ref, ""
+			}
 		}
 	}
-	if number && len(token) < 4 {
+	// Only what looks minted per record, as an ID or a token, is taken to
+	// be read off a target, and not a name of a field or a table, as
+	// address_line2, that a schema showed.
+	if !mintedValue(token) || (number && len(token) < 4) {
 		return nil, ""
 	}
-	for _, t := range r.texts {
+	for _, t := range b.seen {
 		if hasWord(strings.ToLower(t), strings.ToLower(token)) {
 			return nil, "it holds a value that may have been read off a target"
 		}
@@ -231,7 +282,8 @@ func keyed(answer, token string, anyKey bool) *Ref {
 			continue
 		}
 		key := answer[m[0]:i]
-		if name := answer[m[2]:m[3]]; !anyKey && !idKey.MatchString(name) && !camelIDKey.MatchString(name) {
+		// A segment of a path is of an identifier, as in /notes/57.
+		if name := answer[m[2]:m[3]]; !anyKey && m[4] < 0 && !identifier(name) {
 			continue
 		}
 		re := keyValue(key)
@@ -289,11 +341,10 @@ func fill(input map[string]any, refs []Ref, answers []string) (map[string]any, e
 			if m := answerRef.FindStringSubmatch(v); m != nil && m[0] == v {
 				n, _ := strconv.Atoi(m[1])
 				if n >= 1 && n <= len(refs) && refs[n-1].Number {
-					f, err := strconv.ParseFloat(values[n-1], 64)
-					if err != nil {
+					if _, err := strconv.ParseFloat(values[n-1], 64); err != nil {
 						return nil, fmt.Errorf("the answer of step %d has %s after %s, where the recording had a number", refs[n-1].Step, quote(values[n-1]), refs[n-1].Key)
 					}
-					return f, nil
+					return json.Number(values[n-1]), nil
 				}
 			}
 			return answerRef.ReplaceAllStringFunc(v, func(m string) string {
@@ -341,6 +392,7 @@ func (r *run) replayCall(ctx context.Context, i int, s Recorded, answers []strin
 	}
 	deadline := time.Now().Add(wait)
 	for {
+		texts := len(r.texts)
 		res, step := d.Do(ctx, call)
 		step.Index = len(r.steps) + 1
 		step.Notes = []string{fmt.Sprintf("Replayed step %d of the recording.", i+1)}
@@ -350,10 +402,15 @@ func (r *run) replayCall(ctx context.Context, i int, s Recorded, answers []strin
 		}
 		got := d.outcome(call, res)
 		if got == s.Outcome {
-			r.recordCall(d, call, res)
+			r.recordCall(d, call, res, texts)
 			return res.Text, false, ""
 		}
-		if !d.reads(call) || time.Now().After(deadline) || ctx.Err() != nil || len(r.steps) >= r.cfg.MaxSteps {
+		switch {
+		case ctx.Err() != nil:
+			return "", false, "the test ran out of time"
+		case len(r.steps) >= r.cfg.MaxSteps:
+			return "", false, "the test ran out of steps"
+		case !d.reads(call) || time.Now().After(deadline):
 			return "", true, fmt.Sprintf("%s got %s, where the recording got %s", s.Tool, quote(got), quote(s.Outcome))
 		}
 		select {

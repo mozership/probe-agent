@@ -541,9 +541,10 @@ func (r *run) test(ctx context.Context) (stopped, summary string, err error) {
 				results = append(results, llm.Result{CallID: call.ID, Text: "Error: the test has run out of steps", IsError: true})
 				continue
 			}
+			texts := len(r.texts)
 			res, step := d.Do(ctx, call)
 			if rp, ok := d.(replayer); ok {
-				r.recordCall(rp, call, res)
+				r.recordCall(rp, call, res, texts)
 			}
 			step.Index = len(r.steps) + 1
 			step.Notes, notes = notes, nil
