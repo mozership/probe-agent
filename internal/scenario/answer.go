@@ -1,10 +1,10 @@
 package scenario
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"bytes"
 	"regexp"
 	"strconv"
 	"strings"
