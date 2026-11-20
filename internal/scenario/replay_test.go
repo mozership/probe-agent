@@ -146,10 +146,10 @@ func TestRun_TheJudgeJudgesAReplayThatMissesTheChecks(t *testing.T) {
 		change func(*fakePage)
 		why    string
 	}{
-		"another text": {func(p *fakePage) { p.text = "Welcome back, alice@example.com!" }, `does not show "Welcome, {secret:EMAIL}!"`},
+		"another text": {func(p *fakePage) { p.text = "Welcome back, alice@example.com!" }, `do not show "Welcome, {secret:EMAIL}!"`},
 		"a new error": {func(p *fakePage) {
 			p.network = []page.NetworkError{{Method: "GET", URL: "http://staging.test/api/me/42", Status: 500}}
-		}, "the page had an error the recorded run did not: GET /api/me/:id 500"},
+		}, "the run had an error the recorded run did not: GET /api/me/:id 500"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rec := recorded(t)

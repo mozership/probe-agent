@@ -34,8 +34,6 @@ type browserDriver struct {
 	landing string
 	// url and title are of the page as the model was last told it.
 	url, title string
-	// recorded are the steps that changed the page, for the recording.
-	recorded []Recorded
 }
 
 // newBrowserDriver returns the browser of the test l keeps, which drives
@@ -219,8 +217,14 @@ func (d *browserDriver) Do(ctx context.Context, call llm.Call) (llm.Result, Step
 		}
 		d.url, d.title = url, title
 	}
-	if d.cfg.Record && actions[call.Name] && !res.IsError {
+	switch {
+	case !actions[call.Name] || res.IsError:
+	case d.cfg.Record:
 		d.record(ctx, call.Name, step.Input, loc, step.URL, pixels)
+	default:
+		// The step holds its place among the calls of the other targets,
+		// whose answers are kept by the step they answer.
+		d.keep(Recorded{Tool: call.Name}, "")
 	}
 	return res, step
 }

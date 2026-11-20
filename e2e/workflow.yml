@@ -298,7 +298,9 @@ jobs:
 # Probe, with the key the workflow fixes, and checks each request and its
 # response against e2e/api/openapi.yml. Its list of notes gives the count
 # as a string, which the document does not allow, for the persona test to
-# find without the reviewer.
+# find without the reviewer. The calls of the first test are recorded, and
+# the next replays them, with the id of the note it writes in place of the
+# one recorded, and passes on the checks of the recording.
 - name: API
   id: api
   defaults:
@@ -321,19 +323,41 @@ jobs:
       get: /health
     retry: {max_attempts: 30, interval: 1s}
     test: res.code == 200
+  # The note is a secret, so that the task is the same each run, and the
+  # recording of the calls is replayed.
   - name: A client writes a note and reads it back
     id: write
     uses: agent
     with:
       task: |
-        Write a note that says "Pay rent {{vars.id}}" through the API, and
-        read that note back by its id.
+        Write a note that says {secret:NOTE} through the API, and read that
+        note back by its id.
       expect: |
-        The note read back by its id says "Pay rent {{vars.id}}".
+        The note read back by its id says {secret:NOTE}.
+      secrets:
+        NOTE: "Pay rent {{vars.id}}"
+      cache: out/cache/notes-api.json
+      cache_mode: auto
     timeout: 5m
     test: |
       res.verdict == "pass" && len(filter(res.steps, .target == "http")) >= 2
       && res.targets[0].kind == "http" && res.targets[0].status == 200
+  - name: A replay of the calls takes the id of the note it wrote, without the model
+    uses: agent
+    with:
+      task: |
+        Write a note that says {secret:NOTE} through the API, and read that
+        note back by its id.
+      expect: |
+        The note read back by its id says {secret:NOTE}.
+      secrets:
+        NOTE: "Water the plants {{vars.id}}"
+      cache: out/cache/notes-api.json
+      cache_mode: strict
+    timeout: 5m
+    test: |
+      res.verdict == "pass" && res.cache.status == "hit" && res.cache.checked
+      && res.usage.requests == 0 && res.targets[0].status == 200
   - name: A developer who lists the notes finds the count is not a number
     uses: agent
     with:
@@ -556,12 +580,12 @@ jobs:
         table=$(sed -n '/^### Model usage of probe-agent$/,$p' "$GITHUB_STEP_SUMMARY")
         echo "$table"
         echo "rows: $(echo "$table" | grep '^| ' | grep -v -e '^| Job |' -e '^| \*\*Total\*\* |' | wc -l | tr -d ' ')"
-    # A row for each of the 13 steps that use the agent, in one table.
+    # A row for each of the 14 steps that use the agent, in one table.
     test: |
       res.code == 0 && (res.stdout == "no job summary\n"
       || (res.stdout contains "| Sign-up | A new user signs up with an email and a password | pass |"
           && res.stdout contains "| **Total** |"
-          && res.stdout contains "rows: 13\n"))
+          && res.stdout contains "rows: 14\n"))
 
   - name: Put the notes on the pull request
     uses: github-notes

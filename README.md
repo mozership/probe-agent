@@ -182,7 +182,7 @@ The tester reads the app by its accessibility tree, and names an element by a [s
 
 Each tool is one call of probe-ios. `targets.ios.timeout`, as `5s` or a number of seconds, bounds the actions of each call, from the first to the last: a tap on an element that is not there fails once it runs out, and the tester reads the tree again. It is 30 seconds by default, as in probe-ios, which a guess of the model at a selector can spend whole; a few seconds are enough for an app that answers at once. It does not count building the runner, which the step's `timeout` bounds. The agent opens the app with the same timeout, and XCUITest waits for the app to settle before it: on a simulator just booted, or on a slow machine such as a CI runner, that takes longer than a few seconds, so keep the default there, or give more. The first call on a simulator just booted can run out of even the default, so a step of probe-ios that launches the app before the agent helps; on a GitHub Actions runner the opening ran out of the default now and then even after it, so [e2e/ios.yml](e2e/ios.yml) does both and gives `2m`.
 
-The judge checks its quotes against the trees and the texts the app showed, and is given the last tree, and its screenshot when the model sees images. With images, each move keeps a screenshot as evidence, which `report.md` shows. A `cache` is refused: a recording is of the steps of a browser.
+The judge checks its quotes against the trees and the texts the app showed, and is given the last tree, and its screenshot when the model sees images. With images, each move keeps a screenshot as evidence, which `report.md` shows. A `cache` is refused: the steps of an app are not recorded.
 
 ### A browser and an app
 
@@ -257,7 +257,7 @@ The tester has one tool, `http_request`, with `method`, `path`, `query`, `header
 
 What the OpenAPI document does not allow in a request or a response is told to the tester with the response, and to the judge or the reviewer with the record. In a persona test, a response that breaks the document is a finding, `verified` as a deterministic check found it, without the reviewer: the violations of one field of one operation are one finding. A request that breaks it is the tester's to mend, and is no finding, nor is a response the document has no operation for, as to a path the tester got wrong.
 
-The judge checks its quotes against the responses, and is given the last one, which `report.md` shows; nothing is sent again at the end, as a request can change what the API holds. A `cache` is refused, as for an app.
+The judge checks its quotes against the responses, and is given the last one, which `report.md` shows; nothing is sent again at the end, as a request can change what the API holds. A `cache` [replays](#replay) the requests.
 
 ### A gRPC API
 
@@ -288,7 +288,7 @@ The agent calls the API through the grpc action of Probe, as it calls an HTTP AP
 
 The services are listed as the test starts, and the tester is told them. They are read from the server's reflection, or from the `.proto` files of `proto` when it is given. A server without reflection can still be called without `proto`, and the tester is told why the services could not be listed; files of `proto` that cannot be listed by, as ones that do not compile, fail the step before the model is called. A status other than `OK` is the server's answer, which the tester reads as such. `{secret:NAME}` in the request or the metadata is replaced with the value of the secret as the call is made, and the answer is read with the values masked.
 
-With `proto`, what the `.proto` files do not allow in a call or its response, or in the server's definition of the method, is told to the tester, the judge and the reviewer, and in a persona test a response that breaks them is a finding without the reviewer, as for an [HTTP API](#an-http-api). The judge is given the last answer, which `report.md` shows; nothing is called again at the end. A `cache` is refused.
+With `proto`, what the `.proto` files do not allow in a call or its response, or in the server's definition of the method, is told to the tester, the judge and the reviewer, and in a persona test a response that breaks them is a finding without the reviewer, as for an [HTTP API](#an-http-api). The judge is given the last answer, which `report.md` shows; nothing is called again at the end. A `cache` [replays](#replay) the calls.
 
 ### A GraphQL API
 
@@ -327,7 +327,7 @@ jobs:
 
 The schema is read by introspection as the test starts, and the tester is told the fields of its query, mutation and subscription types. An API that answers no introspection, as many in production do not, can still be called: the tester is told why the schema could not be read, and `graphql_schema` tries again. Errors in a response are the API's answer, which the tester reads as such, before the data. `{secret:NAME}` in the document, the variables or a header is replaced with the value of the secret as the request is sent, escaped as a string of JSON or GraphQL holds it, and the response is read with the values masked.
 
-The judge checks its quotes against the schema and the responses, and is given the last response, which `report.md` shows; nothing is sent again at the end, as a mutation can change what the API holds. A `cache` is refused.
+The judge checks its quotes against the schema and the responses, and is given the last response, which `report.md` shows; nothing is sent again at the end, as a mutation can change what the API holds. A `cache` [replays](#replay) the calls.
 
 ### A mailbox
 
@@ -370,7 +370,7 @@ jobs:
 | `mail_search` | Lists the mails that match a sender, a recipient, a subject or a text, the latest first, with their ids and the start of their text. With `new_only`, only those that came after the test started, after the latest mail the mailbox held then, by the clock of the server; with `wait`, it waits up to that many seconds, at most 120 and within the timeout of the test, for one to come |
 | `mail_read` | Shows a mail by its id: its headers, its plain text, or the text of its HTML when it has none, and the links of both |
 
-The tester sends nothing: the agent sends Email/query and Email/get alone. As the test starts, the tester is told how many mails the mailbox holds and which came last. `{secret:NAME}` in a search is replaced with the value of the secret, and what the mailbox shows is read with the values masked. The judge checks its quotes against what the tester read, and is given the last mail read, or the last search, which `report.md` shows. A `cache` is refused.
+The tester sends nothing: the agent sends Email/query and Email/get alone. As the test starts, the tester is told how many mails the mailbox holds and which came last. `{secret:NAME}` in a search is replaced with the value of the secret, and what the mailbox shows is read with the values masked. The judge checks its quotes against what the tester read, and is given the last mail read, or the last search, which `report.md` shows. A `cache` [replays](#replay) the calls.
 
 ### A database
 
@@ -405,7 +405,7 @@ jobs:
 | `db_tables` | Lists the tables and their columns, with their types |
 | `db_query` | Runs one statement that reads, with `params` for its placeholders, and shows its rows, each as a JSON object, up to 50, or the error of the database. The tester is told to name each column apart, as two of one name come back as one, and to cast an integer above 2^53, an exact time and a binary column to text, as they come back changed |
 
-As the test starts, the tester is told the tables of the database. A row can hold personal data: the tester sees what it reads, as it sees a page, and `secrets` masks what the workflow names. `{secret:NAME}` in a statement or a param is replaced with the value of the secret. The judge checks its quotes against what the tester read, and is given the last statement and its answer, which `report.md` shows. A `cache` is refused.
+As the test starts, the tester is told the tables of the database. A row can hold personal data: the tester sees what it reads, as it sees a page, and `secrets` masks what the workflow names. `{secret:NAME}` in a statement or a param is replaced with the value of the secret. The judge checks its quotes against what the tester read, and is given the last statement and its answer, which `report.md` shows. A `cache` [replays](#replay) the calls.
 
 ## Models
 
@@ -548,7 +548,7 @@ error · step 9 · https://staging.example.com/notes/new
 
 ## Replay
 
-A scenario test that passes the same way every run need not ask the model how to do it every run. With `cache`, the steps of a run that passed are kept in a file, and the next run replays them without the model. A replay of all of the steps is passed on the checks of the recording, what its judge passed it on, and the judge is asked when it does not meet them, so that what the pages show is still judged.
+A scenario test that passes the same way every run need not ask the model how to do it every run. With `cache`, the steps of a run that passed are kept in a file, and the next run replays them without the model: those of a browser, and the calls of an HTTP, gRPC or GraphQL API, a mailbox and a database, alone or together. The steps of an app are not recorded, and a test of one takes no `cache`. A replay of all of the steps is passed on the checks of the recording, what its judge passed it on, and the judge is asked when it does not meet them, so that what the pages show is still judged.
 
 ```yaml
     with:
@@ -561,17 +561,24 @@ A scenario test that passes the same way every run need not ask the model how to
       cache_mode: "{{CACHE_MODE ?? 'auto'}}"
 ```
 
-A replay:
+A replay of a browser:
 
 1. Begins only on the page the recording began on, as the start URL may redirect elsewhere, such as to a login.
 2. Finds each element a step acted on by its role and its name, such as `button "Create account"`. Where other elements of the page had both, it counts them too, and takes the same one of as many; another number of them is ambiguous, and the replay stops rather than guess. An element with no name among others of its role is not recorded: only its order would tell it, and rows that reorder would give the step to another.
 3. Checks after each step that the page is on the route it reached when recorded, and shows no alert the recording did not. A route is a page's path and query, with what looks minted per record, such as an ID, a token or a date, read as one: `/orders/42` and `/orders/7` are one route, and `/companies` and `/companies?tab=notes` are two.
 4. Ends without the model, or hands the test to the tester where it stopped, telling it what was replayed and why it stopped. Once the test passes, the run is recorded again.
-5. Passes a replay of all of the steps without the judge when it meets the checks of the recording, and has the judge judge it otherwise.
 
-The checks of a recording are what its judge passed the run on: the quotes of the judge that the page the run ended on showed, and the console errors and failed requests of the run. A replay of all of the steps meets them when the text of the page it ends on, not the values of its fields, shows each quote, in any case and spacing, and it had no error the recorded run did not have, an error being its kind, or its method, the route of its URL and its status, with the numbers, hex runs and UUIDs of its text, and the origin of the test, read as one; the errors of a replay the judge passes are added to the checks. Such a test passes with the quotes as its evidence, and `res.cache.checked`, without asking the model at all. A replay that does not meet them, or of a recording without checks, such as one written before the checks were, is judged; once the judge passes it, it is recorded again with the checks the judge passed it on, in `auto`. A quote the judge took from a page before the last, or of a value of the run, such as the time, makes no check that holds on another run, and each such run is judged; a short quote, such as a name alone, makes a check a page that says something else around it meets as well, so read the checks of a recording before committing it. Set `cache_judge: always` to have the judge judge every replay, as when the expectation is of something a quote does not show, such as the layout.
+A replay of a target that answers a call, as an API:
 
-A value the tester typed that the task spells out, or that it made up, such as a name, is typed again. A value it may have read off the screen, such as a code the application showed, or a date, belongs to that run: its step is recorded as a gap, without the value, and the replay hands the test to the tester there. A step at a point of the viewport, rather than on an element, is replayed only at the viewport it was recorded at.
+1. Sends each call again, and checks that it gets the answer it got when recorded: the status of the response of an HTTP or a GraphQL API, with whether the latter had errors, the status of a gRPC call, whether a search of the mailbox found a mail, and whether a query of the database had rows, none or an error. A call that only reads, as a GET, a search or a query, is sent again for 3 seconds until it does, and one the tester sent again and again until its answer changed, as to wait for an export, is recorded as one call that waits, which the replay sends again for 30 seconds.
+2. Takes a value of a call the tester took from an earlier answer, such as the ID of a record it made, from the answer the replay got there instead. It is recorded as where it was in that answer: the value after a key, as `"id": ` or `id=`, or a segment of a path after one, as in `Location: /notes/57`, the first, the second or another of them. A number is taken that way only from a key of an identifier, as `id`, `note_id` or `noteId`, or from a path, and only where the call gives it in a path, or under a key of an identifier too, since a count the tester chose, as `?page=1`, may be in an answer by chance; a value with a letter is taken from any key.
+3. Hands the test to the tester where it stopped, telling it what was replayed and what the calls were answered, as for a browser.
+
+A replay of all of the steps is passed without the judge when it meets the checks of the recording, and judged otherwise.
+
+The checks of a recording are what its judge passed the run on: the quotes of the judge that the page the run ended on showed, or the answers to the calls recorded, and the console errors and failed requests of the run, and what the contracts of the APIs did not allow. A replay of all of the steps meets them when the text of the page it ends on, not the values of its fields, or an answer to a call, shows each quote, in any case and spacing, and with a word of letters and digits, such as the ID `n12`, read as any other, and it had no error the recorded run did not have, an error being its kind, or its method, the route of its URL and its status, with the numbers, hex runs and UUIDs of its text, and the origin of the test, read as one; the errors of a replay the judge passes are added to the checks. Such a test passes with the quotes as its evidence, and `res.cache.checked`, without asking the model at all. A replay that does not meet them, or of a recording without checks, such as one written before the checks were, is judged; once the judge passes it, it is recorded again with the checks the judge passed it on, in `auto`. A quote the judge took from a page before the last, or of a value of the run, such as the time, makes no check that holds on another run, and each such run is judged; a short quote, such as a name alone, makes a check a page that says something else around it meets as well, so read the checks of a recording before committing it. Set `cache_judge: always` to have the judge judge every replay, as when the expectation is of something a quote does not show, such as the layout.
+
+A value the tester typed or sent that the task spells out, or that it made up, such as a name, is typed or sent again. A value it may have read off the screen or an answer, such as a code the application showed, other than as the value of a key, or a date, belongs to that run; on a target that answers, only a value that looks minted, such as a long number, a UUID or a token, is taken to have been read, and not the name of a field such as `address_line2`: its step is recorded as a gap, without its input, and the replay hands the test to the tester there. A step at a point of the viewport, rather than on an element, is replayed only at the viewport it was recorded at.
 
 The recording is of the task, the expectation and the start URL; when one of them changes, it is not replayed. It keeps the secrets as placeholders, and the URLs on the host of `targets.browser.url` as paths, so that a recording made against one host is replayed against another. It is written only when it changes, so that a committed one stays clean while it replays. A persona test takes no `cache`: it is to take another way each run.
 

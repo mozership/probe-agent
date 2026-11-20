@@ -49,6 +49,18 @@ type ledger struct {
 	// breaches are what the OpenAPI document of an HTTP API did not allow
 	// in the requests and the responses.
 	breaches []contractBreach
+	// recorded are the steps of the run for its recording: those that
+	// changed the page of the browser, and the calls of the targets that
+	// answer them. answers are what each of them was answered, which is
+	// empty for a step of the browser.
+	recorded []Recorded
+	answers  []string
+}
+
+// keep adds a step to the recording of the run, with what it was answered.
+func (l *ledger) keep(rec Recorded, answer string) {
+	l.recorded = append(l.recorded, rec)
+	l.answers = append(l.answers, answer)
 }
 
 func newLedger(cfg Config) *ledger {

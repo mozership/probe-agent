@@ -305,18 +305,19 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 
 	o := Outcome{Mode: cfg.Mode(), Model: m.Name()}
 	var stopped, summary string
-	// A recording is of the steps of a browser, the one target of its test.
-	if rec := cfg.Recording; rec != nil && o.Mode == ModeScenario && r.browserOnly() {
-		o.Replay = &Replay{Status: ReplayMiss, Reason: r.web.usable(rec)}
+	// A recording is of the steps of a browser, and of the calls of the
+	// targets that answer them, as an API.
+	if rec := cfg.Recording; rec != nil && o.Mode == ModeScenario && r.replayable() {
+		o.Replay = &Replay{Status: ReplayMiss, Reason: r.usable(rec)}
 		if o.Replay.Reason == "" {
-			*o.Replay = r.web.replay(testerCtx, rec)
+			*o.Replay = r.replay(testerCtx, rec)
 		}
 		switch o.Replay.Status {
 		case ReplayHit:
 			stopped = StoppedDone
 			summary = fmt.Sprintf("All %d steps were replayed from a recording of an earlier run; the model was not asked to act.", o.Replay.Replayed)
 		case ReplayPartial:
-			r.handoffNote = r.web.handoff(*o.Replay, rec)
+			r.handoffNote = r.handoff(*o.Replay, rec)
 		}
 		if cfg.Strict && o.Replay.Stale {
 			stopped, summary = StoppedStale, o.Replay.Reason
@@ -376,7 +377,7 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 			} else {
 				o.Replay.Checked = true
 				o.Verdict = Pass
-				o.Reason = fmt.Sprintf("All %d steps were replayed from a recording of an earlier run, and the page they ended on shows what the judge of that run quoted, with no error that run did not have; the model was not asked to judge.", o.Replay.Replayed)
+				o.Reason = fmt.Sprintf("All %d steps were replayed from a recording of an earlier run, and the targets showed what the judge of that run quoted, with no error that run did not have; the model was not asked to judge.", o.Replay.Replayed)
 				for _, q := range cfg.Recording.Checks.Quotes {
 					o.Evidence = append(o.Evidence, Evidence{Quote: q, Verified: true})
 				}
@@ -408,9 +409,9 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 	// for them. The errors of the checks add up, so that one that comes and
 	// goes does not change them back and forth.
 	hit := o.Replay != nil && o.Replay.Status == ReplayHit
-	if cfg.Record && r.browserOnly() && o.Mode == ModeScenario && o.Verdict == Pass && stopped == StoppedDone &&
+	if cfg.Record && r.replayable() && o.Mode == ModeScenario && o.Verdict == Pass && stopped == StoppedDone &&
 		!(hit && (o.Replay.Checked || cfg.Rejudge)) {
-		rec := r.web.recording()
+		rec := r.recording()
 		if hit {
 			c := *cfg.Recording
 			rec = &c
@@ -540,7 +541,11 @@ func (r *run) test(ctx context.Context) (stopped, summary string, err error) {
 				results = append(results, llm.Result{CallID: call.ID, Text: "Error: the test has run out of steps", IsError: true})
 				continue
 			}
+			texts := len(r.texts)
 			res, step := d.Do(ctx, call)
+			if rp, ok := d.(replayer); ok {
+				r.recordCall(rp, call, res, texts)
+			}
 			step.Index = len(r.steps) + 1
 			step.Notes, notes = notes, nil
 			r.steps = append(r.steps, step)
