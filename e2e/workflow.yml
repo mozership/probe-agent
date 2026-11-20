@@ -127,10 +127,13 @@ jobs:
       secrets:
         EMAIL: "bob+broken-{{vars.id}}@example.com"
         PASSWORD: "{{vars.password}}"
+      language: Japanese
     timeout: 5m
     test: |
       res.verdict == "fail" && len(filter(res.network_errors, .status == 500)) > 0
       && len(filter(res.notes, .level == "critical")) == 1
+      && res.notes[0].title == "期待した結果になりませんでした"
+      && res.reason matches "[ぁ-んァ-ヶ一-龠]"
 
 - name: Persona
   id: persona
@@ -163,9 +166,11 @@ jobs:
       secrets:
         EMAIL: "carol+{{vars.id}}@example.com"
         PASSWORD: "{{vars.password}}"
+      language: Japanese
     timeout: 5m
     test: |
       res.mode == "persona" && res.verdict == "fail"
+      && any(res.findings, .title matches "[ぁ-んァ-ヶ一-龠]")
       && len(filter(res.findings, .severity == "high" && .verified)) > 0
       && len(filter(res.notes, .level == "critical")) > 0
       && len(filter(res.network_errors, .status == 500)) > 0

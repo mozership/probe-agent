@@ -90,6 +90,7 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 | `provider` | String | No | `anthropic` | `anthropic`, `openai`, `xai`, `gemini` or `sakura`; see [Models](#models) |
 | `model` | String | Not with `anthropic` | `claude-opus-5-5` with `anthropic` | The model's ID |
 | `effort` | String | No | `medium` | `low`, `medium`, `high`, `xhigh` or `max` |
+| `language` | String | No | English, or that of `task` or `goal` | The language the model writes in, as `Japanese`: the reason, the findings, the summary and the notes; see [Notes](#notes) |
 | `base_url` | String | No | the provider's | The URL the provider's API is under, as for a proxy, or another API compatible with OpenAI's Responses API under `openai` |
 | `vision` | Boolean | No | `false` with `sakura`, else `true` | Whether the model sees images. Not with `anthropic` |
 | `max_steps` | Integer | No | `40` | The calls the tester may make to the targets |
@@ -485,6 +486,20 @@ The title of a note of a finding is that of the finding. Its body gives:
 - the quotes found in the record
 
 A finding none of whose evidence was found in the record is still a note. Its body says so, as the finding may be a misreading of the model. The quotes not found are left out of a note.
+
+The notes are written in English, or in the language of `task` or `goal`. With `language`, the model writes the reason, the findings and the summary in that language, whatever language the task and the application are in, and copies what it quotes as it is. What the agent writes itself is in Japanese for `Japanese`, `ja`, `ja-JP`, `ja_JP`, `jp`, `jpn`, `nihongo` or `日本語`, and in English for another language: the fixed words of the notes, such as the title of the note of a scenario test that failed and **Expected:**, the findings of a [contract](#an-http-api), and the reason of a test the tester was blocked in. What it writes of how the test ran, as of a test that ran out of time or a recording replayed whole, and the values of `res`, as `stopped` and the category of a finding, stay in English:
+
+```yaml
+- name: The sign-up, with notes in Japanese
+  uses: agent
+  with:
+    targets:
+      browser:
+        url: https://staging.example.com/
+    task: Sign up for an account with the email address {secret:EMAIL}.
+    expect: A page welcomes the new user.
+    language: Japanese
+```
 
 A last job reads the notes of the others, and puts them on the pull request. Added to the sign-up workflow above, with the job given an `id` to name in `needs`:
 

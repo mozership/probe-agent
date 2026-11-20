@@ -99,7 +99,7 @@ func TestRun_ReplaysAllWithoutTheTester(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(m.chats) != 1 || m.chats[0].opts.System != judgeSystem {
+	if len(m.chats) != 1 || !strings.HasPrefix(m.chats[0].opts.System, judgeSystem) {
 		t.Fatalf("the model was asked %d times; want only the judge", len(m.chats))
 	}
 	if o.Verdict != Pass || o.Replay == nil || o.Replay.Status != ReplayHit || o.Replay.Replayed != 5 {

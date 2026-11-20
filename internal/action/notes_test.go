@@ -86,3 +86,34 @@ func TestNotes_TitleIsALine(t *testing.T) {
 		t.Errorf("title() of a short title = %q", title(" Short\ntitle "))
 	}
 }
+
+func TestNotes_InJapanese(t *testing.T) {
+	o := personaOutcome()
+	o.Findings[0].URL = "http://a.test/notes/new"
+	notes := parsedNotes(t, req{Persona: "p", Goal: "g", Language: "Japanese"}, o)
+	want := "**期待:** A form\n\n**実際:** A 500\n\nerror · ステップ 2 · http://a.test/notes/new\n\n> GET http://a.test/notes/new -> 500"
+	if len(notes) != 2 || notes[0].Body != want {
+		t.Fatalf("notes = %+v, want the first with body\n%s", notes, want)
+	}
+	if !strings.Contains(notes[1].Body, "モデルの読み違い") {
+		t.Errorf("the note of an unverified finding = %+v", notes[1])
+	}
+
+	for _, language := range []string{"japanese", " 日本語 ", "ja", "JA-JP"} {
+		o = outcome()
+		o.Verdict, o.Reason = scenario.Fail, "ダッシュボードに挨拶がありません。"
+		o.Evidence = []scenario.Evidence{{Quote: "Dashboard", Verified: true}}
+		notes = parsedNotes(t, req{Task: "t", Expect: "e", Language: language}, o)
+		want = "ダッシュボードに挨拶がありません。\n\nテスターは http://a.test/dashboard で止まりました（done）\n\n> Dashboard"
+		if len(notes) != 1 || notes[0].Title != "期待した結果になりませんでした" || notes[0].Body != want {
+			t.Errorf("the notes of a fail in %q = %+v, want body\n%s", language, notes, want)
+		}
+	}
+
+	o = outcome()
+	o.Verdict, o.Reason, o.Evidence = scenario.Blocked, "Un CAPTCHA.", nil
+	notes = parsedNotes(t, req{Task: "t", Expect: "e", Language: "French"}, o)
+	if len(notes) != 1 || notes[0].Title != "The test could not be carried out" || !strings.Contains(notes[0].Body, "The tester stopped") {
+		t.Errorf("the notes in a language they do not know = %+v, want the fixed words in English", notes)
+	}
+}

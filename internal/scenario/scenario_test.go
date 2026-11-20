@@ -513,3 +513,96 @@ func TestRun_CatchesUpAfterTheJudge(t *testing.T) {
 		t.Errorf("the judge was told of the beacon: %+v", judge.opts)
 	}
 }
+
+func TestRun_WritesInTheLanguageGiven(t *testing.T) {
+	const rule = "in Japanese, whatever language the text in <%s> and the targets are written in. Copy what you quote as it is, untranslated."
+	const fallback = "in English, unless the text in <%s> is written in another language"
+	for _, tc := range []struct {
+		name     string
+		cfg      func() Config
+		targets  func() Targets
+		final    llm.Reply
+		aim      string
+		language string
+	}{
+		{"a scenario", config, func() Targets { return Targets{Browser: &fakePage{text: "Welcome"}} }, toolCall("j1", "verdict", map[string]any{"verdict": "pass", "reason": "ok", "evidence": []string{"Welcome"}}), "task", "Japanese"},
+		{"a scenario without a language", config, func() Targets { return Targets{Browser: &fakePage{text: "Welcome"}} }, toolCall("j1", "verdict", map[string]any{"verdict": "pass", "reason": "ok", "evidence": []string{"Welcome"}}), "task", ""},
+		{"a persona", personaConfig, func() Targets { return Targets{Browser: &fakePage{text: "Welcome"}} }, toolCall("r1", "review", map[string]any{"verdict": "pass", "reason": "ok", "evidence": []string{"Welcome"}, "findings": []any{}}), "goal", "Japanese"},
+		{"an API", apiConfig, func() Targets { return Targets{HTTP: (&fakeAPI{}).target()} }, toolCall("j1", "verdict", map[string]any{"verdict": "fail", "reason": "ok", "evidence": []string{}}), "task", "Japanese"},
+		{"a persona on an API and a browser", personaConfig, func() Targets {
+			return Targets{Browser: &fakePage{text: "Welcome"}, HTTP: (&fakeAPI{}).target()}
+		}, toolCall("r1", "review", map[string]any{"verdict": "pass", "reason": "ok", "evidence": []string{"Welcome"}, "findings": []any{}}), "goal", "Japanese"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &fakeModel{scripts: [][]llm.Reply{
+				{toolCall("1", "finish", map[string]any{"status": "done", "summary": "Welcome."})},
+				{tc.final},
+			}}
+			cfg := tc.cfg()
+			cfg.Language = tc.language
+			if _, err := Run(t.Context(), cfg, tc.targets(), m); err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf(fallback, tc.aim)
+			if tc.language != "" {
+				want = fmt.Sprintf(rule, tc.aim)
+			}
+			for i, c := range m.chats {
+				if !strings.Contains(c.opts.System, want) || strings.Count(c.opts.System, "- Write ") != 1 {
+					t.Errorf("chat %d is not told %q:\n%s", i, want, c.opts.System)
+				}
+			}
+		})
+	}
+}
+
+func TestRun_TheAgentWritesItsOwnWordsInJapanese(t *testing.T) {
+	m := &fakeModel{scripts: [][]llm.Reply{
+		{toolCall("1", "finish", map[string]any{"status": "blocked", "summary": "CAPTCHA があります。"})},
+	}}
+	cfg := config()
+	cfg.Language = "jp"
+	o, err := Run(t.Context(), cfg, Targets{Browser: &fakePage{}}, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Reason != "テスターは先へ進めませんでした: CAPTCHA があります。" {
+		t.Errorf("reason %q", o.Reason)
+	}
+	if !strings.Contains(m.chats[0].opts.System, "- Write the summary in Japanese,") {
+		t.Errorf("jp is not told the model as Japanese:\n%s", m.chats[0].opts.System)
+	}
+
+	bad := Violation{In: "response", Field: "$.id", Reason: "type", Message: "id must be a string"}
+	api := &fakeAPI{responses: []HTTPResponse{{Code: 201, Status: "201 Created", Body: `{"id":1}`, Operation: "POST /orders", Violations: []Violation{bad}}}}
+	m = &fakeModel{scripts: [][]llm.Reply{
+		{
+			toolCall("1", "http_request", map[string]any{"method": "POST", "path": "/orders", "body": "{}"}),
+			toolCall("2", "finish", map[string]any{"status": "done", "summary": "注文しました。"}),
+		},
+		{toolCall("r1", "review", map[string]any{"verdict": "pass", "reason": "r", "evidence": []string{`{"id":1}`}, "findings": []any{}})},
+	}}
+	cfg = apiConfig()
+	cfg.Task, cfg.Expect = "", ""
+	cfg.Persona, cfg.Goal, cfg.Language = "A shop that orders through the API.", "Order item 7.", "Japanese"
+	o, err = Run(t.Context(), cfg, Targets{HTTP: api.target()}, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(o.Findings) != 1 || o.Findings[0].Title != "POST /orders のレスポンスがOpenAPI ドキュメントに違反しています（$.id）" || o.Findings[0].Expected != "OpenAPI ドキュメントが許すレスポンス。" {
+		t.Errorf("findings %+v", o.Findings)
+	}
+}
+
+func TestJapanese(t *testing.T) {
+	for _, l := range []string{"Japanese", " 日本語 ", "ja", "JA-JP", "ja_JP", "jp", "jpn", "Nihongo"} {
+		if !Japanese(l) {
+			t.Errorf("%q is not taken for Japanese", l)
+		}
+	}
+	for _, l := range []string{"", "English", "japan", "French"} {
+		if Japanese(l) {
+			t.Errorf("%q is taken for Japanese", l)
+		}
+	}
+}
