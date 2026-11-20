@@ -6,9 +6,9 @@ description: Test an application from a task, or a persona and a goal, written i
 params: [task, expect, persona, goal, targets, secrets, cache, cache_mode, cache_judge, provider, model, effort, base_url, vision, max_steps, timeout, language, evidence_dir, job_summary]
 runs:
   using: binary
-  url: https://github.com/mozership/probe-agent/releases/download/v0.11.0/probe-agent_{os}_{arch}
+  url: https://github.com/mozership/probe-agent/releases/download/v0.12.0/probe-agent_{os}_{arch}
   checksums:
-    darwin_amd64: "6db003f3f98040aa58765aec7d520f03bdfad22d1e9ad2968ae80399eed97100"
-    darwin_arm64: "14c2dc171e39da589be8c65776fffaeb1b8859f53801eaede1568853f27dde12"
-    linux_amd64: "55a62097c7d495b16dd0ebca14d4d8fb1cda42039967d0e8a4c6fa21063aa7f2"
-    linux_arm64: "ab6b8bce83c114f369f3c3343edd0303cc312049c56c52129f8719aaabf183b6"
+    darwin_amd64: "f958ddc720f80c505c03d2d728b3e7530b88a52fe0613e5c8dda3f304cedd121"
+    darwin_arm64: "50703c9d8bb0903c40ba36504935f5c986e2061a266e1e449768a5b5230fc996"
+    linux_amd64: "80581210e2821e08cab43d496a34718d1728ff9a16058f3fd7d4a10a9cf0175e"
+    linux_arm64: "5510194e9e99e9a527ac863e486010e7fc6a5a2cc59c8feee525a3031b56d9cb"
