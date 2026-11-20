@@ -404,14 +404,23 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 	// The run is recorded with what its judge passed it on, as are the
 	// checks of a replay of all of the recording that the judge passed, so
 	// that the next replay is passed on them.
+	// A replay the judge judges whatever its checks is not recorded again
+	// for them. The errors of the checks add up, so that one that comes and
+	// goes does not change them back and forth.
+	hit := o.Replay != nil && o.Replay.Status == ReplayHit
 	if cfg.Record && r.browserOnly() && o.Mode == ModeScenario && o.Verdict == Pass && stopped == StoppedDone &&
-		(o.Replay == nil || !o.Replay.Checked) {
+		!(hit && (o.Replay.Checked || cfg.Rejudge)) {
 		rec := r.web.recording()
-		if o.Replay != nil && o.Replay.Status == ReplayHit {
+		if hit {
 			c := *cfg.Recording
 			rec = &c
 		}
 		rec.Checks = r.checks(o.Evidence, final)
+		if hit && rec.Checks != nil && cfg.Recording.Checks != nil {
+			errs := append(slices.Clone(cfg.Recording.Checks.Errors), rec.Checks.Errors...)
+			slices.Sort(errs)
+			rec.Checks.Errors = slices.Compact(errs)
+		}
 		if cfg.Recording == nil || !sameRecording(rec, cfg.Recording) {
 			o.Recording = rec
 		}

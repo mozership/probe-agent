@@ -510,3 +510,40 @@ func TestRun_PointStepsNeedTheSameViewport(t *testing.T) {
 		t.Errorf("replay %+v", o.Replay)
 	}
 }
+
+func TestErrorKinds_HideWhatChangesAndTheSecrets(t *testing.T) {
+	cfg := config()
+	cfg.StartURL = "http://staging.test/"
+	d := &browserDriver{ledger: &ledger{cfg: cfg, secrets: newSecrets(cfg.Secrets)}, page: &fakePage{network: []page.NetworkError{
+		{Method: "GET", URL: "http://staging.test/api/users?email=alice%40example.com", Status: 404},
+	}}}
+	d.page.(*fakePage).console = []page.ConsoleError{{Type: "error", Text: "Request 3f2a9c1d-0b4e-4c2a-9f1e-2d3c4b5a6e7f to http://staging.test/api failed at line 12"}}
+	got := d.errorKinds()
+	want := []string{"GET /api/users?email={secret:EMAIL} 404", "error: Request # to /api failed at line #"}
+	if !slices.Equal(got, want) {
+		t.Errorf("error kinds %q, want %q", got, want)
+	}
+}
+
+func TestRun_AQuoteOfAFieldMakesNoCheck(t *testing.T) {
+	rec := recorded(t)
+	p := stagingPage()
+	// The page stays on the form, whose field holds the email.
+	p.text, p.read = "Something went wrong", `textbox "Email" value="alice@example.com"`
+	rec.Checks = &Checks{Quotes: []string{"{secret:EMAIL}"}}
+	m := &fakeModel{scripts: [][]llm.Reply{{toolCall("j1", "verdict", map[string]any{"verdict": "fail", "reason": "No welcome.", "evidence": []string{"Something went wrong"}})}}}
+	o := replayed(t, rec, p, m, false)
+	if len(m.chats) != 1 || o.Verdict != Fail || o.Replay.Checked {
+		t.Errorf("asked %d times, verdict %s, replay %+v", len(m.chats), o.Verdict, o.Replay)
+	}
+}
+
+func TestRun_RejudgeDoesNotRecordTheChecksAgain(t *testing.T) {
+	rec := recorded(t)
+	p := stagingPage()
+	p.text = "Welcome back, alice@example.com!"
+	m := &fakeModel{scripts: [][]llm.Reply{judgePass("Welcome back")}}
+	if o := replayed(t, rec, p, m, true); o.Verdict != Pass || o.Recording != nil {
+		t.Errorf("verdict %s, recording %+v", o.Verdict, o.Recording)
+	}
+}

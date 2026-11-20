@@ -325,6 +325,7 @@ func (r *run) checks(evidence []Evidence, f []observation) *Checks {
 	if len(quotes) == 0 {
 		return nil
 	}
+	slices.Sort(quotes)
 	return &Checks{Quotes: quotes, Errors: r.web.errorKinds()}
 }
 
@@ -348,20 +349,29 @@ func (r *run) unmet(c *Checks, f []observation) string {
 	return ""
 }
 
-// finalText is what the targets showed last, normalized.
+// finalText is the text the targets showed last, normalized. The elements
+// of a page are left out, as they hold what its fields were filled with,
+// which a quote of the task would find on a form that was never sent.
 func finalText(f []observation) string {
 	var texts []string
 	for _, o := range f {
 		for _, s := range o.sections {
-			texts = append(texts, s.text)
+			if s.tag != "final_page_elements" {
+				texts = append(texts, s.text)
+			}
 		}
 	}
 	return normalize(strings.Join(texts, "\n"))
 }
 
+// mintedRun is what changes from run to run in the text of an error: a
+// UUID, a run of hex with a digit, or of digits.
+var mintedRun = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\b[0-9a-f]*\d[0-9a-f]*\b|\d+`)
+
 // errorKinds are the console errors and the failed requests of the page,
-// masked, with the routes of their URLs and the numbers of their texts as
-// #, which change from run to run, sorted.
+// masked, with the routes of their URLs, and what changes from run to run
+// in their texts as #, sorted. A URL is masked again after its route is
+// decoded, as a secret can be in it percent-encoded.
 func (d *browserDriver) errorKinds() []string {
 	out := []string{}
 	add := func(s string) {
@@ -370,17 +380,27 @@ func (d *browserDriver) errorKinds() []string {
 		}
 	}
 	for _, e := range d.page.ConsoleErrors() {
-		add(e.Type + ": " + digitRun.ReplaceAllString(strings.Join(strings.Fields(d.secrets.mask(e.Text)), " "), "#"))
+		add(e.Type + ": " + mintedRun.ReplaceAllString(d.secrets.mask(strings.Join(strings.Fields(d.relativeIn(e.Text)), " ")), "#"))
 	}
 	for _, e := range d.page.NetworkErrors() {
 		what := e.Error
 		if e.Status > 0 {
 			what = strconv.FormatInt(e.Status, 10)
 		}
-		add(e.Method + " " + routeText(d.relative(d.secrets.mask(e.URL))) + " " + what)
+		add(e.Method + " " + d.secrets.mask(routeText(d.relative(d.secrets.mask(e.URL)))) + " " + what)
 	}
 	slices.Sort(out)
 	return out
+}
+
+// relativeIn writes the origin of the start URL out of s, so that the text
+// of an error on one host is that of the same error on another.
+func (d *browserDriver) relativeIn(s string) string {
+	u, err := url.Parse(d.cfg.StartURL)
+	if err != nil || u.Host == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, u.Scheme+"://"+u.Host, "")
 }
 
 // sameRecording says whether two recordings would replay alike, so that a
