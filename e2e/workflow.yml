@@ -13,7 +13,10 @@
 # The sign-up of Alice replays e2e/cache/signup.json, and records it again
 # when it no longer matches. CI runs with CACHE_MODE=strict, which writes no
 # recording and blocks the test when the one committed no longer matches,
-# and checks that it is replayed whole.
+# and checks that it is replayed whole. Two more sign-ups replay a copy of
+# it: the first is recorded with the checks the judge passed it on, unless
+# it met those the recording had, and the second passes on them without
+# the model.
 #
 # The calls of probe-browser need Probe v1.37.0 or later.
 #
@@ -115,6 +118,48 @@ jobs:
       url: "{{vars.url}}"
       get: "/api/users?email=alice%2B{{vars.id}}%40example.com"
     test: res.code == 200 && res.body.exists == true && res.body.name == "Alice Tester"
+  - name: Copy the recording to replay it apart from the one committed
+    uses: shell
+    with:
+      cmd: mkdir -p out/cache && cp e2e/cache/signup.json out/cache/signup.json
+    test: res.code == 0
+  - name: A replay the judge passes is recorded with what it was passed on
+    uses: agent
+    with:
+      task: |
+        As a new user of this service, sign up for an account with the name
+        Alice Tester, the email address {secret:EMAIL} and the password
+        {secret:PASSWORD}, agreeing to the terms.
+      expect: |
+        The account is created: a page welcomes Alice Tester by name and says
+        the account for the email address is ready.
+      secrets:
+        EMAIL: "alice+again-{{vars.id}}@example.com"
+        PASSWORD: "{{vars.password}}"
+      cache: out/cache/signup.json
+      cache_mode: auto
+    timeout: 5m
+    # Unless the checks of the recording held, and the model was not asked.
+    test: res.verdict == "pass" && res.cache.status == "hit" && (res.cache.checked || res.cache.saved)
+  - name: A replay that meets the checks of the recording passes without the model
+    uses: agent
+    with:
+      task: |
+        As a new user of this service, sign up for an account with the name
+        Alice Tester, the email address {secret:EMAIL} and the password
+        {secret:PASSWORD}, agreeing to the terms.
+      expect: |
+        The account is created: a page welcomes Alice Tester by name and says
+        the account for the email address is ready.
+      secrets:
+        EMAIL: "alice+checked-{{vars.id}}@example.com"
+        PASSWORD: "{{vars.password}}"
+      cache: out/cache/signup.json
+      cache_mode: strict
+    timeout: 5m
+    test: |
+      res.verdict == "pass" && res.cache.status == "hit" && res.cache.checked
+      && res.usage.requests == 0 && len(res.evidence) > 0
   - name: A sign-up the server fails is judged to fail
     uses: agent
     with:
@@ -511,12 +556,12 @@ jobs:
         table=$(sed -n '/^### Model usage of probe-agent$/,$p' "$GITHUB_STEP_SUMMARY")
         echo "$table"
         echo "rows: $(echo "$table" | grep '^| ' | grep -v -e '^| Job |' -e '^| \*\*Total\*\* |' | wc -l | tr -d ' ')"
-    # A row for each of the 11 steps that use the agent, in one table.
+    # A row for each of the 13 steps that use the agent, in one table.
     test: |
       res.code == 0 && (res.stdout == "no job summary\n"
       || (res.stdout contains "| Sign-up | A new user signs up with an email and a password | pass |"
           && res.stdout contains "| **Total** |"
-          && res.stdout contains "rows: 11\n"))
+          && res.stdout contains "rows: 13\n"))
 
   - name: Put the notes on the pull request
     uses: github-notes

@@ -82,28 +82,43 @@ func TestRun_RecordsAPass(t *testing.T) {
 	}
 }
 
-func TestRun_ReplaysAllWithoutTheTester(t *testing.T) {
-	rec := recorded(t)
-	// Another run, on another host, where the elements have other refs.
-	p := &fakePage{
+// stagingPage is another run of the recorded test, on another host, where
+// the elements have other refs.
+func stagingPage() *fakePage {
+	return &fakePage{
 		url:        "http://staging.test/",
 		afterClick: "http://staging.test/signup",
 		text:       "Welcome, alice@example.com!",
 		locators:   map[string]page.Locator{"ref_7": signUpLink, "ref_8": emailField, "ref_9": pwField},
 	}
-	m := &fakeModel{scripts: [][]llm.Reply{judgePass("Welcome, {secret:EMAIL}!")}}
+}
+
+// replayed runs the recording on p, recording the run again if it changes.
+func replayed(t *testing.T, rec *Recording, p *fakePage, m *fakeModel, rejudge bool) Outcome {
+	t.Helper()
 	cfg := config()
 	cfg.StartURL = "http://staging.test/"
-	cfg.Recording, cfg.Record = rec, true
+	cfg.Recording, cfg.Record, cfg.Rejudge = rec, true, rejudge
 	o, err := Run(t.Context(), cfg, Targets{Browser: p}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(m.chats) != 1 || !strings.HasPrefix(m.chats[0].opts.System, judgeSystem) {
-		t.Fatalf("the model was asked %d times; want only the judge", len(m.chats))
+	return o
+}
+
+func TestRun_ReplaysAllWithoutTheModel(t *testing.T) {
+	rec := recorded(t)
+	p := stagingPage()
+	m := &fakeModel{}
+	o := replayed(t, rec, p, m, false)
+	if len(m.chats) != 0 || o.Usage.Requests != 0 {
+		t.Fatalf("the model was asked %d times; want none", len(m.chats))
 	}
-	if o.Verdict != Pass || o.Replay == nil || o.Replay.Status != ReplayHit || o.Replay.Replayed != 5 {
+	if o.Verdict != Pass || o.Replay == nil || o.Replay.Status != ReplayHit || o.Replay.Replayed != 5 || !o.Replay.Checked {
 		t.Errorf("verdict %s, replay %+v", o.Verdict, o.Replay)
+	}
+	if len(o.Evidence) != 1 || o.Evidence[0] != (Evidence{Quote: "Welcome, {secret:EMAIL}!", Verified: true}) || !strings.Contains(o.Reason, "the model was not asked to judge") {
+		t.Errorf("reason %q, evidence %+v", o.Reason, o.Evidence)
 	}
 	if o.Recording != nil {
 		t.Errorf("a full replay was recorded again")
@@ -116,6 +131,86 @@ func TestRun_ReplaysAllWithoutTheTester(t *testing.T) {
 	}
 	if len(o.Steps) != 5 || !strings.Contains(o.Steps[0].Notes[0], "Replayed step 1") {
 		t.Errorf("steps %+v", o.Steps)
+	}
+}
+
+func TestRun_RecordsWhatTheJudgeQuotedOfTheLastPage(t *testing.T) {
+	rec := recorded(t)
+	if rec.Checks == nil || !slices.Equal(rec.Checks.Quotes, []string{"Welcome, {secret:EMAIL}!"}) || len(rec.Checks.Errors) != 0 {
+		t.Errorf("checks %+v", rec.Checks)
+	}
+}
+
+func TestRun_TheJudgeJudgesAReplayThatMissesTheChecks(t *testing.T) {
+	for name, tc := range map[string]struct {
+		change func(*fakePage)
+		why    string
+	}{
+		"another text": {func(p *fakePage) { p.text = "Welcome back, alice@example.com!" }, `does not show "Welcome, {secret:EMAIL}!"`},
+		"a new error": {func(p *fakePage) {
+			p.network = []page.NetworkError{{Method: "GET", URL: "http://staging.test/api/me/42", Status: 500}}
+		}, "the page had an error the recorded run did not: GET /api/me/:id 500"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := recorded(t)
+			p := stagingPage()
+			tc.change(p)
+			quoted := "Welcome"
+			m := &fakeModel{scripts: [][]llm.Reply{judgePass(quoted)}}
+			o := replayed(t, rec, p, m, false)
+			if len(m.chats) != 1 || !strings.HasPrefix(m.chats[0].opts.System, judgeSystem) {
+				t.Fatalf("the model was asked %d times; want the judge", len(m.chats))
+			}
+			if o.Verdict != Pass || o.Replay.Checked || !strings.Contains(o.Replay.Reason, tc.why) {
+				t.Errorf("verdict %s, replay %+v", o.Verdict, o.Replay)
+			}
+			// The judge passed it again, on what it quoted this time.
+			if o.Recording == nil || !slices.Equal(o.Recording.Checks.Quotes, []string{quoted}) || len(o.Recording.Steps) != len(rec.Steps) {
+				t.Fatalf("recording %+v", o.Recording)
+			}
+			if name == "a new error" && !slices.Equal(o.Recording.Checks.Errors, []string{"GET /api/me/:id 500"}) {
+				t.Errorf("errors %v", o.Recording.Checks.Errors)
+			}
+		})
+	}
+}
+
+func TestRun_AReplayOfARecordingWithoutChecksIsJudged(t *testing.T) {
+	rec := recorded(t)
+	rec.Checks = nil
+	m := &fakeModel{scripts: [][]llm.Reply{judgePass("Welcome, {secret:EMAIL}!")}}
+	o := replayed(t, rec, stagingPage(), m, false)
+	if len(m.chats) != 1 || o.Verdict != Pass || o.Replay.Checked || !strings.Contains(o.Replay.Reason, "no checks") {
+		t.Fatalf("asked %d times, verdict %s, replay %+v", len(m.chats), o.Verdict, o.Replay)
+	}
+	// It is recorded with the checks the judge passed it on, and the steps
+	// it had.
+	if o.Recording == nil || o.Recording.Checks == nil || !slices.Equal(o.Recording.Checks.Quotes, []string{"Welcome, {secret:EMAIL}!"}) {
+		t.Fatalf("recording %+v", o.Recording)
+	}
+	o.Recording.Checks = nil
+	if !sameRecording(o.Recording, rec) {
+		t.Errorf("the steps changed: %+v", o.Recording)
+	}
+}
+
+func TestRun_RejudgeHasTheJudgeJudgeAFullReplay(t *testing.T) {
+	rec := recorded(t)
+	m := &fakeModel{scripts: [][]llm.Reply{judgePass("Welcome, {secret:EMAIL}!")}}
+	o := replayed(t, rec, stagingPage(), m, true)
+	if len(m.chats) != 1 || o.Verdict != Pass || o.Replay.Checked || o.Recording != nil {
+		t.Errorf("asked %d times, verdict %s, replay %+v, recording %v", len(m.chats), o.Verdict, o.Replay, o.Recording)
+	}
+}
+
+func TestRun_AJudgeThatFailsAFullReplay(t *testing.T) {
+	rec := recorded(t)
+	p := stagingPage()
+	p.text = "Something went wrong"
+	m := &fakeModel{scripts: [][]llm.Reply{{toolCall("j1", "verdict", map[string]any{"verdict": "fail", "reason": "No welcome.", "evidence": []string{"Something went wrong"}})}}}
+	o := replayed(t, rec, p, m, false)
+	if o.Verdict != Fail || o.Recording != nil {
+		t.Errorf("verdict %s, recording %v", o.Verdict, o.Recording)
 	}
 }
 

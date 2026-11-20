@@ -95,6 +95,9 @@ func markdown(r req, o scenario.Outcome, dir string) string {
 	w("| Steps | %d |\n", len(o.Steps))
 	if rp := o.Replay; rp != nil {
 		w("| Replay | %s, %d steps replayed", rp.Status, rp.Replayed)
+		if rp.Checked {
+			w(", passed on the checks of the recording")
+		}
 		if rp.Reason != "" {
 			w(" (%s)", rp.Reason)
 		}
