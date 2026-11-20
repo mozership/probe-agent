@@ -109,7 +109,7 @@ jobs:
       cache: e2e/cache/signup.json
       cache_mode: "{{vars.cache_mode}}"
     timeout: 5m
-    test: res.verdict == "pass" && (vars.cache_mode != "strict" || res.cache.status == "hit")
+    test: res.verdict == "pass" && (vars.cache_mode != "strict" || (res.cache.status == "hit" && res.cache.checked))
     outputs:
       report: res.filepaths.report
   - name: The account exists, as the pages said

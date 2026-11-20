@@ -85,6 +85,9 @@
     "quotes": [
       "Welcome to Acme Notes, Alice Tester!",
       "Your account {secret:EMAIL} is ready."
+    ],
+    "errors": [
+      "GET /favicon.ico 404"
     ]
   }
 }
