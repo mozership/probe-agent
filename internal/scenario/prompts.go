@@ -116,5 +116,10 @@ func (r *run) writeIn(what string) string {
 	if r.cfg.Language == "" {
 		return "- Write " + what + " in English, unless the text in " + tag + " is written in another language; then write in that language."
 	}
-	return "- Write " + what + " in " + r.cfg.Language + ", whatever language the text in " + tag + " and the targets are written in. Copy what you quote as it is, untranslated."
+	language := r.cfg.Language
+	if Japanese(language) {
+		// A short name, as jp, is told the model as the language.
+		language = "Japanese"
+	}
+	return "- Write " + what + " in " + language + ", whatever language the text in " + tag + " and the targets are written in. Copy what you quote as it is, untranslated."
 }

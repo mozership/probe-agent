@@ -508,4 +508,9 @@ func TestParse_Language(t *testing.T) {
 	if err != nil || r.Language != "Japanese" {
 		t.Fatalf("language %q, %v", r.Language, err)
 	}
+	for _, l := range []string{"Português", "日本語　(標準)", "Chinese (Traditional)", "pt-BR"} {
+		if r, err := parse(map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "language": l}); err != nil || r.Language != l {
+			t.Errorf("language %q is refused: %v", l, err)
+		}
+	}
 }

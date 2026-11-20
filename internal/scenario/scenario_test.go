@@ -569,6 +569,9 @@ func TestRun_TheAgentWritesItsOwnWordsInJapanese(t *testing.T) {
 	if o.Reason != "テスターは先へ進めませんでした: CAPTCHA があります。" {
 		t.Errorf("reason %q", o.Reason)
 	}
+	if !strings.Contains(m.chats[0].opts.System, "- Write the summary in Japanese,") {
+		t.Errorf("jp is not told the model as Japanese:\n%s", m.chats[0].opts.System)
+	}
 
 	bad := Violation{In: "response", Field: "$.id", Reason: "type", Message: "id must be a string"}
 	api := &fakeAPI{responses: []HTTPResponse{{Code: 201, Status: "201 Created", Body: `{"id":1}`, Operation: "POST /orders", Violations: []Violation{bad}}}}
