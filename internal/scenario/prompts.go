@@ -20,9 +20,9 @@ func (r *run) system() string {
 	persona := r.cfg.Mode() == ModePersona
 	switch {
 	case r.browserOnly() && persona:
-		return personaSystem(r.web.hosts)
+		return personaSystem(r.web.hosts) + "\n" + r.writeIn("the notes and the summary")
 	case r.browserOnly():
-		return testerSystem(r.web.hosts)
+		return testerSystem(r.web.hosts) + "\n" + r.writeIn("the summary")
 	}
 	var b strings.Builder
 	if persona {
@@ -45,11 +45,11 @@ func (r *run) system() string {
 	if persona {
 		b.WriteString(`- Call finish with status done when you reached the goal, or when the application keeps you from it, and say what happened, quoting the texts the targets showed.
 - Call finish with status blocked only when something outside the application stops you: a CAPTCHA, information you are not given, or a page on a host you may not open.
-- Write the notes and the summary in English, unless the text in <goal> is written in another language; then write them in that language.`)
+` + r.writeIn("the notes and the summary"))
 	} else {
 		b.WriteString(`- When the task is done, or the application keeps you from doing it, as with an error or a screen that does not respond, call finish with status done, and say what happened, quoting the texts the targets showed. Do not decide whether the application passes; describe what you saw.
 - Call finish with status blocked only when something outside the application stops you: a CAPTCHA, information the task does not give you, or a page on a host you may not open.
-- Write the summary in English, unless the text in <task> is written in another language; then write it in that language.`)
+` + r.writeIn("the summary"))
 	}
 	for _, d := range r.drivers {
 		b.WriteString("\n\n" + d.Brief())
@@ -105,4 +105,16 @@ func (r *run) opening() string {
 		parts = append(parts, d.Opening())
 	}
 	return strings.Join(parts, " ")
+}
+
+// writeIn tells a chat what language to write what in: the language of the
+// test when it is given, else that of the task or the goal. What it quotes
+// is copied as it is, untranslated, as a quote is checked against the
+// record.
+func (r *run) writeIn(what string) string {
+	tag := "<" + r.aim() + ">"
+	if r.cfg.Language == "" {
+		return "- Write " + what + " in English, unless the text in " + tag + " is written in another language; then write in that language."
+	}
+	return "- Write " + what + " in " + r.cfg.Language + ", whatever language the text in " + tag + " and the targets are written in. Copy what you quote as it is, untranslated."
 }

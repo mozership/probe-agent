@@ -513,3 +513,42 @@ func TestRun_CatchesUpAfterTheJudge(t *testing.T) {
 		t.Errorf("the judge was told of the beacon: %+v", judge.opts)
 	}
 }
+
+func TestRun_WritesInTheLanguageGiven(t *testing.T) {
+	const rule = "in Japanese, whatever language the text in <%s> and the targets are written in. Copy what you quote as it is, untranslated."
+	const fallback = "in English, unless the text in <%s> is written in another language"
+	for _, tc := range []struct {
+		name     string
+		cfg      func() Config
+		targets  func() Targets
+		final    llm.Reply
+		aim      string
+		language string
+	}{
+		{"a scenario", config, func() Targets { return Targets{Browser: &fakePage{text: "Welcome"}} }, toolCall("j1", "verdict", map[string]any{"verdict": "pass", "reason": "ok", "evidence": []string{"Welcome"}}), "task", "Japanese"},
+		{"a scenario without a language", config, func() Targets { return Targets{Browser: &fakePage{text: "Welcome"}} }, toolCall("j1", "verdict", map[string]any{"verdict": "pass", "reason": "ok", "evidence": []string{"Welcome"}}), "task", ""},
+		{"a persona", personaConfig, func() Targets { return Targets{Browser: &fakePage{text: "Welcome"}} }, toolCall("r1", "review", map[string]any{"verdict": "pass", "reason": "ok", "evidence": []string{"Welcome"}, "findings": []any{}}), "goal", "Japanese"},
+		{"an API", apiConfig, func() Targets { return Targets{HTTP: (&fakeAPI{}).target()} }, toolCall("j1", "verdict", map[string]any{"verdict": "fail", "reason": "ok", "evidence": []string{}}), "task", "Japanese"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &fakeModel{scripts: [][]llm.Reply{
+				{toolCall("1", "finish", map[string]any{"status": "done", "summary": "Welcome."})},
+				{tc.final},
+			}}
+			cfg := tc.cfg()
+			cfg.Language = tc.language
+			if _, err := Run(t.Context(), cfg, tc.targets(), m); err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf(fallback, tc.aim)
+			if tc.language != "" {
+				want = fmt.Sprintf(rule, tc.aim)
+			}
+			for i, c := range m.chats {
+				if !strings.Contains(c.opts.System, want) || strings.Count(c.opts.System, "- Write ") != 1 {
+					t.Errorf("chat %d is not told %q:\n%s", i, want, c.opts.System)
+				}
+			}
+		})
+	}
+}

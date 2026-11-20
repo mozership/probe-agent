@@ -206,6 +206,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 		Secrets:  r.Secrets,
 		MaxSteps: r.MaxSteps,
 		Timeout:  r.Timeout,
+		Language: r.Language,
 		Save:     ev.save,
 		// A recording is replayed in any mode of the cache but refresh,
 		// and written in auto and refresh.
@@ -1136,7 +1137,7 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 		"report": shortReport(r, o, f),
 		// The notes are for people, for a later step to post where they
 		// work, as on a pull request or in a chat.
-		"notes": notesOf(o),
+		"notes": notesOf(o, r.Language),
 	}
 	if o.Mode == scenario.ModePersona {
 		res["findings"] = o.Findings

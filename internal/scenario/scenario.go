@@ -73,6 +73,9 @@ type Config struct {
 	MaxSteps int
 	// Timeout bounds the whole test, the judge included.
 	Timeout time.Duration
+	// Language is the language the model writes in, as Japanese. Empty, it
+	// writes in English, or in the language of the task or the goal.
+	Language string
 	// Recording is a recording of an earlier run of the scenario test to
 	// replay, if any. The tester carries on from where it stops matching.
 	Recording *Recording
@@ -611,8 +614,7 @@ func testerSystem(h hosts) string {
 - Use the application through what its pages show, as a user would. Do not guess URLs to skip a step unless the task tells you to.
 - Read the page before you act on it, and again after an action changed it: refs read before a change may be stale.
 - When the task is done, or the application keeps you from doing it, as with an error or a page that does not respond, call finish with status done, and say what happened, quoting the texts the pages showed. Do not decide whether the application passes; describe what you saw.
-- Call finish with status blocked only when something outside the application stops you: a CAPTCHA, information the task does not give you, or a page on a host you may not open.
-- Write the summary in English, unless the text in <task> is written in another language; then write it in that language.`
+- Call finish with status blocked only when something outside the application stops you: a CAPTCHA, information the task does not give you, or a page on a host you may not open.`
 }
 
 // testerPrompt is the prompt of the tester of a scenario test. seenIn says

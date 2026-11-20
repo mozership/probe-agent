@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/mozership/probe/actionrpc"
 
@@ -22,8 +24,10 @@ const (
 	defaultTimeout  = 4 * time.Minute
 	defaultMaxSteps = 40
 	defaultEffort   = "medium"
-	defaultWidth    = 1280
-	defaultHeight   = 800
+	// maxLanguage bounds the name of a language, which is a word or two.
+	maxLanguage   = 40
+	defaultWidth  = 1280
+	defaultHeight = 800
 )
 
 // The modes of the cache.
@@ -47,7 +51,7 @@ var params = []string{
 	"task", "expect", "persona", "goal", "targets", "secrets",
 	"cache", "cache_mode",
 	"provider", "model", "effort", "base_url", "vision", "max_steps", "timeout",
-	"evidence_dir",
+	"language", "evidence_dir",
 }
 
 // The kinds of target, as the keys of targets.
@@ -109,9 +113,12 @@ type req struct {
 	// with.
 	StorageState string
 	// Provider is anthropic, or a provider of llm.Providers.
-	Provider    string
-	Model       string
-	Effort      string
+	Provider string
+	Model    string
+	Effort   string
+	// Language is the language the model writes in, and the notes are
+	// written in, as Japanese; empty, that of the task or the goal.
+	Language    string
 	BaseURL     string
 	Vision      bool
 	MaxSteps    int
@@ -307,6 +314,7 @@ func parse(with map[string]any) (req, error) {
 	str("provider", &r.Provider)
 	str("model", &r.Model)
 	str("effort", &r.Effort)
+	str("language", &r.Language)
 	str("base_url", &r.BaseURL)
 	str("evidence_dir", &r.EvidenceDir)
 	str("cache", &r.Cache)
@@ -444,6 +452,11 @@ func parse(with map[string]any) (req, error) {
 		if u, err := url.Parse(r.BaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			errs = append(errs, fmt.Errorf("base_url %q must be an http or https URL", r.BaseURL))
 		}
+	}
+
+	r.Language = strings.TrimSpace(r.Language)
+	if utf8.RuneCountInString(r.Language) > maxLanguage || strings.ContainsFunc(r.Language, unicode.IsControl) {
+		errs = append(errs, fmt.Errorf("language must be the name of a language, as Japanese, on one line of at most %d characters", maxLanguage))
 	}
 
 	switch r.Effort {
