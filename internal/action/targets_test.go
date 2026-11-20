@@ -136,7 +136,7 @@ func TestParse_RefusesTargets(t *testing.T) {
 		},
 		"a cache with an android app": {
 			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"android": map[string]any{"app": "a"}}},
-			want: "cache is for a test of a browser alone",
+			want: "cache is for a test of a browser and of the targets that answer a call",
 		},
 		"no addr of the gRPC API": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"tls": true}}},
@@ -194,10 +194,6 @@ func TestParse_RefusesTargets(t *testing.T) {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"graphql": map[string]any{"url": "http://a.test/graphql", "query": "{ a }"}}},
 			want: "unknown parameter targets.graphql.query; the parameters of graphql are url, headers, timeout",
 		},
-		"a cache with a GraphQL API": {
-			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"graphql": map[string]any{"url": "http://a.test/graphql"}}},
-			want: "cache is for a test of a browser alone",
-		},
 		"no url of the mailbox": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"mail": map[string]any{"timeout": "5s"}}},
 			want: "targets.mail.url is required",
@@ -221,10 +217,6 @@ func TestParse_RefusesTargets(t *testing.T) {
 		"an unknown key of the mailbox": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"mail": map[string]any{"url": "http://mail.test", "imap": true}}},
 			want: "unknown parameter targets.mail.imap; the parameters of mail are url, basic_auth, headers, account_id, timeout",
-		},
-		"a cache with a mailbox": {
-			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"browser": map[string]any{"url": "http://a.test"}, "mail": map[string]any{"url": "http://mail.test"}}},
-			want: "cache is for a test of a browser alone",
 		},
 		"no url of the API": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"headers": map[string]any{"X": "y"}}}},
@@ -262,10 +254,6 @@ func TestParse_RefusesTargets(t *testing.T) {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"http": map[string]any{"url": "http://a.test/", "timeout": "soon"}}},
 			want: "targets.http.timeout",
 		},
-		"a cache with an API": {
-			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"browser": map[string]any{"url": "http://a.test/"}, "http": map[string]any{"url": "http://a.test/api"}}},
-			want: "cache is for a test of a browser alone",
-		},
 		"an unknown target": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"windows": map[string]any{}}},
 			want: "unknown target windows",
@@ -296,7 +284,7 @@ func TestParse_RefusesTargets(t *testing.T) {
 		},
 		"a cache with an app": {
 			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"ios": ios}},
-			want: "cache is for a test of a browser alone",
+			want: "cache is for a test of a browser and of the targets that answer a call",
 		},
 	} {
 		_, err := parse(tt.with)
@@ -1070,15 +1058,9 @@ func TestParse_TargetsDB(t *testing.T) {
 		"targets.db.dsn must be a string":            {"dsn": 1.0},
 		"targets.db.timeout: invalid timeout 0":      {"dsn": "file:a.db", "timeout": "0"},
 		"unknown parameter targets.db.query":         {"dsn": "file:a.db", "query": "SELECT 1"},
-		"cache is for a test of a browser alone":     nil,
 	} {
 		targets := map[string]any{"db": want}
 		w := map[string]any{"task": "t", "expect": "e", "targets": targets}
-		if want == nil {
-			targets["db"] = map[string]any{"dsn": "file:a.db"}
-			targets["browser"] = map[string]any{"url": "http://a.test"}
-			w["cache"] = "c.json"
-		}
 		if _, err := parse(w); err == nil || !strings.Contains(err.Error(), with) {
 			t.Errorf("%v: err %v, want %q", want, err, with)
 		}
@@ -1242,5 +1224,20 @@ func TestDBGuard_KeepsTheRestOfTheGuard(t *testing.T) {
 	g := dbGuard(actionrpc.Guard{AllowActions: []string{"agent"}, Keeps: map[string][]string{"http": {actionrpc.KindReadOnly}}})
 	if !slices.Equal(g.AllowActions, []string{"agent"}) || !slices.Equal(g.Keeps["http"], []string{actionrpc.KindReadOnly}) || !g.Runs("db") {
 		t.Errorf("guard %+v", g)
+	}
+}
+
+func TestParse_ACacheOfTheTargetsThatAnswer(t *testing.T) {
+	for name, targets := range map[string]map[string]any{
+		"an API":                 {"http": map[string]any{"url": "http://a.test/api"}},
+		"a browser and an API":   {"browser": map[string]any{"url": "http://a.test/"}, "http": map[string]any{"url": "http://a.test/api"}},
+		"a GraphQL API":          {"graphql": map[string]any{"url": "http://a.test/graphql"}},
+		"a gRPC API":             {"grpc": map[string]any{"addr": "a.test:443"}},
+		"a browser and mail":     {"browser": map[string]any{"url": "http://a.test/"}, "mail": map[string]any{"url": "http://mail.test"}},
+		"a browser and database": {"browser": map[string]any{"url": "http://a.test/"}, "db": map[string]any{"dsn": "file:a.db"}},
+	} {
+		if _, err := parse(map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": targets}); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

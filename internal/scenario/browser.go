@@ -34,8 +34,6 @@ type browserDriver struct {
 	landing string
 	// url and title are of the page as the model was last told it.
 	url, title string
-	// recorded are the steps that changed the page, for the recording.
-	recorded []Recorded
 }
 
 // newBrowserDriver returns the browser of the test l keeps, which drives
