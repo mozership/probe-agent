@@ -120,3 +120,35 @@ func TestWriteSummary_HidesTheSecrets(t *testing.T) {
 		t.Errorf("summary =\n%s", got)
 	}
 }
+
+func TestWriteSummary_HidesASecretTheCellChanges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "summary.md")
+	step := actionrpc.Step{JobName: "Log in", Name: "Log in with p|ss"}
+	r := req{Secrets: map[string]string{"PASS": "p|ss", "ONE": "1"}}
+	if err := writeSummary(path, step, r, usageOutcome(scenario.Pass, llm.Usage{Requests: 1, InputTokens: 1}), ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if strings.Contains(string(got), "p\\|ss") || !strings.Contains(string(got), "| Log in with <secret:PASS> | pass | claude-opus-5-5 | 1 | 1 | 0 | 0 | 0 | - |") {
+		t.Errorf("summary =\n%s", got)
+	}
+}
+
+func TestWriteSummary_ATotalEditedByHand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "summary.md")
+	if err := writeSummary(path, actionrpc.Step{JobName: "a", Name: "b"}, req{}, usageOutcome(scenario.Pass, llm.Usage{Requests: 1}), ""); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	long := strings.TrimSuffix(string(data), "\n") + strings.Repeat(" note", 100) + "\n"
+	if err := os.WriteFile(path, []byte(long), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSummary(path, actionrpc.Step{JobName: "a", Name: "c"}, req{}, usageOutcome(scenario.Pass, llm.Usage{Requests: 1}), ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if strings.Contains(string(got), "note") || !strings.HasSuffix(string(got), "| **Total** | | | | **2** | **0** | **0** | **0** | **0** | |\n") {
+		t.Errorf("summary =\n%s", got)
+	}
+}

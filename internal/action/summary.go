@@ -31,12 +31,13 @@ var usageColumns = []int{4, 5, 6, 7, 8}
 // of GitHub Actions, the file GITHUB_STEP_SUMMARY names, as a row of a
 // table that the tests of the run share, with their total last. Each test
 // is a process of its own, which may run beside another, so the file is
-// locked while it is read and written; a writer that does not lock it, as
-// a step that appends to it beside the test, is not overwritten, as the
-// table is written again over its total alone, and only while the file is
-// as it was read. A summary another step wrote to last starts a table
-// anew. The secrets of the test are hidden in the row, as a step is named
-// after the values of the workflow.
+// locked while it is read and written. The table is written again over its
+// total alone, and only while the file is as it was read, so that what a
+// writer that does not lock it, as a step that appends to it beside the
+// test, added before is kept; one that adds to it at the very moment of the
+// write can still be overwritten. A summary another step wrote to last
+// starts a table anew. The secrets of the test are hidden in the row, as a
+// step is named after the values of the workflow.
 func writeSummary(path string, step actionrpc.Step, r req, o scenario.Outcome, replay string) error {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
@@ -52,11 +53,7 @@ func writeSummary(path string, step actionrpc.Step, r req, o scenario.Outcome, r
 	if err != nil {
 		return err
 	}
-	var hidden strings.Builder
-	if _, err := secretsHidden(&hidden, r.Secrets).Write([]byte(summaryRow(step, r, o, replay))); err != nil {
-		return err
-	}
-	row := hidden.String()
+	row := summaryRow(step, r, o, replay)
 	rows, at := summaryRows(string(data))
 	// What another writer added since the file was read is kept: the
 	// table goes after it, anew.
@@ -80,11 +77,13 @@ func writeSummary(path string, step actionrpc.Step, r req, o scenario.Outcome, r
 		b.WriteString(summaryHeading + "\n\n" + summaryHeader + "\n" + summaryRule + "\n")
 	}
 	rows = append(rows, row)
-	// The row and the total are longer than the total they are written
-	// over, so nothing of it is left behind.
 	b.WriteString(row + "\n" + totalRow(rows) + "\n")
-	_, err = f.WriteAt([]byte(b.String()), at)
-	return err
+	if _, err := f.WriteAt([]byte(b.String()), at); err != nil {
+		return err
+	}
+	// The file is cut after the total, as a total edited by hand can be
+	// longer than what is written over it.
+	return f.Truncate(at + int64(b.Len()))
 }
 
 // summaryRows returns the rows of the table the summary ends with, and
@@ -129,9 +128,16 @@ func summaryRow(step actionrpc.Step, r req, o scenario.Outcome, replay string) s
 	if model == "" {
 		model = r.Model
 	}
+	// The secrets are hidden in the text alone, before it is made to fit a
+	// cell, which changes how a secret is written, as | to \|.
+	hide := func(s string) string {
+		var b strings.Builder
+		_, _ = secretsHidden(&b, r.Secrets).Write([]byte(s))
+		return cell(b.String())
+	}
 	u := o.Usage
 	cells := []string{
-		cell(step.JobName), cell(name), cell(o.Verdict), cell(model),
+		hide(step.JobName), hide(name), cell(o.Verdict), hide(model),
 		count(int64(u.Requests)), count(u.InputTokens), count(u.CacheReadTokens), count(u.CacheWriteTokens), count(u.OutputTokens),
 		cell(replay),
 	}

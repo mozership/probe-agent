@@ -479,11 +479,12 @@ jobs:
 
 # The notes the tests left: the critical one of the sign-up the server
 # fails, and those of the findings of Carol. The tests that passed left
-# none. In GitHub Actions, the tests also left a table of what they used of
-# the model in the job summary of the step that runs Probe, which this job
-# reads in the same step; run by hand, there is none to read. On a pull request, CI puts them in a comment of it with
-# probe-github-notes, which needs GITHUB_TOKEN; without one, as run by hand,
-# the step is skipped.
+# none. On a pull request, CI puts them in a comment of it with
+# probe-github-notes, which needs GITHUB_TOKEN; without one, as run by
+# hand, the step is skipped. In GitHub Actions, the tests also left a table
+# of what they used of the model in the job summary of the step that runs
+# Probe, which this job reads in the same step; run by hand, there is none
+# to read.
 - name: Notes
   needs: [signup, persona, signed-in, api, grpc, graphql, mail, database]
   always: true
