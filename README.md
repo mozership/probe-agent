@@ -98,6 +98,7 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 | `cache` | String | No | - | A file to keep the steps of a scenario test that passed in, and to replay them from; see [Replay](#replay) |
 | `cache_mode` | String | No | `auto` | `auto`, `read`, `strict` or `refresh`; see [Replay](#replay) |
 | `evidence_dir` | String | No | the temporary directory | Where the screenshots and the report are written, each test in a directory of its own |
+| `job_summary` | Boolean | No | `true` | Whether the usage of the model is added to the job summary of GitHub Actions; see [Running in CI](#running-in-ci) |
 
 The model is called with the API key of its provider, which the action takes from Probe's environment. List it under `secrets` of the workflow so that Probe hides it in its output.
 
@@ -647,6 +648,14 @@ The model reads `{secret:NAME}` where a secret is. When it types the placeholder
 - Set the API key from a secret of the CI, and list it under `secrets` of the workflow.
 - Upload `evidence_dir` as an artifact, so that the report and the screenshots of a failed test can be read.
 - Run a test with a `cache` under `cache_mode: strict`, so that the model is asked only to judge while the recording matches.
+
+In GitHub Actions, each test adds what it used of the model to the job summary, the file `GITHUB_STEP_SUMMARY` names, as a row of a table, with the total of the rows last: the requests and the tokens, as `res.usage` counts them, by job and step, with the verdict and how the test used its `cache`. Input is what was neither read from the cache of the prompt nor written to it. A step of GitHub Actions has a summary of its own, so the table is of the tests of the run of Probe in that step; a step of Probe that writes to the summary after a test, as a shell step, starts a new one for the tests after it. The secrets of the test are hidden in its row, as a step may be named after the value of one, but a secret of the workflow the test is not given is not. Set `job_summary: false` to leave it out. The same usage is the last line of `res.report`, which Probe prints under the step.
+
+| Job | Step | Verdict | Model | Requests | Input | Cache read | Cache write | Output | Replay |
+|---|---|---|---|--:|--:|--:|--:|--:|---|
+| Sign-up | A new user signs up | pass | claude-opus-5-5 | 1 | 3,120 | 0 | 0 | 412 | hit |
+| Persona | A first-time visitor writes a note | fail | claude-opus-5-5 | 14 | 9,870 | 182,400 | 21,300 | 6,050 | - |
+| **Total** | | | | **15** | **12,990** | **182,400** | **21,300** | **6,462** | |
 
 ## Guard
 

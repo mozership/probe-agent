@@ -51,7 +51,7 @@ var params = []string{
 	"task", "expect", "persona", "goal", "targets", "secrets",
 	"cache", "cache_mode",
 	"provider", "model", "effort", "base_url", "vision", "max_steps", "timeout",
-	"language", "evidence_dir",
+	"language", "evidence_dir", "job_summary",
 }
 
 // The kinds of target, as the keys of targets.
@@ -118,7 +118,10 @@ type req struct {
 	Effort   string
 	// Language is the language the model writes in, and the notes are
 	// written in, as Japanese; empty, that of the task or the goal.
-	Language    string
+	Language string
+	// JobSummary says whether the usage of the model is added to the job
+	// summary of GitHub Actions.
+	JobSummary  bool
 	BaseURL     string
 	Vision      bool
 	MaxSteps    int
@@ -259,14 +262,15 @@ func (r req) kinds() []string {
 // numbers and the booleans are taken as strings too.
 func parse(with map[string]any) (req, error) {
 	r := req{
-		Provider:  anthropic,
-		Effort:    defaultEffort,
-		MaxSteps:  defaultMaxSteps,
-		Timeout:   defaultTimeout,
-		Headless:  true,
-		CacheMode: cacheAuto,
-		Width:     defaultWidth,
-		Height:    defaultHeight,
+		Provider:   anthropic,
+		Effort:     defaultEffort,
+		JobSummary: true,
+		MaxSteps:   defaultMaxSteps,
+		Timeout:    defaultTimeout,
+		Headless:   true,
+		CacheMode:  cacheAuto,
+		Width:      defaultWidth,
+		Height:     defaultHeight,
 	}
 	var errs []error
 	// strIn and numIn read key of src, which prefix names in an error, as
@@ -446,6 +450,14 @@ func parse(with map[string]any) (req, error) {
 			errs = append(errs, errors.New("vision must be true or false"))
 		} else {
 			r.Vision = b
+		}
+	}
+	if v, ok := with["job_summary"]; ok {
+		b, err := toBool(v)
+		if err != nil {
+			errs = append(errs, errors.New("job_summary must be true or false"))
+		} else {
+			r.JobSummary = b
 		}
 	}
 	if r.BaseURL != "" {
