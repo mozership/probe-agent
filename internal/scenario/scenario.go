@@ -358,10 +358,10 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 		}
 		o.Verdict, o.Reason, o.Evidence, o.Findings = rv.verdict.verdict, rv.reason, rv.evidence, rv.findings
 		if stopped == StoppedBlocked {
-			o.Verdict, o.Reason = Blocked, "The tester was blocked: "+summary
+			o.Verdict, o.Reason = Blocked, r.blockedReason(summary)
 		}
 	case stopped == StoppedBlocked:
-		o.Verdict, o.Reason = Blocked, "The tester was blocked: "+summary
+		o.Verdict, o.Reason = Blocked, r.blockedReason(summary)
 	default:
 		v, err := r.judge(ctx, o, final)
 		if err != nil {

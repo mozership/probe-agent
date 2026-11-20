@@ -48,13 +48,6 @@ var english = words{
 	unverified: "_None of the evidence was found in what the test recorded, so the finding may be a misreading of the model._",
 }
 
-// translations are the words of the languages the notes know, by the
-// names a workflow may give them, in lower case. A language not among
-// them has its notes in its own language, with these words in English.
-var translations = map[string]words{
-	"japanese": japanese, "ja": japanese, "ja-jp": japanese, "日本語": japanese,
-}
-
 var japanese = words{
 	failed:     "期待した結果になりませんでした",
 	blocked:    "テストを実行できませんでした",
@@ -66,10 +59,12 @@ var japanese = words{
 	unverified: "_根拠の引用がテストの記録にひとつも見つからなかったため、モデルの読み違いかもしれません。_",
 }
 
-// wordsIn are the words of the notes in language.
+// wordsIn are the words of the notes in language: in Japanese, or else in
+// English, as the notes know no other language. What the model wrote in
+// them is in language all the same.
 func wordsIn(language string) words {
-	if w, ok := translations[strings.ToLower(strings.TrimSpace(language))]; ok {
-		return w
+	if scenario.Japanese(language) {
+		return japanese
 	}
 	return english
 }

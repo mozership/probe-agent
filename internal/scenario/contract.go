@@ -72,12 +72,24 @@ func (l *ledger) contractFindings() []Finding {
 			if c.Field != "" {
 				title += " at " + c.Field
 			}
+			expected := "A response " + c.spec + " allows."
+			if Japanese(l.cfg.Language) {
+				spec := map[string]string{"the OpenAPI document": "OpenAPI ドキュメント", "the .proto files": ".proto ファイル"}[c.spec]
+				if spec == "" {
+					spec = c.spec
+				}
+				title = op + " のレスポンスが" + spec + "に違反しています"
+				if c.Field != "" {
+					title += "（" + c.Field + "）"
+				}
+				expected = spec + "が許すレスポンス。"
+			}
 			title = l.secrets.mask(title)
 			out = append(out, Finding{
 				Title:    title,
 				Severity: "medium",
 				Category: "error",
-				Expected: "A response " + c.spec + " allows.",
+				Expected: expected,
 				Steps:    []int{},
 				URL:      c.url,
 				Verified: true,

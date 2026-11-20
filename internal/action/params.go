@@ -455,7 +455,7 @@ func parse(with map[string]any) (req, error) {
 	}
 
 	r.Language = strings.TrimSpace(r.Language)
-	if utf8.RuneCountInString(r.Language) > maxLanguage || strings.ContainsFunc(r.Language, unicode.IsControl) {
+	if utf8.RuneCountInString(r.Language) > maxLanguage || strings.ContainsFunc(r.Language, func(c rune) bool { return !unicode.IsPrint(c) }) {
 		errs = append(errs, fmt.Errorf("language must be the name of a language, as Japanese, on one line of at most %d characters", maxLanguage))
 	}
 

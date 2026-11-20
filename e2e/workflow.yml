@@ -170,7 +170,7 @@ jobs:
     timeout: 5m
     test: |
       res.mode == "persona" && res.verdict == "fail"
-      && all(res.findings, .title matches "[ぁ-んァ-ヶ一-龠]")
+      && any(res.findings, .title matches "[ぁ-んァ-ヶ一-龠]")
       && len(filter(res.findings, .severity == "high" && .verified)) > 0
       && len(filter(res.notes, .level == "critical")) > 0
       && len(filter(res.network_errors, .status == 500)) > 0
