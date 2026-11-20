@@ -31,8 +31,12 @@ var usageColumns = []int{4, 5, 6, 7, 8}
 // of GitHub Actions, the file GITHUB_STEP_SUMMARY names, as a row of a
 // table that the tests of the run share, with their total last. Each test
 // is a process of its own, which may run beside another, so the file is
-// locked while it is read and written. A summary another step wrote to
-// last starts a table anew.
+// locked while it is read and written; a writer that does not lock it, as
+// a step that appends to it beside the test, is not overwritten, as the
+// table is written again over its total alone, and only while the file is
+// as it was read. A summary another step wrote to last starts a table
+// anew. The secrets of the test are hidden in the row, as a step is named
+// after the values of the workflow.
 func writeSummary(path string, step actionrpc.Step, r req, o scenario.Outcome, replay string) error {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
@@ -48,24 +52,37 @@ func writeSummary(path string, step actionrpc.Step, r req, o scenario.Outcome, r
 	if err != nil {
 		return err
 	}
-	row := summaryRow(step, r, o, replay)
+	var hidden strings.Builder
+	if _, err := secretsHidden(&hidden, r.Secrets).Write([]byte(summaryRow(step, r, o, replay))); err != nil {
+		return err
+	}
+	row := hidden.String()
 	rows, at := summaryRows(string(data))
+	// What another writer added since the file was read is kept: the
+	// table goes after it, anew.
+	if fi, err := f.Stat(); err != nil {
+		return err
+	} else if fi.Size() != int64(len(data)) {
+		rows, data = nil, nil
+		at = fi.Size()
+	}
 	var b strings.Builder
 	if rows == nil {
-		at = int64(len(data))
-		if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
+		if data != nil {
+			at = int64(len(data))
+		}
+		if at > 0 && !strings.HasSuffix(string(data), "\n") {
 			b.WriteString("\n")
 		}
-		if len(data) > 0 {
+		if at > 0 {
 			b.WriteString("\n")
 		}
 		b.WriteString(summaryHeading + "\n\n" + summaryHeader + "\n" + summaryRule + "\n")
 	}
 	rows = append(rows, row)
+	// The row and the total are longer than the total they are written
+	// over, so nothing of it is left behind.
 	b.WriteString(row + "\n" + totalRow(rows) + "\n")
-	if err := f.Truncate(at); err != nil {
-		return err
-	}
 	_, err = f.WriteAt([]byte(b.String()), at)
 	return err
 }
@@ -114,7 +131,7 @@ func summaryRow(step actionrpc.Step, r req, o scenario.Outcome, replay string) s
 	}
 	u := o.Usage
 	cells := []string{
-		cell(step.JobName), cell(name), o.Verdict, cell(model),
+		cell(step.JobName), cell(name), cell(o.Verdict), cell(model),
 		count(int64(u.Requests)), count(u.InputTokens), count(u.CacheReadTokens), count(u.CacheWriteTokens), count(u.OutputTokens),
 		cell(replay),
 	}

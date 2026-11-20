@@ -107,3 +107,16 @@ func TestParse_JobSummary(t *testing.T) {
 		t.Errorf("a bad job_summary: %v", err)
 	}
 }
+
+func TestWriteSummary_HidesTheSecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "summary.md")
+	step := actionrpc.Step{JobName: "Log in", Name: "Log in as Alice@Example.com"}
+	r := req{Secrets: map[string]string{"EMAIL": "alice@example.com"}}
+	if err := writeSummary(path, step, r, usageOutcome(scenario.Pass, llm.Usage{Requests: 1}), ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if strings.Contains(strings.ToLower(string(got)), "alice@example.com") || !strings.Contains(string(got), "| Log in as <secret:EMAIL> |") {
+		t.Errorf("summary =\n%s", got)
+	}
+}
