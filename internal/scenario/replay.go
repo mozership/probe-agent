@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,21 @@ type Recording struct {
 	// is replayed only at.
 	Viewport Viewport   `json:"viewport"`
 	Steps    []Recorded `json:"steps"`
+	// Checks are what a replay of all of the steps is passed on without
+	// the judge, when it meets them; a recording without them is judged.
+	Checks *Checks `json:"checks,omitempty"`
+}
+
+// Checks are what the judge of the run recorded passed it on, as a
+// deterministic check can tell it again: the texts it quoted of the pages
+// the run ended on, and the errors those pages had.
+type Checks struct {
+	// Quotes are the quotes of the judge the pages the run ended on
+	// showed, with the secrets as placeholders.
+	Quotes []string `json:"quotes"`
+	// Errors are the console errors and the failed requests of the run,
+	// normalized. A replay that has another is judged.
+	Errors []string `json:"errors,omitempty"`
 }
 
 // Viewport is the size of the viewport, in CSS pixels.
@@ -78,7 +94,8 @@ const (
 	// task, or one that began on another page.
 	ReplayMiss = "miss"
 	// ReplayHit is a test that replayed all of its recording, so that the
-	// model was asked only to judge.
+	// model was asked only to judge, or not at all when the replay met the
+	// checks of the recording.
 	ReplayHit = "hit"
 	// ReplayPartial is a test whose recording stopped matching the
 	// application, from where the tester carried on.
@@ -98,6 +115,10 @@ type Replay struct {
 	// Stale is whether it stopped because the application no longer
 	// matches the recording, rather than at a gap or a limit of the test.
 	Stale bool `json:"stale,omitempty"`
+	// Checked is whether a replay of all of the recording met its checks,
+	// and passed without the judge. When it did not, Reason says why the
+	// judge was asked.
+	Checked bool `json:"checked,omitempty"`
 }
 
 // record keeps a step that changed the page, for the recording of the run.
@@ -287,6 +308,99 @@ func (d *browserDriver) recording() *Recording {
 		Viewport: d.cfg.Viewport,
 		Steps:    d.recorded,
 	}
+}
+
+// checks returns the checks of a run its judge passed with evidence, or
+// nil when the judge quoted nothing of the pages the run ended on, which
+// alone a replay is sure to show again.
+func (r *run) checks(evidence []Evidence, f []observation) *Checks {
+	seen := finalText(f)
+	quotes := []string{}
+	for _, e := range evidence {
+		q := r.secrets.mask(e.Quote)
+		if e.Verified && normalize(q) != "" && strings.Contains(seen, normalize(q)) && !slices.Contains(quotes, q) {
+			quotes = append(quotes, q)
+		}
+	}
+	if len(quotes) == 0 {
+		return nil
+	}
+	slices.Sort(quotes)
+	return &Checks{Quotes: quotes, Errors: r.web.errorKinds()}
+}
+
+// unmet says which of the checks of a recording the run does not meet, or
+// "" when it meets them all.
+func (r *run) unmet(c *Checks, f []observation) string {
+	if c == nil || len(c.Quotes) == 0 {
+		return "the recording has no checks to pass it on"
+	}
+	seen := finalText(f)
+	for _, q := range c.Quotes {
+		if !strings.Contains(seen, normalize(q)) {
+			return fmt.Sprintf("the page does not show %s, which the judge of the recorded run quoted", quote(q))
+		}
+	}
+	for _, e := range r.web.errorKinds() {
+		if !slices.Contains(c.Errors, e) {
+			return "the page had an error the recorded run did not: " + e
+		}
+	}
+	return ""
+}
+
+// finalText is the text the targets showed last, normalized. The elements
+// of a page are left out, as they hold what its fields were filled with,
+// which a quote of the task would find on a form that was never sent.
+func finalText(f []observation) string {
+	var texts []string
+	for _, o := range f {
+		for _, s := range o.sections {
+			if s.tag != "final_page_elements" {
+				texts = append(texts, s.text)
+			}
+		}
+	}
+	return normalize(strings.Join(texts, "\n"))
+}
+
+// mintedRun is what changes from run to run in the text of an error: a
+// UUID, a run of hex with a digit, or of digits.
+var mintedRun = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\b[0-9a-f]*\d[0-9a-f]*\b|\d+`)
+
+// errorKinds are the console errors and the failed requests of the page,
+// masked, with the routes of their URLs, and what changes from run to run
+// in their texts as #, sorted. A URL is masked again after its route is
+// decoded, as a secret can be in it percent-encoded.
+func (d *browserDriver) errorKinds() []string {
+	out := []string{}
+	add := func(s string) {
+		if !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	for _, e := range d.page.ConsoleErrors() {
+		add(e.Type + ": " + mintedRun.ReplaceAllString(d.secrets.mask(strings.Join(strings.Fields(d.relativeIn(e.Text)), " ")), "#"))
+	}
+	for _, e := range d.page.NetworkErrors() {
+		what := e.Error
+		if e.Status > 0 {
+			what = strconv.FormatInt(e.Status, 10)
+		}
+		add(e.Method + " " + d.secrets.mask(routeText(d.relative(d.secrets.mask(e.URL)))) + " " + what)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// relativeIn writes the origin of the start URL out of s, so that the text
+// of an error on one host is that of the same error on another.
+func (d *browserDriver) relativeIn(s string) string {
+	u, err := url.Parse(d.cfg.StartURL)
+	if err != nil || u.Host == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, u.Scheme+"://"+u.Host, "")
 }
 
 // sameRecording says whether two recordings would replay alike, so that a

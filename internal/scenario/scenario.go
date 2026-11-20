@@ -85,6 +85,10 @@ type Config struct {
 	// Strict ends a test whose recording no longer matches the
 	// application, blocked, rather than having the tester carry on.
 	Strict bool
+	// Rejudge has the judge judge a replay of all of the recording, which
+	// is otherwise passed without the model when it meets the checks of
+	// the recording.
+	Rejudge bool
 	// Viewport is the size of the viewport, which a step at a point of it
 	// is recorded and replayed at.
 	Viewport Viewport
@@ -363,6 +367,22 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 	case stopped == StoppedBlocked:
 		o.Verdict, o.Reason = Blocked, r.blockedReason(summary)
 	default:
+		// A replay of all of the recording that ends where the recorded
+		// run did, showing what its judge quoted, with no error it did not
+		// have, passes as it did, without the model.
+		if hit := o.Replay != nil && o.Replay.Status == ReplayHit; hit && !cfg.Rejudge {
+			if why := r.unmet(cfg.Recording.Checks, final); why != "" {
+				o.Replay.Reason = "the judge was asked: " + why
+			} else {
+				o.Replay.Checked = true
+				o.Verdict = Pass
+				o.Reason = fmt.Sprintf("All %d steps were replayed from a recording of an earlier run, and the page they ended on shows what the judge of that run quoted, with no error that run did not have; the model was not asked to judge.", o.Replay.Replayed)
+				for _, q := range cfg.Recording.Checks.Quotes {
+					o.Evidence = append(o.Evidence, Evidence{Quote: q, Verified: true})
+				}
+				break
+			}
+		}
 		v, err := r.judge(ctx, o, final)
 		if err != nil {
 			return Outcome{}, err
@@ -381,9 +401,27 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 			o.Findings = []Finding{}
 		}
 	}
+	// The run is recorded with what its judge passed it on, as are the
+	// checks of a replay of all of the recording that the judge passed, so
+	// that the next replay is passed on them.
+	// A replay the judge judges whatever its checks is not recorded again
+	// for them. The errors of the checks add up, so that one that comes and
+	// goes does not change them back and forth.
+	hit := o.Replay != nil && o.Replay.Status == ReplayHit
 	if cfg.Record && r.browserOnly() && o.Mode == ModeScenario && o.Verdict == Pass && stopped == StoppedDone &&
-		(o.Replay == nil || o.Replay.Status != ReplayHit) {
-		if rec := r.web.recording(); cfg.Recording == nil || !sameRecording(rec, cfg.Recording) {
+		!(hit && (o.Replay.Checked || cfg.Rejudge)) {
+		rec := r.web.recording()
+		if hit {
+			c := *cfg.Recording
+			rec = &c
+		}
+		rec.Checks = r.checks(o.Evidence, final)
+		if hit && rec.Checks != nil && cfg.Recording.Checks != nil {
+			errs := append(slices.Clone(cfg.Recording.Checks.Errors), rec.Checks.Errors...)
+			slices.Sort(errs)
+			rec.Checks.Errors = slices.Compact(errs)
+		}
+		if cfg.Recording == nil || !sameRecording(rec, cfg.Recording) {
 			o.Recording = rec
 		}
 	}

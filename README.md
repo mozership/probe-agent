@@ -97,6 +97,7 @@ In a persona test, the tester also has `note_finding`, which it calls as soon as
 | `timeout` | Duration | No | `4m` | Limit for the whole test, the judge included, as `90s` or a number of seconds. Keep it below the step's `timeout`, which is `5m` unless set |
 | `cache` | String | No | - | A file to keep the steps of a scenario test that passed in, and to replay them from; see [Replay](#replay) |
 | `cache_mode` | String | No | `auto` | `auto`, `read`, `strict` or `refresh`; see [Replay](#replay) |
+| `cache_judge` | String | No | `checks` | `checks` passes a replay of the whole recording without the model when it meets the checks of the recording; `always` has the judge judge it; see [Replay](#replay) |
 | `evidence_dir` | String | No | the temporary directory | Where the screenshots and the report are written, each test in a directory of its own |
 | `job_summary` | Boolean | No | `true` | Whether the usage of the model is added to the job summary of GitHub Actions; see [Running in CI](#running-in-ci) |
 
@@ -459,7 +460,7 @@ A recording is of the steps, not of the model, so a test recorded with one model
 | `res.url`, `res.title` | String | The page the tester left the browser on, empty without a browser |
 | `res.console_errors` | List | The errors the pages wrote to their console, as the browser action reports them |
 | `res.network_errors` | List | The requests that failed or were answered with 400 or more: `method`, `url`, `status`, `error` |
-| `res.cache` | Object | With `cache`, how the test used it: `path`, `mode`, `status` (`miss`, `hit` or `partial`), `replayed`, the steps replayed, `diverged_at` and `reason`, where and why the recording stopped, `stale`, whether it stopped because the application no longer matches it, and `saved`, whether the run was recorded |
+| `res.cache` | Object | With `cache`, how the test used it: `path`, `mode`, `status` (`miss`, `hit` or `partial`), `replayed`, the steps replayed, `diverged_at` and `reason`, where and why the recording stopped, `stale`, whether it stopped because the application no longer matches it, `checked`, whether a replay of all of it met its checks and passed without the model, and `saved`, whether the run was recorded |
 | `res.metrics` | Object | Measures that do not depend on the model, to compare runs by: `steps`, `duration_ms`, `requests`, `failed_requests`, `console_errors`, and `slowest_requests`, the five requests that took longest, with `method`, `url`, `status` and `duration_ms` |
 | `res.usage` | Object | The `requests` made to the model and the tokens they used. `cache_write_tokens` is counted by `anthropic` alone |
 | `res.model` | String | The model's ID |
@@ -547,7 +548,7 @@ error · step 9 · https://staging.example.com/notes/new
 
 ## Replay
 
-A scenario test that passes the same way every run need not ask the model how to do it every run. With `cache`, the steps of a run that passed are kept in a file, and the next run replays them without the model; only the judge is asked, so that what the pages show is still judged.
+A scenario test that passes the same way every run need not ask the model how to do it every run. With `cache`, the steps of a run that passed are kept in a file, and the next run replays them without the model. A replay of all of the steps is passed on the checks of the recording, what its judge passed it on, and the judge is asked when it does not meet them, so that what the pages show is still judged.
 
 ```yaml
     with:
@@ -566,6 +567,9 @@ A replay:
 2. Finds each element a step acted on by its role and its name, such as `button "Create account"`. Where other elements of the page had both, it counts them too, and takes the same one of as many; another number of them is ambiguous, and the replay stops rather than guess. An element with no name among others of its role is not recorded: only its order would tell it, and rows that reorder would give the step to another.
 3. Checks after each step that the page is on the route it reached when recorded, and shows no alert the recording did not. A route is a page's path and query, with what looks minted per record, such as an ID, a token or a date, read as one: `/orders/42` and `/orders/7` are one route, and `/companies` and `/companies?tab=notes` are two.
 4. Ends without the model, or hands the test to the tester where it stopped, telling it what was replayed and why it stopped. Once the test passes, the run is recorded again.
+5. Passes a replay of all of the steps without the judge when it meets the checks of the recording, and has the judge judge it otherwise.
+
+The checks of a recording are what its judge passed the run on: the quotes of the judge that the page the run ended on showed, and the console errors and failed requests of the run. A replay of all of the steps meets them when the text of the page it ends on, not the values of its fields, shows each quote, in any case and spacing, and it had no error the recorded run did not have, an error being its kind, or its method, the route of its URL and its status, with the numbers, hex runs and UUIDs of its text, and the origin of the test, read as one; the errors of a replay the judge passes are added to the checks. Such a test passes with the quotes as its evidence, and `res.cache.checked`, without asking the model at all. A replay that does not meet them, or of a recording without checks, such as one written before the checks were, is judged; once the judge passes it, it is recorded again with the checks the judge passed it on, in `auto`. A quote the judge took from a page before the last, or of a value of the run, such as the time, makes no check that holds on another run, and each such run is judged; a short quote, such as a name alone, makes a check a page that says something else around it meets as well, so read the checks of a recording before committing it. Set `cache_judge: always` to have the judge judge every replay, as when the expectation is of something a quote does not show, such as the layout.
 
 A value the tester typed that the task spells out, or that it made up, such as a name, is typed again. A value it may have read off the screen, such as a code the application showed, or a date, belongs to that run: its step is recorded as a gap, without the value, and the replay hands the test to the tester there. A step at a point of the viewport, rather than on an element, is replayed only at the viewport it was recorded at.
 
@@ -573,7 +577,7 @@ The recording is of the task, the expectation and the start URL; when one of the
 
 | `cache_mode` | Replays | Records | Where the recording stops matching |
 |---|---|---|---|
-| `auto` | yes | a run that passed, if it changes the recording | the tester carries on |
+| `auto` | yes | a run that passed, if it changes the recording, its checks included | the tester carries on |
 | `read` | yes | never | the tester carries on |
 | `strict` | yes | never | the test is blocked without the model, as `stopped: stale` |
 | `refresh` | no | a run that passed | |
@@ -647,13 +651,14 @@ The model reads `{secret:NAME}` where a secret is. When it types the placeholder
 - Install Chrome or Chromium on the runner, and keep `headless: true`.
 - Set the API key from a secret of the CI, and list it under `secrets` of the workflow.
 - Upload `evidence_dir` as an artifact, so that the report and the screenshots of a failed test can be read.
-- Run a test with a `cache` under `cache_mode: strict`, so that the model is asked only to judge while the recording matches.
+- Run a test with a `cache` under `cache_mode: strict`, so that the model is not asked at all while the recording and its checks match, and only to judge while the recording does.
 
-In GitHub Actions, each test adds what it used of the model to the job summary, the file `GITHUB_STEP_SUMMARY` names, as a row of a table, with the total of the rows last: the requests and the tokens, as `res.usage` counts them, by job and step, with the verdict and how the test used its `cache`. Input is what was neither read from the cache of the prompt nor written to it. A step of GitHub Actions has a summary of its own, so the table is of the tests of the run of Probe in that step; a step of Probe that writes to the summary after a test, as a shell step, starts a new one for the tests after it. The secrets of the test are hidden in its row, as a step may be named after the value of one, but a secret of the workflow the test is not given is not. Set `job_summary: false` to leave it out. The same usage is the last line of `res.report`, which Probe prints under the step.
+In GitHub Actions, each test adds what it used of the model to the job summary, the file `GITHUB_STEP_SUMMARY` names, as a row of a table, with the total of the rows last: the requests and the tokens, as `res.usage` counts them, by job and step, with the verdict and how the test used its `cache`, as `hit, checked` for a replay that passed on the checks of the recording. Input is what was neither read from the cache of the prompt nor written to it. A step of GitHub Actions has a summary of its own, so the table is of the tests of the run of Probe in that step; a step of Probe that writes to the summary after a test, as a shell step, starts a new one for the tests after it. The secrets of the test are hidden in its row, as a step may be named after the value of one, but a secret of the workflow the test is not given is not. Set `job_summary: false` to leave it out. The same usage is the last line of `res.report`, which Probe prints under the step.
 
 | Job | Step | Verdict | Model | Requests | Input | Cache read | Cache write | Output | Replay |
 |---|---|---|---|--:|--:|--:|--:|--:|---|
-| Sign-up | A new user signs up | pass | claude-opus-5-5 | 1 | 3,120 | 0 | 0 | 412 | hit |
+| Sign-up | A new user signs up | pass | claude-opus-5-5 | 0 | 0 | 0 | 0 | 0 | hit, checked |
+| Sign-up | A user changes the name | pass | claude-opus-5-5 | 1 | 3,120 | 0 | 0 | 412 | hit |
 | Persona | A first-time visitor writes a note | fail | claude-opus-5-5 | 14 | 9,870 | 182,400 | 21,300 | 6,050 | - |
 | **Total** | | | | **15** | **12,990** | **182,400** | **21,300** | **6,462** | |
 

@@ -213,6 +213,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 		Recording: rec,
 		Record:    r.Cache != "" && (r.CacheMode == cacheAuto || r.CacheMode == cacheRefresh),
 		Strict:    r.Cache != "" && r.CacheMode == cacheStrict,
+		Rejudge:   r.CacheJudge == judgeAlways,
 		Viewport:  scenario.Viewport{Width: r.Width, Height: r.Height},
 	}
 	o, err := scenario.Run(a.ctx, cfg, targets, model)
@@ -227,6 +228,9 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 		replay := ""
 		if c := cacheOf(r, o, false); c != nil {
 			replay = c.Status
+			if c.Checked {
+				replay += ", checked"
+			}
 		}
 		if err := writeSummary(path, call.Step, r, o, replay); err != nil {
 			a.log.Warn("the usage could not be written to the job summary", "error", err)
@@ -1269,6 +1273,11 @@ func shortReport(r req, o scenario.Outcome, f files) string {
 		switch c.Status {
 		case scenario.ReplayHit:
 			fmt.Fprintf(&b, ", %d steps replayed without the model", c.Replayed)
+			if c.Checked {
+				b.WriteString(", passed on the checks of the recording without the judge")
+			} else if c.Reason != "" {
+				fmt.Fprintf(&b, "; %s", c.Reason)
+			}
 		case scenario.ReplayPartial:
 			if o.Stopped == scenario.StoppedStale {
 				fmt.Fprintf(&b, ", %d steps replayed, stale at step %d: %s", c.Replayed, c.DivergedAt, c.Reason)

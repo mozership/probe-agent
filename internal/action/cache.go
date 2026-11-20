@@ -22,6 +22,9 @@ type cacheResult struct {
 	Reason     string `json:"reason,omitempty"`
 	// Stale is whether the recording stopped matching the application.
 	Stale bool `json:"stale"`
+	// Checked is whether a replay of all of the recording met its checks,
+	// and passed without the judge.
+	Checked bool `json:"checked"`
 	// Saved is whether the run was written as the recording.
 	Saved bool `json:"saved"`
 }
@@ -68,6 +71,7 @@ func cacheOf(r req, o scenario.Outcome, saved bool) *cacheResult {
 	switch {
 	case o.Replay != nil:
 		c.Status, c.Replayed, c.DivergedAt, c.Reason, c.Stale = o.Replay.Status, o.Replay.Replayed, o.Replay.DivergedAt, o.Replay.Reason, o.Replay.Stale
+		c.Checked = o.Replay.Checked
 	case r.CacheMode == cacheRefresh:
 		c.Reason = "cache_mode is refresh"
 	default:

@@ -46,10 +46,19 @@ const (
 	cacheStrict = "strict"
 )
 
+// The ways a replay of all of a recording is judged.
+const (
+	// judgeChecks passes it without the model when it meets the checks of
+	// the recording, and has the judge judge it otherwise.
+	judgeChecks = "checks"
+	// judgeAlways has the judge judge it.
+	judgeAlways = "always"
+)
+
 // params are the keys the action takes in with.
 var params = []string{
 	"task", "expect", "persona", "goal", "targets", "secrets",
-	"cache", "cache_mode",
+	"cache", "cache_mode", "cache_judge",
 	"provider", "model", "effort", "base_url", "vision", "max_steps", "timeout",
 	"language", "evidence_dir", "job_summary",
 }
@@ -102,6 +111,9 @@ type req struct {
 	Goal      string
 	Cache     string
 	CacheMode string
+	// CacheJudge is how a replay of all of the recording is judged:
+	// checks or always.
+	CacheJudge string
 	// Browser says whether the test drives a browser, of URL and the
 	// fields after it.
 	Browser    bool
@@ -269,6 +281,7 @@ func parse(with map[string]any) (req, error) {
 		Timeout:    defaultTimeout,
 		Headless:   true,
 		CacheMode:  cacheAuto,
+		CacheJudge: judgeChecks,
 		Width:      defaultWidth,
 		Height:     defaultHeight,
 	}
@@ -323,6 +336,7 @@ func parse(with map[string]any) (req, error) {
 	str("evidence_dir", &r.EvidenceDir)
 	str("cache", &r.Cache)
 	str("cache_mode", &r.CacheMode)
+	str("cache_judge", &r.CacheJudge)
 	num("max_steps", &r.MaxSteps)
 
 	// The browser is given under targets.browser.
@@ -417,6 +431,11 @@ func parse(with map[string]any) (req, error) {
 	case cacheAuto, cacheRead, cacheRefresh, cacheStrict:
 	default:
 		errs = append(errs, fmt.Errorf("cache_mode %q must be auto, read, refresh or strict", r.CacheMode))
+	}
+	switch r.CacheJudge {
+	case judgeChecks, judgeAlways:
+	default:
+		errs = append(errs, fmt.Errorf("cache_judge %q must be checks or always", r.CacheJudge))
 	}
 	if r.Cache != "" && persona {
 		errs = append(errs, errors.New("cache is for scenario tests; a persona test takes another way each run"))

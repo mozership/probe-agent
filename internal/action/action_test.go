@@ -94,6 +94,7 @@ func TestParse_Refuses(t *testing.T) {
 		"no goal":                          {"persona": "p", "targets": browserAt("http://a.test/")},
 		"only a goal":                      {"goal": "g", "targets": browserAt("http://a.test/")},
 		"a bad cache mode":                 {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "cache": "c.json", "cache_mode": "sometimes"},
+		"a bad cache judge":                {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "cache": "c.json", "cache_judge": "never"},
 		"a persona cache":                  {"persona": "p", "goal": "g", "targets": browserAt("http://a.test/"), "cache": "c.json"},
 		"a bad provider":                   {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "provider": "acme", "model": "m"},
 		"no model":                         {"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "provider": "openai"},
@@ -324,8 +325,11 @@ func TestParse_Cache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Cache != ".probe-agent/signup.json" || r.CacheMode != "auto" {
-		t.Errorf("cache %q, mode %q", r.Cache, r.CacheMode)
+	if r.Cache != ".probe-agent/signup.json" || r.CacheMode != "auto" || r.CacheJudge != "checks" {
+		t.Errorf("cache %q, mode %q, judge %q", r.Cache, r.CacheMode, r.CacheJudge)
+	}
+	if r, err := parse(map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "cache": "c.json", "cache_judge": "always"}); err != nil || r.CacheJudge != "always" {
+		t.Errorf("always: %q, %v", r.CacheJudge, err)
 	}
 	if r, err := parse(map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/"), "cache": "c.json", "cache_mode": "strict"}); err != nil || r.CacheMode != "strict" {
 		t.Errorf("strict: %q, %v", r.CacheMode, err)
@@ -371,6 +375,16 @@ func TestResult_Cache(t *testing.T) {
 		t.Errorf("cache %v", c)
 	}
 	if report := res["report"].(string); !strings.Contains(report, "cache: partial, 3 steps replayed, then the tester from step 4") || !strings.Contains(report, "recorded to c.json") {
+		t.Errorf("report %q", report)
+	}
+
+	o.Replay = &scenario.Replay{Status: scenario.ReplayHit, Replayed: 5, Checked: true}
+	ret, _ = result(r, o, files{Report: "/tmp/r.md"}, time.Second)
+	res = ret["res"].(map[string]any)
+	if c := res["cache"].(map[string]any); c["status"] != "hit" || c["checked"] != true || c["saved"] != false {
+		t.Errorf("cache %v", c)
+	}
+	if report := res["report"].(string); !strings.Contains(report, "cache: hit, 5 steps replayed without the model, passed on the checks of the recording without the judge") {
 		t.Errorf("report %q", report)
 	}
 

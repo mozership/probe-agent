@@ -26,6 +26,7 @@ type fakePage struct {
 	// afterClick, when set, is the URL a click takes the page to.
 	afterClick string
 	network    []page.NetworkError
+	console    []page.ConsoleError
 	requests   page.Requests
 	// locators are what the elements of the refs are.
 	locators map[string]page.Locator
@@ -74,7 +75,7 @@ func (p *fakePage) State(context.Context) (string, string, error) {
 	}
 	return p.url, p.title, nil
 }
-func (p *fakePage) ConsoleErrors() []page.ConsoleError { return nil }
+func (p *fakePage) ConsoleErrors() []page.ConsoleError { return p.console }
 func (p *fakePage) NetworkErrors() []page.NetworkError { return p.network }
 func (p *fakePage) Locator(_ context.Context, t page.Target) (*page.Locator, error) {
 	if l, ok := p.locators[t.Ref]; ok {

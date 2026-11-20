@@ -68,11 +68,36 @@ func token(s, extra string) bool {
 
 // routeOf returns the route of a location, as a string to compare.
 func routeOf(location string) string {
-	u, err := url.Parse(location)
-	if err != nil || (u.IsAbs() && u.Scheme != "http" && u.Scheme != "https") || (!u.IsAbs() && !strings.HasPrefix(location, "/")) {
+	origin, segments, terms, ok := routeParts(location)
+	if !ok {
 		return location
 	}
-	origin := ""
+	b, _ := json.Marshal([]any{origin, segments, terms})
+	return string(b)
+}
+
+// routeText returns the route of a location as a URL for people to read,
+// such as /orders/:id?tab=notes.
+func routeText(location string) string {
+	origin, segments, terms, ok := routeParts(location)
+	if !ok {
+		return location
+	}
+	s := origin + "/" + strings.Join(segments, "/")
+	if len(terms) > 0 {
+		s += "?" + strings.Join(terms, "&")
+	}
+	return s
+}
+
+// routeParts returns the origin of a location, which is empty for a path,
+// the segments of its path and the terms of its query, sorted, as a route
+// compares them; ok is false for what is not the location of a page.
+func routeParts(location string) (origin string, segments, terms []string, ok bool) {
+	u, err := url.Parse(location)
+	if err != nil || (u.IsAbs() && u.Scheme != "http" && u.Scheme != "https") || (!u.IsAbs() && !strings.HasPrefix(location, "/")) {
+		return "", nil, nil, false
+	}
 	if u.IsAbs() {
 		origin = u.Scheme + "://" + u.Host
 	}
@@ -83,7 +108,6 @@ func routeOf(location string) string {
 		query = strings.Trim(query+"&"+fquery, "&")
 	}
 
-	var segments []string
 	for _, raw := range strings.Split(path, "/") {
 		if raw == "" {
 			continue
@@ -97,7 +121,6 @@ func routeOf(location string) string {
 		}
 		segments = append(segments, s)
 	}
-	var terms []string
 	for _, pair := range strings.Split(query, "&") {
 		if pair == "" {
 			continue
@@ -114,8 +137,7 @@ func routeOf(location string) string {
 		terms = append(terms, k+"="+v)
 	}
 	slices.Sort(terms)
-	b, _ := json.Marshal([]any{origin, segments, terms})
-	return string(b)
+	return origin, segments, terms, true
 }
 
 // sameRoute says whether two locations are the same screen.
