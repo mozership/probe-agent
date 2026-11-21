@@ -60,7 +60,35 @@ jobs:
           app: com.android.settings
           device: "{{vars.device}}"
           timeout: 1m
-    test: res.verdict == "pass" && res.targets[0].kind == "android"
+      cache: out/cache/android-version.json
+    test: res.verdict == "pass" && res.targets[0].kind == "android" && res.cache.saved
+
+  # The recording of the test before is replayed without the tester, from
+  # the first screen of the app, as the test before left it on another.
+  - name: probe-android launches the app afresh for the replay
+    uses: android
+    with:
+      app: com.android.settings
+      device: "{{vars.device}}"
+      timeout: 2m
+      actions:
+      - name: launch
+    test: res.code == 0
+
+  - name: The recording of the version of Android is replayed
+    uses: agent
+    timeout: 10m
+    with:
+      task: Find which version of Android the device runs.
+      expect: The screen shows the version of Android.
+      targets:
+        android:
+          app: com.android.settings
+          device: "{{vars.device}}"
+          timeout: 1m
+      cache: out/cache/android-version.json
+      cache_mode: strict
+    test: res.verdict == "pass" && res.cache.status == "hit" && res.cache.replayed > 0
 
   - name: A help page on the web names a section the app opens
     uses: agent

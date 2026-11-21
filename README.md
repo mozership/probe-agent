@@ -182,7 +182,7 @@ The tester reads the app by its accessibility tree, and names an element by a [s
 
 Each tool is one call of probe-ios. `targets.ios.timeout`, as `5s` or a number of seconds, bounds the actions of each call, from the first to the last: a tap on an element that is not there fails once it runs out, and the tester reads the tree again. It is 30 seconds by default, as in probe-ios, which a guess of the model at a selector can spend whole; a few seconds are enough for an app that answers at once. It does not count building the runner, which the step's `timeout` bounds. The agent opens the app with the same timeout, and XCUITest waits for the app to settle before it: on a simulator just booted, or on a slow machine such as a CI runner, that takes longer than a few seconds, so keep the default there, or give more. The first call on a simulator just booted can run out of even the default, so a step of probe-ios that launches the app before the agent helps; on a GitHub Actions runner the opening ran out of the default now and then even after it, so [e2e/ios.yml](e2e/ios.yml) does both and gives `2m`.
 
-The judge checks its quotes against the trees and the texts the app showed, and is given the last tree, and its screenshot when the model sees images. With images, each move keeps a screenshot as evidence, which `report.md` shows. A `cache` is refused: the steps of an app are not recorded.
+The judge checks its quotes against the trees and the texts the app showed, and is given the last tree, and its screenshot when the model sees images. With images, each move keeps a screenshot as evidence, which `report.md` shows. A [`cache`](#replay) records the actions, and replays them by their selectors.
 
 ### A browser and an app
 
@@ -548,7 +548,7 @@ error · step 9 · https://staging.example.com/notes/new
 
 ## Replay
 
-A scenario test that passes the same way every run need not ask the model how to do it every run. With `cache`, the steps of a run that passed are kept in a file, and the next run replays them without the model: those of a browser, and the calls of an HTTP, gRPC or GraphQL API, a mailbox and a database, alone or together. The steps of an app are not recorded, and a test of one takes no `cache`. A replay of all of the steps is passed on the checks of the recording, what its judge passed it on, and the judge is asked when it does not meet them, so that what the pages show is still judged.
+A scenario test that passes the same way every run need not ask the model how to do it every run. With `cache`, the steps of a run that passed are kept in a file, and the next run replays them without the model: those of a browser, the actions of an iOS or an Android app, and the calls of an HTTP, gRPC or GraphQL API, a mailbox and a database, alone or together. A replay of all of the steps is passed on the checks of the recording, what its judge passed it on, and the judge is asked when it does not meet them, so that what the pages show is still judged.
 
 ```yaml
     with:
@@ -573,6 +573,12 @@ A replay of a target that answers a call, as an API:
 1. Sends each call again, and checks that it gets the answer it got when recorded: the status of the response of an HTTP or a GraphQL API, with whether the latter had errors, the status of a gRPC call, whether a search of the mailbox found a mail, and whether a query of the database had rows, none or an error. A call that only reads, as a GET, a search or a query, is sent again for 3 seconds until it does, and one the tester sent again and again until its answer changed, as to wait for an export, is recorded as one call that waits, which the replay sends again for 30 seconds.
 2. Takes a value of a call the tester took from an earlier answer, such as the ID of a record it made, from the answer the replay got there instead. It is recorded as where it was in that answer: the value after a key, as `"id": ` or `id=`, or a segment of a path after one, as in `Location: /notes/57`, the first, the second or another of them. A number is taken that way only from a key of an identifier, as `id`, `note_id` or `noteId`, or from a path, and only where the call gives it in a path, or under a key of an identifier too, since a count the tester chose, as `?page=1`, may be in an answer by chance; a value with a letter is taken from any key.
 3. Hands the test to the tester where it stopped, telling it what was replayed and what the calls were answered, as for a browser.
+
+A replay of an app:
+
+1. Runs each action again, by the selector the tester named its element by, as `type=button label="Sign in"`. An action that cannot finish, such as a tap on an element that is no longer there once the timeout of the target runs out, stops the replay. A read of the tree or of a text is run again too, as what it read can be what a later action typed; a screenshot is not.
+2. Takes a value the tester typed from an earlier tree or text, such as a code the app showed after `label: 'Code: `, from what the replay read there instead, as for a target that answers. A value typed after the tester saw a screenshot, which it may have read off the image, and is not in the task, is a gap.
+3. Begins on the screen the app opens on, which the recording does not check: launch the app afresh before the replay when a test before left it on another screen, as [e2e/ios.yml](e2e/ios.yml) does. Hands the test to the tester where it stopped, from the screen the app is on.
 
 A replay of all of the steps is passed without the judge when it meets the checks of the recording, and judged otherwise.
 

@@ -27,7 +27,7 @@ var pathWait = 3 * time.Second
 
 // Recording is the steps of a scenario test that passed, for a later run
 // to replay without asking the model: those of a browser, and the calls of
-// the targets that answer them, as an API.
+// the targets that answer them, as an API, and the actions of an app.
 type Recording struct {
 	Version int `json:"version"`
 	// Task and Expect are of the test recorded, which a recording is
@@ -526,9 +526,18 @@ func (r *run) handoff(rp Replay, rec *Recording) string {
 	if rp.Stale {
 		b.WriteString(" The application may have changed.")
 	}
-	if r.web != nil {
+	var app *appDriver
+	for _, d := range r.drivers {
+		if a, ok := d.(*appDriver); ok {
+			app = a
+		}
+	}
+	switch {
+	case r.web != nil:
 		fmt.Fprintf(&b, " Carry on with the task from the page the browser is on, %s; read it first.", r.secrets.mask(r.web.url))
-	} else {
+	case app != nil:
+		fmt.Fprintf(&b, " Carry on with the task from the screen the app is on; read it first with %s_tree.", app.p.kind)
+	default:
 		b.WriteString(" Carry on with the task from there.")
 	}
 	return b.String()

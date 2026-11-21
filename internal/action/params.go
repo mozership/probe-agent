@@ -440,9 +440,6 @@ func parse(with map[string]any) (req, error) {
 	if r.Cache != "" && persona {
 		errs = append(errs, errors.New("cache is for scenario tests; a persona test takes another way each run"))
 	}
-	if r.Cache != "" && slices.ContainsFunc(r.kinds(), func(k string) bool { return k == targetIOS || k == targetAndroid }) {
-		errs = append(errs, errors.New("cache is for a test of a browser and of the targets that answer a call; the steps of an app are not recorded"))
-	}
 
 	r.Provider = strings.ToLower(r.Provider)
 	p, compatible := llm.Providers[r.Provider]
