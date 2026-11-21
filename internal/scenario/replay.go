@@ -27,7 +27,7 @@ var pathWait = 3 * time.Second
 
 // Recording is the steps of a scenario test that passed, for a later run
 // to replay without asking the model: those of a browser, and the calls of
-// the targets that answer them, as an API.
+// the targets that answer them, as an API, and the actions of an app.
 type Recording struct {
 	Version int `json:"version"`
 	// Task and Expect are of the test recorded, which a recording is
@@ -422,11 +422,22 @@ func (r *run) checkText(f []observation) string {
 // which a record is given anew each run.
 var mixedToken = regexp.MustCompile(`(?i)\b(?:[a-z][a-z0-9_-]*[0-9]|[0-9][0-9_-]*[a-z])[a-z0-9_-]*\b`)
 
+// frame is where an element of the tree of an app is on the screen, as
+// iOS writes it, {{0.0, 62.0}, {402.0, 54.0}}, and Android, [24,581][40,600],
+// which another device has elsewhere.
+var frame = regexp.MustCompile(`\{\{-?[\d.]+, -?[\d.]+\}, \{[\d.]+, [\d.]+\}\}|\[-?\d+,-?\d+\]\[-?\d+,-?\d+\]`)
+
+// runHeader is a header of a response whose value changes from run to run,
+// as the length of a body that holds an ID, or the date.
+var runHeader = regexp.MustCompile(`(?im)\b(content-length|date|etag|last-modified|age|expires|x-request-id|x-runtime|server-timing|set-cookie):[^\n]*`)
+
 // checkNorm normalizes a text for the checks: a word of letters and digits
 // reads as #, so that a quote of the ID of the record the recorded run
 // made holds on a replay that made another. A number alone is kept, as
-// what a count says.
+// what a count says. Where an element of an app is goes, and the value of
+// a header that changes from run to run reads as #.
 func checkNorm(s string) string {
+	s = runHeader.ReplaceAllString(frame.ReplaceAllString(s, " "), "$1: #")
 	return mixedToken.ReplaceAllString(normalize(s), "#")
 }
 
@@ -526,10 +537,23 @@ func (r *run) handoff(rp Replay, rec *Recording) string {
 	if rp.Stale {
 		b.WriteString(" The application may have changed.")
 	}
+	var from []string
 	if r.web != nil {
-		fmt.Fprintf(&b, " Carry on with the task from the page the browser is on, %s; read it first.", r.secrets.mask(r.web.url))
-	} else {
+		from = append(from, fmt.Sprintf("the page the browser is on, %s, read with read_page", r.secrets.mask(r.web.url)))
+	}
+	for _, d := range r.drivers {
+		if a, ok := d.(*appDriver); ok {
+			from = append(from, fmt.Sprintf("the screen the %s app is on, read with %s_tree", a.p.name, a.p.kind))
+		}
+	}
+	if len(from) == 0 {
 		b.WriteString(" Carry on with the task from there.")
+	} else {
+		read := "it"
+		if len(from) > 1 {
+			read = "each"
+		}
+		fmt.Fprintf(&b, " Carry on with the task from %s; read %s first.", strings.Join(from, ", and "), read)
 	}
 	return b.String()
 }

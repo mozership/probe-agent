@@ -211,7 +211,7 @@ func TestBind(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, refs, gap := r.bind(tc.in, r.answers, r.texts)
+			got, refs, gap := r.bind(tc.in, r.answers, r.texts, func(string) bool { return false })
 			if gap != tc.gap {
 				t.Fatalf("gap %q, want %q", gap, tc.gap)
 			}
@@ -269,5 +269,14 @@ func TestChecks_TakeAnIDOfTheRunAsAnyOther(t *testing.T) {
 	}
 	if checkNorm("3 items") == checkNorm("0 items") {
 		t.Errorf("a count does not tell two quotes apart")
+	}
+}
+
+func TestChecks_TakeAHeaderOfTheRunAsAnyOther(t *testing.T) {
+	if checkNorm("Content-Length: 39") != checkNorm("content-length: 41") || !strings.Contains(checkNorm("HTTP/1.1 200 OK\nContent-Length: 41\nX-Kind: note"), checkNorm("Content-Length: 39")) {
+		t.Errorf("the length of a body tells two quotes apart")
+	}
+	if checkNorm("Content-Type: application/json") == checkNorm("Content-Type: text/html") {
+		t.Errorf("a header that does not change is read as any other")
 	}
 }

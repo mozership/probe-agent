@@ -79,6 +79,10 @@ type appDriver struct {
 	vision bool
 	// device is the device, as the action last said it.
 	device string
+	// looked is whether the tester saw a screenshot of the screen since
+	// the last move that changed it, typing aside: a value it typed then
+	// may have been read off the image.
+	looked bool
 }
 
 var _ Driver = (*appDriver)(nil)
@@ -260,6 +264,9 @@ func (d *appDriver) tool(ctx context.Context, tool string, in appInput) (string,
 		return "", nil, nil, fmt.Errorf("there is no tool %s", tool)
 	}
 	if moves[name] {
+		if name != "type" {
+			d.looked = false
+		}
 		// An app that was ended has no tree to read.
 		if name != "terminate" {
 			actions = append(actions, map[string]any{"name": "tree"})
@@ -283,6 +290,7 @@ func (d *appDriver) tool(ctx context.Context, tool string, in appInput) (string,
 		if err != nil {
 			return "", nil, nil, err
 		}
+		d.looked = true
 		return "", []llm.Image{{MediaType: "image/png", Data: img}}, nil, nil
 	case "text":
 		d.seen(got["text"])

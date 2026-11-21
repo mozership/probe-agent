@@ -134,10 +134,6 @@ func TestParse_RefusesTargets(t *testing.T) {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"android": map[string]any{"app": "a", "args": []any{}}}},
 			want: "unknown parameter targets.android.args",
 		},
-		"a cache with an android app": {
-			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"android": map[string]any{"app": "a"}}},
-			want: "cache is for a test of a browser and of the targets that answer a call",
-		},
 		"no addr of the gRPC API": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"grpc": map[string]any{"tls": true}}},
 			want: "targets.grpc.addr is required",
@@ -281,10 +277,6 @@ func TestParse_RefusesTargets(t *testing.T) {
 		"a bad timeout of the app": {
 			with: map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"ios": map[string]any{"app": "a", "timeout": "soon"}}},
 			want: "targets.ios.timeout",
-		},
-		"a cache with an app": {
-			with: map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": map[string]any{"ios": ios}},
-			want: "cache is for a test of a browser and of the targets that answer a call",
 		},
 	} {
 		_, err := parse(tt.with)
@@ -1227,14 +1219,16 @@ func TestDBGuard_KeepsTheRestOfTheGuard(t *testing.T) {
 	}
 }
 
-func TestParse_ACacheOfTheTargetsThatAnswer(t *testing.T) {
+func TestParse_ACacheOfEachTarget(t *testing.T) {
 	for name, targets := range map[string]map[string]any{
-		"an API":                 {"http": map[string]any{"url": "http://a.test/api"}},
-		"a browser and an API":   {"browser": map[string]any{"url": "http://a.test/"}, "http": map[string]any{"url": "http://a.test/api"}},
-		"a GraphQL API":          {"graphql": map[string]any{"url": "http://a.test/graphql"}},
-		"a gRPC API":             {"grpc": map[string]any{"addr": "a.test:443"}},
-		"a browser and mail":     {"browser": map[string]any{"url": "http://a.test/"}, "mail": map[string]any{"url": "http://mail.test"}},
-		"a browser and database": {"browser": map[string]any{"url": "http://a.test/"}, "db": map[string]any{"dsn": "file:a.db"}},
+		"an API":                  {"http": map[string]any{"url": "http://a.test/api"}},
+		"a browser and an API":    {"browser": map[string]any{"url": "http://a.test/"}, "http": map[string]any{"url": "http://a.test/api"}},
+		"a GraphQL API":           {"graphql": map[string]any{"url": "http://a.test/graphql"}},
+		"a gRPC API":              {"grpc": map[string]any{"addr": "a.test:443"}},
+		"a browser and mail":      {"browser": map[string]any{"url": "http://a.test/"}, "mail": map[string]any{"url": "http://mail.test"}},
+		"a browser and database":  {"browser": map[string]any{"url": "http://a.test/"}, "db": map[string]any{"dsn": "file:a.db"}},
+		"an iOS app":              {"ios": map[string]any{"app": "com.example.app"}},
+		"an Android app and mail": {"android": map[string]any{"app": "com.example.app"}, "mail": map[string]any{"url": "http://mail.test"}},
 	} {
 		if _, err := parse(map[string]any{"task": "t", "expect": "e", "cache": "c.json", "targets": targets}); err != nil {
 			t.Errorf("%s: %v", name, err)

@@ -60,7 +60,53 @@ jobs:
           app: com.android.settings
           device: "{{vars.device}}"
           timeout: 1m
-    test: res.verdict == "pass" && res.targets[0].kind == "android"
+      # The run is recorded afresh, as a recording left by an earlier run of
+      # this workflow by hand would be replayed and not written again.
+      cache: out/cache/android-version.json
+      cache_mode: refresh
+    test: res.verdict == "pass" && res.targets[0].kind == "android" && res.cache.saved
+
+  # The recording of the test before is replayed without the tester, from
+  # the first screen of the app, as the test before left it on another. A
+  # value the tester typed after a screenshot, as into the search of
+  # Settings, is a gap, which a replay hands to the tester as partial. The
+  # search of Settings is of another package, whose screen a launch of
+  # Settings leaves on top, so it is ended first.
+  - name: probe-android ends the search of Settings for the replay
+    uses: android
+    with:
+      app: com.google.android.settings.intelligence
+      device: "{{vars.device}}"
+      timeout: 2m
+      actions:
+      - name: terminate
+    test: res.code == 0
+
+  - name: probe-android launches the app afresh for the replay
+    uses: android
+    with:
+      app: com.android.settings
+      device: "{{vars.device}}"
+      timeout: 2m
+      actions:
+      - name: launch
+      - name: tree
+    test: res.code == 0 && res.results.tree contains "settings_homepage_container"
+
+  - name: The recording of the version of Android is replayed
+    uses: agent
+    timeout: 10m
+    with:
+      task: Find which version of Android the device runs.
+      expect: The screen shows the version of Android.
+      targets:
+        android:
+          app: com.android.settings
+          device: "{{vars.device}}"
+          timeout: 1m
+      cache: out/cache/android-version.json
+      cache_mode: strict
+    test: res.verdict == "pass" && res.cache.status == "hit" && res.cache.replayed > 0
 
   - name: A help page on the web names a section the app opens
     uses: agent
