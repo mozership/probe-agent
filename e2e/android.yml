@@ -69,8 +69,11 @@ jobs:
   # The recording of the test before is replayed without the tester, from
   # the first screen of the app, as the test before left it on another. A
   # value the tester typed after a screenshot, as into the search of
-  # Settings, is a gap, which a replay hands to the tester as partial.
-  - name: probe-android launches the app afresh for the replay
+  # Settings, is a gap, which a replay hands to the tester as partial. The
+  # search of Settings is of another package, whose screen a launch leaves
+  # on top: back leaves it, for the launcher, and activate brings Settings
+  # back on its first screen.
+  - name: probe-android brings the app back to its first screen for the replay
     uses: android
     with:
       app: com.android.settings
@@ -78,7 +81,10 @@ jobs:
       timeout: 2m
       actions:
       - name: launch
-    test: res.code == 0
+      - name: back
+      - name: activate
+      - name: tree
+    test: res.code == 0 && res.results.tree contains "settings_homepage_container"
 
   - name: The recording of the version of Android is replayed
     uses: agent

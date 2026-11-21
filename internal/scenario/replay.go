@@ -422,12 +422,17 @@ func (r *run) checkText(f []observation) string {
 // which a record is given anew each run.
 var mixedToken = regexp.MustCompile(`(?i)\b(?:[a-z][a-z0-9_-]*[0-9]|[0-9][0-9_-]*[a-z])[a-z0-9_-]*\b`)
 
+// frame is where an element of the tree of an app is on the screen, as
+// iOS writes it, {{0.0, 62.0}, {402.0, 54.0}}, and Android, [24,581][40,600],
+// which another device has elsewhere.
+var frame = regexp.MustCompile(`\{\{-?[\d.]+, -?[\d.]+\}, \{[\d.]+, [\d.]+\}\}|\[-?\d+,-?\d+\]\[-?\d+,-?\d+\]`)
+
 // checkNorm normalizes a text for the checks: a word of letters and digits
 // reads as #, so that a quote of the ID of the record the recorded run
 // made holds on a replay that made another. A number alone is kept, as
-// what a count says.
+// what a count says. Where an element of an app is goes.
 func checkNorm(s string) string {
-	return mixedToken.ReplaceAllString(normalize(s), "#")
+	return mixedToken.ReplaceAllString(normalize(frame.ReplaceAllString(s, " ")), "#")
 }
 
 // mintedRun is what changes from run to run in the text of an error: a

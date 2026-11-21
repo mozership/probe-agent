@@ -233,3 +233,17 @@ func TestRun_TheSelectorOfAnActionIsKeptAsTheTesterGaveIt(t *testing.T) {
 		}
 	}
 }
+
+func TestChecks_TakeWhereAnElementOfAnAppIsAsAnyOther(t *testing.T) {
+	for _, pair := range [][2]string{
+		{`NavigationBar, 0x11599d540, {{0.0, 62.0}, {402.0, 54.0}}, identifier: 'About'`, `NavigationBar, 0x600001a2c, {{0.0, 47.0}, {390.0, 44.0}}, identifier: 'About'`},
+		{`TextView id=android:id/summary text="15" [24,581][40,600]`, `TextView id=android:id/summary text="15" [42,1020][80,1060]`},
+	} {
+		if checkNorm(pair[0]) != checkNorm(pair[1]) {
+			t.Errorf("the frames tell %q and %q apart", pair[0], pair[1])
+		}
+	}
+	if checkNorm(`text="15" [24,581][40,600]`) == checkNorm(`text="16" [24,581][40,600]`) {
+		t.Errorf("the frames hide the text")
+	}
+}
