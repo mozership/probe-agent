@@ -233,7 +233,7 @@ func (b *Browser) capture(ctx context.Context, a action) ([]byte, error) {
 	if path == "" {
 		return nil, errors.New("probe-browser saved no screenshot")
 	}
-	defer os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
 	return os.ReadFile(path)
 }
 

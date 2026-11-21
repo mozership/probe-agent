@@ -156,11 +156,6 @@ func config() Config {
 	}
 }
 
-// lastResults returns the results the tester's chat was last sent.
-func lastResults(c *fakeChat) []llm.Result {
-	return c.turns[len(c.turns)-1].Results
-}
-
 func TestRun_PassesWithEvidenceThePagesShowed(t *testing.T) {
 	p := &fakePage{
 		title: "Sign up",
@@ -493,7 +488,7 @@ func (p *catchUpPage) CatchUp(context.Context) {
 // decided, and before the outcome is put together, which has what the
 // page did meanwhile.
 func TestRun_CatchesUpAfterTheJudge(t *testing.T) {
-	p := &catchUpPage{fakePage: fakePage{text: "Welcome"}}
+	p := &catchUpPage{text: "Welcome"}
 	m := &fakeModel{scripts: [][]llm.Reply{
 		{toolCall("1", "finish", map[string]any{"status": "done", "summary": "Done."})},
 		{toolCall("j1", "verdict", map[string]any{"verdict": "pass", "reason": "ok", "evidence": []string{"Welcome"}})},

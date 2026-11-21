@@ -965,9 +965,7 @@ func providerNames() string {
 // hidden.
 func forLog(with map[string]any) map[string]any {
 	out := make(map[string]any, len(with))
-	for k, v := range with {
-		out[k] = v
-	}
+	maps.Copy(out, with)
 	if m, ok := with["secrets"].(map[string]any); ok {
 		hidden := make(map[string]any, len(m))
 		for name := range m {
@@ -983,7 +981,7 @@ func secretName(s string) bool {
 		return false
 	}
 	for _, c := range s {
-		if !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+		if c != '_' && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
 			return false
 		}
 	}
@@ -1022,7 +1020,7 @@ func toStrings(v any) ([]string, error) {
 	var out []string
 	switch l := v.(type) {
 	case string:
-		for _, s := range strings.Split(l, ",") {
+		for s := range strings.SplitSeq(l, ",") {
 			if s = strings.TrimSpace(s); s != "" {
 				out = append(out, s)
 			}

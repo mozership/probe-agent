@@ -69,7 +69,7 @@ func githubIDToken(ctx context.Context, client *http.Client, requestURL, request
 	if err != nil {
 		return "", fmt.Errorf("requesting an OIDC token of GitHub Actions: %w", err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
 		return "", fmt.Errorf("reading the OIDC token of GitHub Actions: %w", err)

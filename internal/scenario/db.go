@@ -281,7 +281,7 @@ func dbText(r DBResult) string {
 		enc.SetEscapeHTML(false)
 		if err := enc.Encode(row); err != nil {
 			line.Reset()
-			line.WriteString(fmt.Sprint(row))
+			_, _ = fmt.Fprint(&line, row)
 		}
 		b.WriteString("\n" + strings.TrimSuffix(line.String(), "\n"))
 	}

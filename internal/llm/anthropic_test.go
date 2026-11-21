@@ -37,7 +37,7 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	io.WriteString(w, a.replies[0])
+	_, _ = io.WriteString(w, a.replies[0])
 	a.replies = a.replies[1:]
 }
 
@@ -182,7 +182,9 @@ func TestAnthropic_ResultsGoBackWithTheReply(t *testing.T) {
 	// An error result has no browser_state, and the result of a tool of
 	// the agent's own names no toolset.
 	var blocks []map[string]any
-	json.Unmarshal(results, &struct{ Content *[]map[string]any }{&blocks})
+	if err := json.Unmarshal(results, &struct{ Content *[]map[string]any }{&blocks}); err != nil {
+		t.Fatal(err)
+	}
 	if len(blocks) == 2 {
 		second, _ := json.Marshal(blocks[1])
 		if strings.Contains(string(second), "browser_state") || strings.Contains(string(second), "toolset_name") {

@@ -54,8 +54,8 @@ Some text.
 	// Another step writes to the summary, and the next test starts a table
 	// anew after it.
 	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
-	fmt.Fprint(f, "\n## Another step\n")
-	f.Close()
+	_, _ = fmt.Fprint(f, "\n## Another step\n")
+	_ = f.Close()
 	if err := writeSummary(path, first, r, usageOutcome(scenario.Blocked, llm.Usage{Requests: 1, InputTokens: 7}), ""); err != nil {
 		t.Fatal(err)
 	}

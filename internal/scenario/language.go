@@ -1,5 +1,7 @@
 package scenario
 
+import "slices"
+
 import "strings"
 
 // japaneseNames are the names a workflow may give Japanese by, in lower
@@ -11,12 +13,7 @@ var japaneseNames = []string{"japanese", "ja", "ja-jp", "ja_jp", "jp", "jpn", "n
 // language they are in English.
 func Japanese(language string) bool {
 	l := strings.ToLower(strings.TrimSpace(language))
-	for _, n := range japaneseNames {
-		if l == n {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(japaneseNames, l)
 }
 
 // blockedReason is the reason of a test the tester was blocked in, with

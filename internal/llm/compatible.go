@@ -366,7 +366,7 @@ func (c *Compatible) post(ctx context.Context, path string, body any, out any) e
 			return fmt.Errorf("%s: %w", c.provider.Name, err)
 		}
 		b, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.provider.Name, err)
 		}

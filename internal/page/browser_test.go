@@ -53,32 +53,32 @@ func server(t *testing.T) *httptest.Server {
 			http.NotFound(w, r)
 			return
 		}
-		fmt.Fprint(w, formPage)
+		_, _ = fmt.Fprint(w, formPage)
 	})
 	mux.HandleFunc("/timed", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `<!doctype html><title>Timed</title><link rel="icon" href="data:,"><p id="out"></p>
+		_, _ = fmt.Fprint(w, `<!doctype html><title>Timed</title><link rel="icon" href="data:,"><p id="out"></p>
 <script>fetch("/slow", {method: "POST"}).then(r => r.text()).then(t => document.getElementById("out").textContent = t)</script>`)
 	})
 	mux.HandleFunc("/popup", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `<!doctype html><title>Popup</title><link rel="icon" href="data:,"><button onclick="setTimeout(() => window.open('/next'), 500)">Open later</button>`)
+		_, _ = fmt.Fprint(w, `<!doctype html><title>Popup</title><link rel="icon" href="data:,"><button onclick="setTimeout(() => window.open('/next'), 500)">Open later</button>`)
 	})
 	mux.HandleFunc("/later", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `<!doctype html><title>Later</title><link rel="icon" href="data:,"><script>setTimeout(() => fetch("/slow", {method: "POST"}), 500)</script>`)
+		_, _ = fmt.Fprint(w, `<!doctype html><title>Later</title><link rel="icon" href="data:,"><script>setTimeout(() => fetch("/slow", {method: "POST"}), 500)</script>`)
 	})
 	mux.HandleFunc("/slow", func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(400 * time.Millisecond)
-		fmt.Fprint(w, "slow answer")
+		_, _ = fmt.Fprint(w, "slow answer")
 	})
 	mux.HandleFunc("/next", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `<!doctype html><title>Next</title><link rel="icon" href="data:,"><h1>Second page</h1><p role="alert">Saved   3 notes</p><ul><li>A <button>Delete</button></li><li>B <button onclick="this.textContent='Gone'">Delete</button></li></ul>`)
+		_, _ = fmt.Fprint(w, `<!doctype html><title>Next</title><link rel="icon" href="data:,"><h1>Second page</h1><p role="alert">Saved   3 notes</p><ul><li>A <button>Delete</button></li><li>B <button onclick="this.textContent='Gone'">Delete</button></li></ul>`)
 	})
 	mux.HandleFunc("/whoami", func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie("sid")
 		if err != nil {
-			fmt.Fprint(w, `<title>nobody</title><link rel="icon" href="data:,">`)
+			_, _ = fmt.Fprint(w, `<title>nobody</title><link rel="icon" href="data:,">`)
 			return
 		}
-		fmt.Fprintf(w, `<title>%s</title><link rel="icon" href="data:,">`, c.Value)
+		_, _ = fmt.Fprintf(w, `<title>%s</title><link rel="icon" href="data:,">`, c.Value)
 	})
 	s := httptest.NewServer(mux)
 	t.Cleanup(s.Close)
@@ -190,7 +190,7 @@ func (nopWriter) Write(p []byte) (int, error) { return len(p), nil }
 func refOf(t *testing.T, read, pattern string) string {
 	t.Helper()
 	re := regexp.MustCompile(regexp.QuoteMeta(pattern) + `.*\[(ref_[a-z]+\d+)\]`)
-	for _, line := range strings.Split(read, "\n") {
+	for line := range strings.SplitSeq(read, "\n") {
 		if m := re.FindStringSubmatch(line); m != nil {
 			return m[1]
 		}
@@ -539,8 +539,7 @@ func TestWithoutPageAtFailure(t *testing.T) {
 	if err.Error() != "click #go: "+refused.Error() {
 		t.Errorf("error %q", err)
 	}
-	var got *actionrpc.Refused
-	if !errors.As(err, &got) {
+	if _, ok := errors.AsType[*actionrpc.Refused](err); !ok {
 		t.Errorf("%v is no longer the refusal", err)
 	}
 	plain := errors.New("plain")

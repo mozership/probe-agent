@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -48,9 +49,7 @@ func TestGitHubActionsFederation_AppliesOnlyInAJobWithTheRule(t *testing.T) {
 		{name: "a token", set: map[string]string{"ANTHROPIC_IDENTITY_TOKEN": "jwt"}},
 	} {
 		env := actionsEnv("https://token.actions.test/?api-version=2.0")
-		for k, v := range tt.set {
-			env[k] = v
-		}
+		maps.Copy(env, tt.set)
 		if _, ok := GitHubActionsFederation(getenv(env), http.DefaultClient); ok != tt.want {
 			t.Errorf("%s: ok %v, want %v", tt.name, ok, tt.want)
 		}
@@ -73,7 +72,7 @@ func TestGitHubActionsFederation_ExchangesANewTokenEachTime(t *testing.T) {
 		issued++
 		n := issued
 		mu.Unlock()
-		fmt.Fprintf(w, `{"count":1,"value":"jwt-%d"}`, n)
+		_, _ = fmt.Fprintf(w, `{"count":1,"value":"jwt-%d"}`, n)
 	}))
 	t.Cleanup(github.Close)
 
@@ -92,12 +91,12 @@ func TestGitHubActionsFederation_ExchangesANewTokenEachTime(t *testing.T) {
 			mu.Lock()
 			assertions = append(assertions, body["assertion"])
 			mu.Unlock()
-			fmt.Fprintf(w, `{"access_token":"access-for-%s","token_type":"Bearer","expires_in":3600}`, body["assertion"])
+			_, _ = fmt.Fprintf(w, `{"access_token":"access-for-%s","token_type":"Bearer","expires_in":3600}`, body["assertion"])
 		case "/v1/messages":
 			if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer access-for-jwt-") {
 				t.Errorf("authorization %q", got)
 			}
-			fmt.Fprint(w, endReply)
+			_, _ = fmt.Fprint(w, endReply)
 		default:
 			t.Errorf("path %s", r.URL.Path)
 			w.WriteHeader(404)

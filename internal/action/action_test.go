@@ -2,6 +2,7 @@ package action
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -111,9 +112,7 @@ func TestParse_Refuses(t *testing.T) {
 func TestParse_Provider(t *testing.T) {
 	base := func(more map[string]any) map[string]any {
 		with := map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/")}
-		for k, v := range more {
-			with[k] = v
-		}
+		maps.Copy(with, more)
 		return with
 	}
 	for _, c := range []struct {
@@ -355,7 +354,9 @@ func TestRecording_RoundTrips(t *testing.T) {
 	if !strings.HasSuffix(string(data), "}\n") || !strings.Contains(string(data), "\n  \"steps\"") {
 		t.Errorf("the recording is not written for a repository to keep:\n%s", data)
 	}
-	os.WriteFile(path, []byte("not json"), 0o644)
+	if err := os.WriteFile(path, []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := loadRecording(path); err == nil {
 		t.Errorf("loaded a broken recording")
 	}

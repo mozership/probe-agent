@@ -102,7 +102,7 @@ var lineText = regexp.MustCompile(`^\s*[\w-]+ ("(?:[^"\\]|\\.)*")`)
 // the lines of its text: what the tester may have read a value off.
 func shownTexts(read string) []string {
 	var out []string
-	for _, line := range strings.Split(read, "\n") {
+	for line := range strings.SplitSeq(read, "\n") {
 		if m := lineText.FindStringSubmatch(line); m != nil {
 			var s string
 			if json.Unmarshal([]byte(m[1]), &s) == nil && s != "" {

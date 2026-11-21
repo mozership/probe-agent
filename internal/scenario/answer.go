@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -245,8 +246,8 @@ func (b binding) valueOf(token, key string) (*Ref, string) {
 	// gives it under none, or under one of an identifier too.
 	number := digitsPattern.MatchString(token)
 	if !number || key == "" || identifier(key) {
-		for i := len(b.answers) - 1; i >= 0; i-- {
-			if ref := keyed(b.answers[i], token, !number); ref != nil {
+		for i, v := range slices.Backward(b.answers) {
+			if ref := keyed(v, token, !number); ref != nil {
 				ref.Step = i + 1
 				return ref, ""
 			}
