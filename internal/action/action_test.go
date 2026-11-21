@@ -354,7 +354,9 @@ func TestRecording_RoundTrips(t *testing.T) {
 	if !strings.HasSuffix(string(data), "}\n") || !strings.Contains(string(data), "\n  \"steps\"") {
 		t.Errorf("the recording is not written for a repository to keep:\n%s", data)
 	}
-	os.WriteFile(path, []byte("not json"), 0o644)
+	if err := os.WriteFile(path, []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := loadRecording(path); err == nil {
 		t.Errorf("loaded a broken recording")
 	}

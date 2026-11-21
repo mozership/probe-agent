@@ -156,11 +156,6 @@ func config() Config {
 	}
 }
 
-// lastResults returns the results the tester's chat was last sent.
-func lastResults(c *fakeChat) []llm.Result {
-	return c.turns[len(c.turns)-1].Results
-}
-
 func TestRun_PassesWithEvidenceThePagesShowed(t *testing.T) {
 	p := &fakePage{
 		title: "Sign up",

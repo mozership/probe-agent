@@ -410,7 +410,7 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 	// goes does not change them back and forth.
 	hit := o.Replay != nil && o.Replay.Status == ReplayHit
 	if cfg.Record && r.replayable() && o.Mode == ModeScenario && o.Verdict == Pass && stopped == StoppedDone &&
-		!(hit && (o.Replay.Checked || cfg.Rejudge)) {
+		(!hit || (!o.Replay.Checked && !cfg.Rejudge)) {
 		rec := r.recording()
 		if hit {
 			c := *cfg.Recording
@@ -682,8 +682,6 @@ func hostOf(raw string) string {
 	}
 	return u.Host
 }
-
-var errNoVerdict = errors.New("the judge gave no verdict")
 
 // catchUpReserve is the time a test of a browser leaves at its end to
 // catch up on what the page did while the judge decided: as long as a

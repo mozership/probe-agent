@@ -551,7 +551,7 @@ var builtinScalars = []string{"String", "Int", "Float", "Boolean", "ID"}
 // own says whether t is a type of the schema itself, not one of
 // introspection, nor a built-in scalar.
 func own(t gqlType) bool {
-	return !strings.HasPrefix(t.Name, "__") && !(t.Kind == "SCALAR" && slices.Contains(builtinScalars, t.Name))
+	return !strings.HasPrefix(t.Name, "__") && (t.Kind != "SCALAR" || !slices.Contains(builtinScalars, t.Name))
 }
 
 func (s *gqlSchema) typeNamed(name string) *gqlType {

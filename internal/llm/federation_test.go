@@ -72,7 +72,7 @@ func TestGitHubActionsFederation_ExchangesANewTokenEachTime(t *testing.T) {
 		issued++
 		n := issued
 		mu.Unlock()
-		fmt.Fprintf(w, `{"count":1,"value":"jwt-%d"}`, n)
+		_, _ = fmt.Fprintf(w, `{"count":1,"value":"jwt-%d"}`, n)
 	}))
 	t.Cleanup(github.Close)
 
@@ -91,12 +91,12 @@ func TestGitHubActionsFederation_ExchangesANewTokenEachTime(t *testing.T) {
 			mu.Lock()
 			assertions = append(assertions, body["assertion"])
 			mu.Unlock()
-			fmt.Fprintf(w, `{"access_token":"access-for-%s","token_type":"Bearer","expires_in":3600}`, body["assertion"])
+			_, _ = fmt.Fprintf(w, `{"access_token":"access-for-%s","token_type":"Bearer","expires_in":3600}`, body["assertion"])
 		case "/v1/messages":
 			if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer access-for-jwt-") {
 				t.Errorf("authorization %q", got)
 			}
-			fmt.Fprint(w, endReply)
+			_, _ = fmt.Fprint(w, endReply)
 		default:
 			t.Errorf("path %s", r.URL.Path)
 			w.WriteHeader(404)

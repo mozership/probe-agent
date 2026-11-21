@@ -178,7 +178,7 @@ func TestCompatible_RefusalAndLength(t *testing.T) {
 func TestCompatible_AnErrorSaysWhatTheProviderSaid(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(400)
-		io.WriteString(w, `{"error": {"message": "Unsupported parameter: reasoning_effort"}}`)
+		_, _ = io.WriteString(w, `{"error": {"message": "Unsupported parameter: reasoning_effort"}}`)
 	}))
 	t.Cleanup(s.Close)
 	p := Providers["openai"]
