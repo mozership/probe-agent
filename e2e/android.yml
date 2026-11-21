@@ -70,10 +70,19 @@ jobs:
   # the first screen of the app, as the test before left it on another. A
   # value the tester typed after a screenshot, as into the search of
   # Settings, is a gap, which a replay hands to the tester as partial. The
-  # search of Settings is of another package, whose screen a launch leaves
-  # on top: back leaves it, for the launcher, and activate brings Settings
-  # back on its first screen.
-  - name: probe-android brings the app back to its first screen for the replay
+  # search of Settings is of another package, whose screen a launch of
+  # Settings leaves on top, so it is ended first.
+  - name: probe-android ends the search of Settings for the replay
+    uses: android
+    with:
+      app: com.google.android.settings.intelligence
+      device: "{{vars.device}}"
+      timeout: 2m
+      actions:
+      - name: terminate
+    test: res.code == 0
+
+  - name: probe-android launches the app afresh for the replay
     uses: android
     with:
       app: com.android.settings
@@ -81,8 +90,6 @@ jobs:
       timeout: 2m
       actions:
       - name: launch
-      - name: back
-      - name: activate
       - name: tree
     test: res.code == 0 && res.results.tree contains "settings_homepage_container"
 

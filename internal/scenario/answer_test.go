@@ -271,3 +271,12 @@ func TestChecks_TakeAnIDOfTheRunAsAnyOther(t *testing.T) {
 		t.Errorf("a count does not tell two quotes apart")
 	}
 }
+
+func TestChecks_TakeAHeaderOfTheRunAsAnyOther(t *testing.T) {
+	if checkNorm("Content-Length: 39") != checkNorm("content-length: 41") || !strings.Contains(checkNorm("HTTP/1.1 200 OK\nContent-Length: 41\nX-Kind: note"), checkNorm("Content-Length: 39")) {
+		t.Errorf("the length of a body tells two quotes apart")
+	}
+	if checkNorm("Content-Type: application/json") == checkNorm("Content-Type: text/html") {
+		t.Errorf("a header that does not change is read as any other")
+	}
+}

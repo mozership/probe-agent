@@ -427,12 +427,18 @@ var mixedToken = regexp.MustCompile(`(?i)\b(?:[a-z][a-z0-9_-]*[0-9]|[0-9][0-9_-]
 // which another device has elsewhere.
 var frame = regexp.MustCompile(`\{\{-?[\d.]+, -?[\d.]+\}, \{[\d.]+, [\d.]+\}\}|\[-?\d+,-?\d+\]\[-?\d+,-?\d+\]`)
 
+// runHeader is a header of a response whose value changes from run to run,
+// as the length of a body that holds an ID, or the date.
+var runHeader = regexp.MustCompile(`(?im)\b(content-length|date|etag|last-modified|age|expires|x-request-id|x-runtime|server-timing|set-cookie):[^\n]*`)
+
 // checkNorm normalizes a text for the checks: a word of letters and digits
 // reads as #, so that a quote of the ID of the record the recorded run
 // made holds on a replay that made another. A number alone is kept, as
-// what a count says. Where an element of an app is goes.
+// what a count says. Where an element of an app is goes, and the value of
+// a header that changes from run to run reads as #.
 func checkNorm(s string) string {
-	return mixedToken.ReplaceAllString(normalize(frame.ReplaceAllString(s, " ")), "#")
+	s = runHeader.ReplaceAllString(frame.ReplaceAllString(s, " "), "$1: #")
+	return mixedToken.ReplaceAllString(normalize(s), "#")
 }
 
 // mintedRun is what changes from run to run in the text of an error: a
