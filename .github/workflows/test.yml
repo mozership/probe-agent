@@ -80,7 +80,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-evidence
-          path: out/agent
+          path: |
+            out/agent
+            out/cache
       - name: What the server logged
         if: always()
         run: cat "$RUNNER_TEMP/server.txt"
@@ -154,7 +156,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-ios-evidence
-          path: out/agent
+          path: |
+            out/agent
+            out/cache
 
   # The action driving the Settings app of an Android emulator through
   # probe-android, alone and beside a browser, with a real model. The
@@ -224,7 +228,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-android-evidence
-          path: out/agent
+          path: |
+            out/agent
+            out/cache
       - name: What the server logged
         if: always()
         run: cat "$RUNNER_TEMP/server.txt"

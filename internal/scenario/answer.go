@@ -109,9 +109,15 @@ func (r *run) recordCall(d replayer, call llm.Call, res llm.Result, texts int) {
 	}
 	in, _ = r.secrets.maskAny(in).(map[string]any)
 	seen := r.texts[:min(texts, len(r.texts))]
+	// The keys a target names a thing of its own by, as the selector of an
+	// element of an app, are kept as the tester gave them.
+	literal := func(string) bool { return false }
+	if l, ok := d.(interface{ literal(key string) bool }); ok {
+		literal = l.literal
+	}
 	bound := func(answers []string) Recorded {
 		rec := Recorded{Target: d.Kind(), Tool: call.Name, Outcome: d.outcome(call, res)}
-		rec.Input, rec.Refs, rec.Gap = r.bind(in, answers, seen)
+		rec.Input, rec.Refs, rec.Gap = r.bind(in, answers, seen, literal)
 		if rec.Gap != "" {
 			// The input holds a value of this run, which is not kept.
 			rec.Input, rec.Refs = nil, nil
@@ -162,8 +168,9 @@ type binding struct {
 
 // bind returns the input with each value taken from an earlier answer as
 // {answer:N}, and where those values are; or why the input holds a value
-// of this run that cannot be taken again.
-func (r *run) bind(in map[string]any, answers, seen []string) (map[string]any, []Ref, string) {
+// of this run that cannot be taken again. The values of the keys of the
+// input literal says are kept as they are.
+func (r *run) bind(in map[string]any, answers, seen []string, literal func(string) bool) (map[string]any, []Ref, string) {
 	b := binding{instruction: flatten(r.secrets.mask(r.cfg.Task) + "\n" + r.secrets.mask(r.cfg.Expect)), answers: answers, seen: seen}
 	var refs []Ref
 	gap := ""
@@ -199,8 +206,15 @@ func (r *run) bind(in map[string]any, answers, seen []string) (map[string]any, [
 		}
 		return v
 	}
-	out, _ := walk("", in).(map[string]any)
-	return out, refs, gap
+	top := make(map[string]any, len(in))
+	for _, k := range slices.Sorted(maps.Keys(in)) {
+		if literal(k) {
+			top[k] = in[k]
+		} else {
+			top[k] = walk(k, in[k])
+		}
+	}
+	return top, refs, gap
 }
 
 // bindString binds the values of a string of an input.

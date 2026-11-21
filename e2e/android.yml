@@ -60,11 +60,16 @@ jobs:
           app: com.android.settings
           device: "{{vars.device}}"
           timeout: 1m
+      # The run is recorded afresh, as a recording left by an earlier run of
+      # this workflow by hand would be replayed and not written again.
       cache: out/cache/android-version.json
+      cache_mode: refresh
     test: res.verdict == "pass" && res.targets[0].kind == "android" && res.cache.saved
 
   # The recording of the test before is replayed without the tester, from
-  # the first screen of the app, as the test before left it on another.
+  # the first screen of the app, as the test before left it on another. A
+  # value the tester typed after a screenshot, as into the search of
+  # Settings, is a gap, which a replay hands to the tester as partial.
   - name: probe-android launches the app afresh for the replay
     uses: android
     with:

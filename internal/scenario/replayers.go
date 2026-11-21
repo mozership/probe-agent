@@ -132,12 +132,17 @@ func (d *appDriver) reads(call llm.Call) bool {
 	return false
 }
 
+// literal says the selector is kept as the tester gave it: it names the
+// element by what the app shows, which a replay finds it by again, and not
+// by where it was in an earlier tree.
+func (d *appDriver) literal(key string) bool { return key == "selector" }
+
 // gap says why a value the tester typed into the app is this run's, when
 // it is not in the instruction and the tester had seen a screenshot of the
-// screen, whose text it may have read; or "".
+// screen it typed on, whose text it may have read; or "".
 func (d *appDriver) gap(call llm.Call, in map[string]any, instruction string) string {
 	v, _ := in["value"].(string)
-	if call.Name != d.p.kind+"_type" || !d.pixels || derived(v, instruction, nil, true) == "" {
+	if call.Name != d.p.kind+"_type" || !d.looked || derived(v, instruction, nil, true) == "" {
 		return ""
 	}
 	return "its value may have been read off a screenshot of the screen"

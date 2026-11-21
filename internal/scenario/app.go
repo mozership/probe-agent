@@ -80,9 +80,9 @@ type appDriver struct {
 	// device is the device, as the action last said it.
 	device string
 	// looked is whether the tester saw a screenshot of the screen since
-	// the last move, and pixels whether it had seen one before the last
-	// move: a value it typed then may have been read off the image.
-	looked, pixels bool
+	// the last move that changed it, typing aside: a value it typed then
+	// may have been read off the image.
+	looked bool
 }
 
 var _ Driver = (*appDriver)(nil)
@@ -264,7 +264,9 @@ func (d *appDriver) tool(ctx context.Context, tool string, in appInput) (string,
 		return "", nil, nil, fmt.Errorf("there is no tool %s", tool)
 	}
 	if moves[name] {
-		d.pixels, d.looked = d.looked, false
+		if name != "type" {
+			d.looked = false
+		}
 		// An app that was ended has no tree to read.
 		if name != "terminate" {
 			actions = append(actions, map[string]any{"name": "tree"})

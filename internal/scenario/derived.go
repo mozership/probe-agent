@@ -44,7 +44,8 @@ var dateOrTime = regexp.MustCompile(`(?i)` + strings.Join([]string{
 // the elements the pages showed, and pixels is whether the tester was
 // shown a screenshot of the page.
 func derived(value, instruction string, shown []string, pixels bool) string {
-	needle := flatten(value)
+	// A secret is the test's, whatever was shown.
+	needle := flatten(placeholder.ReplaceAllString(value, " "))
 	if needle == "" || strings.Contains(flatten(instruction), needle) {
 		return ""
 	}

@@ -305,8 +305,8 @@ func Run(ctx context.Context, cfg Config, t Targets, m llm.Model) (Outcome, erro
 
 	o := Outcome{Mode: cfg.Mode(), Model: m.Name()}
 	var stopped, summary string
-	// A recording is of the steps of a browser, and of the calls of the
-	// targets that answer them, as an API.
+	// A recording is of the steps of a browser, the actions of an app, and
+	// the calls of the targets that answer them, as an API.
 	if rec := cfg.Recording; rec != nil && o.Mode == ModeScenario && r.replayable() {
 		o.Replay = &Replay{Status: ReplayMiss, Reason: r.usable(rec)}
 		if o.Replay.Reason == "" {

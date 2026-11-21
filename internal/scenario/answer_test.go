@@ -211,7 +211,7 @@ func TestBind(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, refs, gap := r.bind(tc.in, r.answers, r.texts)
+			got, refs, gap := r.bind(tc.in, r.answers, r.texts, func(string) bool { return false })
 			if gap != tc.gap {
 				t.Fatalf("gap %q, want %q", gap, tc.gap)
 			}

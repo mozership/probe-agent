@@ -526,19 +526,23 @@ func (r *run) handoff(rp Replay, rec *Recording) string {
 	if rp.Stale {
 		b.WriteString(" The application may have changed.")
 	}
-	var app *appDriver
+	var from []string
+	if r.web != nil {
+		from = append(from, fmt.Sprintf("the page the browser is on, %s, read with read_page", r.secrets.mask(r.web.url)))
+	}
 	for _, d := range r.drivers {
 		if a, ok := d.(*appDriver); ok {
-			app = a
+			from = append(from, fmt.Sprintf("the screen the %s app is on, read with %s_tree", a.p.name, a.p.kind))
 		}
 	}
-	switch {
-	case r.web != nil:
-		fmt.Fprintf(&b, " Carry on with the task from the page the browser is on, %s; read it first.", r.secrets.mask(r.web.url))
-	case app != nil:
-		fmt.Fprintf(&b, " Carry on with the task from the screen the app is on; read it first with %s_tree.", app.p.kind)
-	default:
+	if len(from) == 0 {
 		b.WriteString(" Carry on with the task from there.")
+	} else {
+		read := "it"
+		if len(from) > 1 {
+			read = "each"
+		}
+		fmt.Fprintf(&b, " Carry on with the task from %s; read %s first.", strings.Join(from, ", and "), read)
 	}
 	return b.String()
 }

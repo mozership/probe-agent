@@ -112,7 +112,7 @@ func TestRun_AnElementTheAppNoLongerHasHandsTheTestOver(t *testing.T) {
 		t.Fatalf("replay %+v", o.Replay)
 	}
 	prompt := m.chats[0].opts.Prompt
-	for _, want := range []string{"2. ios_type of ios", "from the screen the app is on; read it first with ios_tree"} {
+	for _, want := range []string{"2. ios_type of ios", "from the screen the iOS app is on, read with ios_tree; read it first."} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("the tester's prompt lacks %q:\n%s", want, prompt)
 		}
@@ -171,8 +171,11 @@ func TestRun_AValueTypedAfterAScreenshotIsAGap(t *testing.T) {
 		{
 			toolCall("1", "ios_screenshot", map[string]any{}),
 			toolCall("2", "ios_type", map[string]any{"selector": "code", "value": "QX7-PLM"}),
-			toolCall("3", "ios_type", map[string]any{"selector": "email", "value": "{secret:EMAIL}"}),
-			toolCall("4", "finish", map[string]any{"status": "done", "summary": "Typed."}),
+			toolCall("3", "ios_type", map[string]any{"selector": "name", "value": "ZK4-RTW"}),
+			toolCall("4", "ios_type", map[string]any{"selector": "email", "value": "{secret:EMAIL}"}),
+			toolCall("5", "ios_tap", map[string]any{"selector": "next"}),
+			toolCall("6", "ios_type", map[string]any{"selector": "note", "value": "Buy milk"}),
+			toolCall("7", "finish", map[string]any{"status": "done", "summary": "Typed."}),
 		},
 		{toolCall("j1", "verdict", map[string]any{"verdict": "pass", "reason": "r", "evidence": []string{"Welcome back, Alice!"}})},
 	}}
@@ -185,14 +188,48 @@ func TestRun_AValueTypedAfterAScreenshotIsAGap(t *testing.T) {
 	if o.Recording == nil {
 		t.Fatalf("verdict %s (%s), no recording", o.Verdict, o.Reason)
 	}
-	// The screenshot is not a step; the value typed after it is a gap,
-	// and the secret typed after another move is not.
+	// The screenshot is not a step. The values typed on the screen it
+	// showed are gaps, as typing does not change the screen, but for the
+	// secret, which is the test's; the value typed after a tap is not.
 	steps := o.Recording.Steps
-	if len(steps) != 2 || steps[0].Gap == "" || steps[0].Input != nil || steps[1].Gap != "" {
+	if len(steps) != 5 {
 		t.Fatalf("steps %+v", steps)
 	}
+	for i, gap := range []bool{true, true, false, false, false} {
+		if (steps[i].Gap != "") != gap || (gap && steps[i].Input != nil) {
+			t.Errorf("step %d %+v, want a gap %v", i+1, steps[i], gap)
+		}
+	}
 	b, _ := json.Marshal(o.Recording)
-	if strings.Contains(string(b), "QX7-PLM") {
-		t.Errorf("the recording holds the value of the gap: %s", b)
+	if strings.Contains(string(b), "QX7-PLM") || strings.Contains(string(b), "ZK4-RTW") {
+		t.Errorf("the recording holds the value of a gap: %s", b)
+	}
+}
+
+func TestRun_TheSelectorOfAnActionIsKeptAsTheTesterGaveIt(t *testing.T) {
+	tree := "Application, label: 'Orders'\n  Cell, identifier: 'cell_1041'\n  Cell, identifier: 'cell_1042', label: 'Order 1042'"
+	m := &fakeModel{scripts: [][]llm.Reply{
+		{
+			toolCall("1", "ios_tree", map[string]any{}),
+			toolCall("2", "ios_tap", map[string]any{"selector": "cell_1042"}),
+			toolCall("3", "ios_tap", map[string]any{"selector": `type=cell label="Order 1042"`}),
+			toolCall("4", "finish", map[string]any{"status": "done", "summary": "Opened it."}),
+		},
+		{toolCall("j1", "verdict", map[string]any{"verdict": "pass", "reason": "r", "evidence": []string{"Orders"}})},
+	}}
+	cfg := appConfig()
+	cfg.Record = true
+	o, err := Run(t.Context(), cfg, Targets{IOS: (&fakeIOS{t: t, tree: tree}).target()}, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Recording == nil || len(o.Recording.Steps) != 3 {
+		t.Fatalf("verdict %s (%s), recording %+v", o.Verdict, o.Reason, o.Recording)
+	}
+	for i, want := range []string{"cell_1042", `type=cell label="Order 1042"`} {
+		s := o.Recording.Steps[i+1]
+		if s.Input["selector"] != want || len(s.Refs) != 0 || s.Gap != "" {
+			t.Errorf("step %d %+v, want the selector %s", i+2, s, want)
+		}
 	}
 }
