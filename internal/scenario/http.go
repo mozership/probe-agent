@@ -383,7 +383,7 @@ func responseText(method, u string, r HTTPResponse) string {
 // http action keeps the cookies for the next request all the same.
 func cookieValuesHidden(header string) string {
 	var cookies []string
-	for _, c := range strings.Split(header, ", ") {
+	for c := range strings.SplitSeq(header, ", ") {
 		parts := strings.Split(c, ";")
 		if name, _, ok := strings.Cut(parts[0], "="); ok && !strings.Contains(name, " ") {
 			parts[0] = name + "=<hidden>"

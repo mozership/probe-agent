@@ -108,7 +108,7 @@ func routeParts(location string) (origin string, segments, terms []string, ok bo
 		query = strings.Trim(query+"&"+fquery, "&")
 	}
 
-	for _, raw := range strings.Split(path, "/") {
+	for raw := range strings.SplitSeq(path, "/") {
 		if raw == "" {
 			continue
 		}
@@ -121,7 +121,7 @@ func routeParts(location string) (origin string, segments, terms []string, ok bo
 		}
 		segments = append(segments, s)
 	}
-	for _, pair := range strings.Split(query, "&") {
+	for pair := range strings.SplitSeq(query, "&") {
 		if pair == "" {
 			continue
 		}

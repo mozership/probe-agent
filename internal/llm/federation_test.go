@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -48,9 +49,7 @@ func TestGitHubActionsFederation_AppliesOnlyInAJobWithTheRule(t *testing.T) {
 		{name: "a token", set: map[string]string{"ANTHROPIC_IDENTITY_TOKEN": "jwt"}},
 	} {
 		env := actionsEnv("https://token.actions.test/?api-version=2.0")
-		for k, v := range tt.set {
-			env[k] = v
-		}
+		maps.Copy(env, tt.set)
 		if _, ok := GitHubActionsFederation(getenv(env), http.DefaultClient); ok != tt.want {
 			t.Errorf("%s: ok %v, want %v", tt.name, ok, tt.want)
 		}

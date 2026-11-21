@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -32,8 +33,7 @@ func (f *fakeMail) search(_ context.Context, q MailQuery) (MailList, error) {
 		return MailList{}, f.err
 	}
 	var list MailList
-	for i := len(f.mails) - 1; i >= 0; i-- {
-		m := f.mails[i]
+	for i, m := range slices.Backward(f.mails) {
 		if i < len(f.arrivals) && f.arrivals[i] > len(f.searches) {
 			continue
 		}
@@ -69,10 +69,10 @@ func TestRun_ReadsAMailbox(t *testing.T) {
 	past := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	box := &fakeMail{
 		mails: []MailMessage{
-			{MailSummary: MailSummary{ID: "m1", From: []string{"news@acme.test"}, To: []string{"bob@example.com"}, Subject: "Old news", Received: past}},
+			{ID: "m1", From: []string{"news@acme.test"}, To: []string{"bob@example.com"}, Subject: "Old news", Received: past},
 			{
-				MailSummary: MailSummary{ID: "m2", From: []string{"Acme <no-reply@acme.test>"}, To: []string{"alice@example.com"}, Subject: "Confirm your address", Received: time.Now().Add(time.Hour), Preview: "Hello,\n  open the link"},
-				HTML:        `<html><head><style>p{}</style></head><body><p>Hello Alice,</p><p>Your code is hunter2-long. <a href="https://app.test/confirm?t=1">Confirm</a></p></body></html>`,
+				ID: "m2", From: []string{"Acme <no-reply@acme.test>"}, To: []string{"alice@example.com"}, Subject: "Confirm your address", Received: time.Now().Add(time.Hour), Preview: "Hello,\n  open the link",
+				HTML: `<html><head><style>p{}</style></head><body><p>Hello Alice,</p><p>Your code is hunter2-long. <a href="https://app.test/confirm?t=1">Confirm</a></p></body></html>`,
 			},
 		},
 		// The mail to confirm comes on the fifth search: the two of Open,
@@ -196,9 +196,9 @@ func TestMail_NewOnlyIsByTheClockOfTheServer(t *testing.T) {
 	// The clock of the server is an hour behind that of the agent.
 	behind := time.Now().Add(-time.Hour).Truncate(time.Second)
 	box := &fakeMail{mails: []MailMessage{
-		{MailSummary: MailSummary{ID: "m0", Subject: "Older", Received: behind}},
-		{MailSummary: MailSummary{ID: "m1", Subject: "Old", Received: behind}},
-		{MailSummary: MailSummary{ID: "m2", Subject: "New", Received: behind}},
+		{ID: "m0", Subject: "Older", Received: behind},
+		{ID: "m1", Subject: "Old", Received: behind},
+		{ID: "m2", Subject: "New", Received: behind},
 	}, arrivals: []int{0, 0, 3}}
 	d := newMailDriver(newLedger(config()), *box.target())
 	if err := d.Open(t.Context()); err != nil {
@@ -236,7 +236,7 @@ func TestMail_NewOnlyIsByTheClockOfTheServer(t *testing.T) {
 
 func TestMailText(t *testing.T) {
 	// A mail of text alone, with a link in angle brackets and no date.
-	got := mailText(MailMessage{MailSummary: MailSummary{From: []string{"a@x.test"}, Subject: "Hi"}, Text: "Confirm here:\n<https://example.com/confirm?token=abc>\nSupport <support@example.com>."})
+	got := mailText(MailMessage{From: []string{"a@x.test"}, Subject: "Hi", Text: "Confirm here:\n<https://example.com/confirm?token=abc>\nSupport <support@example.com>."})
 	want := "From: a@x.test\nTo: \nSubject: Hi\n\nConfirm here:\n<https://example.com/confirm?token=abc>\nSupport <support@example.com>.\n\nLinks:\n- https://example.com/confirm?token=abc"
 	if got != want {
 		t.Errorf("mail:\n%s\nwant:\n%s", got, want)

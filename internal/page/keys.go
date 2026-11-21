@@ -31,7 +31,7 @@ var modifierNamesOf = map[string]string{
 // as "Control+a Delete".
 func keyNames(keys string) (string, error) {
 	var chords []string
-	for _, field := range strings.Fields(keys) {
+	for field := range strings.FieldsSeq(keys) {
 		parts := strings.Split(field, "+")
 		var names []string
 		for _, m := range parts[:len(parts)-1] {

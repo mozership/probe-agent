@@ -714,7 +714,7 @@ func comment(b *strings.Builder, indent, desc string) {
 	if desc == "" {
 		return
 	}
-	for _, line := range strings.Split(desc, "\n") {
+	for line := range strings.SplitSeq(desc, "\n") {
 		b.WriteString(strings.TrimRight(indent+"# "+line, " ") + "\n")
 	}
 }

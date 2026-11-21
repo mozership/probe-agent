@@ -2,6 +2,7 @@ package action
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -111,9 +112,7 @@ func TestParse_Refuses(t *testing.T) {
 func TestParse_Provider(t *testing.T) {
 	base := func(more map[string]any) map[string]any {
 		with := map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/")}
-		for k, v := range more {
-			with[k] = v
-		}
+		maps.Copy(with, more)
 		return with
 	}
 	for _, c := range []struct {

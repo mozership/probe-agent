@@ -190,7 +190,7 @@ func (nopWriter) Write(p []byte) (int, error) { return len(p), nil }
 func refOf(t *testing.T, read, pattern string) string {
 	t.Helper()
 	re := regexp.MustCompile(regexp.QuoteMeta(pattern) + `.*\[(ref_[a-z]+\d+)\]`)
-	for _, line := range strings.Split(read, "\n") {
+	for line := range strings.SplitSeq(read, "\n") {
 		if m := re.FindStringSubmatch(line); m != nil {
 			return m[1]
 		}
@@ -539,8 +539,7 @@ func TestWithoutPageAtFailure(t *testing.T) {
 	if err.Error() != "click #go: "+refused.Error() {
 		t.Errorf("error %q", err)
 	}
-	var got *actionrpc.Refused
-	if !errors.As(err, &got) {
+	if _, ok := errors.AsType[*actionrpc.Refused](err); !ok {
 		t.Errorf("%v is no longer the refusal", err)
 	}
 	plain := errors.New("plain")
