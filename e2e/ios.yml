@@ -68,7 +68,40 @@ jobs:
           app: com.apple.Preferences
           device: "{{vars.device}}"
           timeout: 2m
-    test: res.verdict == "pass" && res.targets[0].kind == "ios"
+      # The run is recorded afresh, as a recording left by an earlier run of
+      # this workflow by hand would be replayed and not written again.
+      cache: out/cache/ios-version.json
+      cache_mode: refresh
+    test: res.verdict == "pass" && res.targets[0].kind == "ios" && res.cache.saved
+
+  # The recording of the test before is replayed without the tester, from
+  # the first screen of the app, as the test before left it on another. A
+  # value the tester typed after a screenshot, as into the search of
+  # Settings, is a gap, which a replay hands to the tester as partial.
+  - name: probe-ios launches the app afresh for the replay
+    uses: ios
+    with:
+      app: com.apple.Preferences
+      device: "{{vars.device}}"
+      timeout: 3m
+      actions:
+      - name: launch
+    test: res.code == 0
+
+  - name: The recording of the version of iOS is replayed
+    uses: agent
+    timeout: 15m
+    with:
+      task: Find which version of iOS the iPhone runs.
+      expect: The screen shows the version of iOS.
+      targets:
+        ios:
+          app: com.apple.Preferences
+          device: "{{vars.device}}"
+          timeout: 2m
+      cache: out/cache/ios-version.json
+      cache_mode: strict
+    test: res.verdict == "pass" && res.cache.status == "hit" && res.cache.replayed > 0
 
   - name: A help page on the web names a section the app opens
     uses: agent

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -93,7 +94,9 @@ func keyValue(key string) *regexp.Regexp {
 // texts is how many texts the targets had shown before the call, which its
 // own answer is not among.
 func (r *run) recordCall(d replayer, call llm.Call, res llm.Result, texts int) {
-	if res.IsError {
+	// A call that only showed an image, as a screenshot, changed nothing
+	// and answered nothing a later call can take a value from.
+	if res.IsError || (res.Text == "" && len(res.Images) > 0) {
 		return
 	}
 	// The numbers are kept as they were written, as an ID of 64 bits
@@ -106,9 +109,15 @@ func (r *run) recordCall(d replayer, call llm.Call, res llm.Result, texts int) {
 	}
 	in, _ = r.secrets.maskAny(in).(map[string]any)
 	seen := r.texts[:min(texts, len(r.texts))]
+	// The keys a target names a thing of its own by, as the selector of an
+	// element of an app, are kept as the tester gave them.
+	literal := func(string) bool { return false }
+	if l, ok := d.(interface{ literal(key string) bool }); ok {
+		literal = l.literal
+	}
 	bound := func(answers []string) Recorded {
 		rec := Recorded{Target: d.Kind(), Tool: call.Name, Outcome: d.outcome(call, res)}
-		rec.Input, rec.Refs, rec.Gap = r.bind(in, answers, seen)
+		rec.Input, rec.Refs, rec.Gap = r.bind(in, answers, seen, literal)
 		if rec.Gap != "" {
 			// The input holds a value of this run, which is not kept.
 			rec.Input, rec.Refs = nil, nil
@@ -116,6 +125,13 @@ func (r *run) recordCall(d replayer, call llm.Call, res llm.Result, texts int) {
 		return rec
 	}
 	rec := bound(r.answers)
+	if g, ok := d.(interface {
+		gap(call llm.Call, in map[string]any, instruction string) string
+	}); ok && rec.Gap == "" {
+		if why := g.gap(call, in, r.secrets.mask(r.cfg.Task)+"\n"+r.secrets.mask(r.cfg.Expect)); why != "" {
+			rec.Input, rec.Refs, rec.Gap = nil, nil, why
+		}
+	}
 	// A call sent again, as to wait for an export, is bound to what the
 	// call before it was bound to, not to that call's answer.
 	if n := len(r.recorded); n > 0 && d.reads(call) && r.recorded[n-1].Target == d.Kind() {
@@ -152,8 +168,9 @@ type binding struct {
 
 // bind returns the input with each value taken from an earlier answer as
 // {answer:N}, and where those values are; or why the input holds a value
-// of this run that cannot be taken again.
-func (r *run) bind(in map[string]any, answers, seen []string) (map[string]any, []Ref, string) {
+// of this run that cannot be taken again. The values of the keys of the
+// input literal says are kept as they are.
+func (r *run) bind(in map[string]any, answers, seen []string, literal func(string) bool) (map[string]any, []Ref, string) {
 	b := binding{instruction: flatten(r.secrets.mask(r.cfg.Task) + "\n" + r.secrets.mask(r.cfg.Expect)), answers: answers, seen: seen}
 	var refs []Ref
 	gap := ""
@@ -161,9 +178,11 @@ func (r *run) bind(in map[string]any, answers, seen []string) (map[string]any, [
 	walk = func(key string, v any) any {
 		switch v := v.(type) {
 		case map[string]any:
+			// The keys in order, so that the values are numbered alike on
+			// each run, and a recording is not written again for nothing.
 			out := make(map[string]any, len(v))
-			for k, e := range v {
-				out[k] = walk(k, e)
+			for _, k := range slices.Sorted(maps.Keys(v)) {
+				out[k] = walk(k, v[k])
 			}
 			return out
 		case []any:
@@ -187,8 +206,15 @@ func (r *run) bind(in map[string]any, answers, seen []string) (map[string]any, [
 		}
 		return v
 	}
-	out, _ := walk("", in).(map[string]any)
-	return out, refs, gap
+	top := make(map[string]any, len(in))
+	for _, k := range slices.Sorted(maps.Keys(in)) {
+		if literal(k) {
+			top[k] = in[k]
+		} else {
+			top[k] = walk(k, in[k])
+		}
+	}
+	return top, refs, gap
 }
 
 // bindString binds the values of a string of an input.
@@ -432,7 +458,8 @@ func (r *run) driverOfKind(kind string) Driver {
 }
 
 // replayable says whether the steps of the test can be recorded and
-// replayed: those of a browser, and of the targets that answer a call.
+// replayed: those of a browser, of an app, and of the targets that answer
+// a call.
 func (r *run) replayable() bool {
 	for _, d := range r.drivers {
 		if _, ok := d.(replayer); !ok && d != Driver(r.web) {

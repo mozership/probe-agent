@@ -18,6 +18,7 @@ var (
 	_ replayer = (*graphqlDriver)(nil)
 	_ replayer = (*mailDriver)(nil)
 	_ replayer = (*dbDriver)(nil)
+	_ replayer = (*appDriver)(nil)
 )
 
 // outcome of a request is the status code of its response.
@@ -116,3 +117,33 @@ func (d *dbDriver) outcome(call llm.Call, res llm.Result) string {
 
 // reads is true: the database is only read.
 func (d *dbDriver) reads(llm.Call) bool { return true }
+
+// outcome of an action of an app is ok: one that cannot finish, as a tap
+// on an element that is not there, is an error, which stops a replay.
+func (d *appDriver) outcome(llm.Call, llm.Result) string { return "ok" }
+
+// reads says whether the call reads the screen, or waits for an element.
+func (d *appDriver) reads(call llm.Call) bool {
+	name, _ := strings.CutPrefix(call.Name, d.p.kind+"_")
+	switch name {
+	case "tree", "text", "wait", "screenshot":
+		return true
+	}
+	return false
+}
+
+// literal says the selector is kept as the tester gave it: it names the
+// element by what the app shows, which a replay finds it by again, and not
+// by where it was in an earlier tree.
+func (d *appDriver) literal(key string) bool { return key == "selector" }
+
+// gap says why a value the tester typed into the app is this run's, when
+// it is not in the instruction and the tester had seen a screenshot of the
+// screen it typed on, whose text it may have read; or "".
+func (d *appDriver) gap(call llm.Call, in map[string]any, instruction string) string {
+	v, _ := in["value"].(string)
+	if call.Name != d.p.kind+"_type" || !d.looked || derived(v, instruction, nil, true) == "" {
+		return ""
+	}
+	return "its value may have been read off a screenshot of the screen"
+}
