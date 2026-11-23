@@ -171,7 +171,11 @@ func startBrowser(t *testing.T, o Options) *Browser {
 			_ = syscall.Kill(-p.PID, syscall.SIGKILL)
 		}
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// The browser starts within startTimeout, as the agent lets it: a call
+	// bounds the start by its context too, and Chrome takes more than half
+	// a minute to start on a CI runner that runs the packages at once, under
+	// the race detector.
+	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
 	defer cancel()
 	if _, _, err := b.State(ctx); err != nil {
 		if strings.Contains(err.Error(), "executable file not found") || strings.Contains(err.Error(), "browser did not start") {
