@@ -11,6 +11,19 @@
 #
 # DEVICE names the emulator when adb lists more than one device. The calls
 # of probe-android and probe-browser need Probe v1.37.0 or later.
+#
+# The version of Android is found once by the tester, and recorded under
+# out/cache, and then e2e/cache/android-version.json is replayed in strict
+# mode. The tester takes another way each run, at times one that goes by a
+# screen which came only by chance, as a tap on a search result made before
+# the results settled, which went back to the home screen; a replay of that
+# way meets the screen it should have met, and is stale. The recording
+# committed takes the plain way, waiting for the results before the tap, so
+# that the replay is the same each run. When Settings changes so that it no
+# longer matches, run this workflow, and commit the recording the tester
+# left under out/cache in its place, once it takes the plain way:
+#
+#   cp out/cache/android-version.json e2e/cache/android-version.json
 name: probe-agent against an Android app
 
 actions:
@@ -66,12 +79,12 @@ jobs:
       cache_mode: refresh
     test: res.verdict == "pass" && res.targets[0].kind == "android" && res.cache.saved
 
-  # The recording of the test before is replayed without the tester, from
-  # the first screen of the app, as the test before left it on another. A
-  # value the tester typed after a screenshot, as into the search of
-  # Settings, is a gap, which a replay hands to the tester as partial. The
-  # search of Settings is of another package, whose screen a launch of
-  # Settings leaves on top, so it is ended first.
+  # The recording committed is replayed without the tester, from the first
+  # screen of the app, as the test before left it on another. A value the
+  # tester typed after a screenshot, as into the search of Settings, is a
+  # gap, which a replay hands to the tester as partial. The search of
+  # Settings is of another package, whose screen a launch of Settings leaves
+  # on top, so it is ended first.
   - name: probe-android ends the search of Settings for the replay
     uses: android
     with:
@@ -104,7 +117,7 @@ jobs:
           app: com.android.settings
           device: "{{vars.device}}"
           timeout: 1m
-      cache: out/cache/android-version.json
+      cache: e2e/cache/android-version.json
       cache_mode: strict
     test: res.verdict == "pass" && res.cache.status == "hit" && res.cache.replayed > 0
 
