@@ -40,6 +40,40 @@ func TestManifestsDeclare(t *testing.T) {
 		if m.Guard != nil {
 			t.Errorf("%s declares guard %v, want none", name, m.Guard)
 		}
+		checkChoices(t, name, m.Choices)
+	}
+}
+
+// checkChoices checks the choices an action.yml declares, for probe check
+// to report a value the action does not take: that the providers are those
+// the agent knows, that parse takes every value declared, in upper case
+// too for a key taken in any case, and that it refuses one that is not.
+func checkChoices(t *testing.T, name string, choices map[string]actionref.Choice) {
+	t.Helper()
+	want := []string{"cache_judge", "cache_mode", "effort", "provider"}
+	if got := slices.Sorted(maps.Keys(choices)); !slices.Equal(got, want) {
+		t.Fatalf("%s declares choices of %v, want %v", name, got, want)
+	}
+	providers := append([]string{anthropic}, slices.Collect(maps.Keys(llm.Providers))...)
+	if got := choices["provider"]; !got.IgnoreCase || !slices.Equal(slices.Sorted(slices.Values(got.Values)), slices.Sorted(slices.Values(providers))) {
+		t.Errorf("%s declares provider %+v, want %v in any case", name, got, providers)
+	}
+	for _, key := range want {
+		c := choices[key]
+		given := slices.Clone(c.Values)
+		if c.IgnoreCase {
+			for _, v := range c.Values {
+				given = append(given, strings.ToUpper(v))
+			}
+		}
+		for _, v := range append(given, "not-a-value") {
+			with := map[string]any{"task": "Sign up", "expect": "An account", "targets": browserAt("http://localhost:8080/"), "model": "m", key: v}
+			_, err := parse(with)
+			refused := err != nil && strings.Contains(err.Error(), key+" ")
+			if refused != (v == "not-a-value") {
+				t.Errorf("%s: parse of %s %q: %v", name, key, v, err)
+			}
+		}
 	}
 }
 
