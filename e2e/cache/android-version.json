@@ -1,0 +1,57 @@
+{
+  "version": 2,
+  "task": "Find which version of Android the device runs.",
+  "expect": "The screen shows the version of Android.",
+  "steps": [
+    {
+      "target": "android",
+      "tool": "android_tree",
+      "outcome": "ok"
+    },
+    {
+      "target": "android",
+      "tool": "android_tap",
+      "input": {
+        "selector": "search_action_bar_title"
+      },
+      "outcome": "ok"
+    },
+    {
+      "target": "android",
+      "tool": "android_type",
+      "input": {
+        "selector": "open_search_view_edit_text",
+        "value": "Android version"
+      },
+      "outcome": "ok"
+    },
+    {
+      "target": "android",
+      "tool": "android_wait",
+      "input": {
+        "selector": "text=\"Android version\"  index=1"
+      },
+      "outcome": "ok"
+    },
+    {
+      "target": "android",
+      "tool": "android_tree",
+      "outcome": "ok"
+    },
+    {
+      "target": "android",
+      "tool": "android_tap",
+      "input": {
+        "selector": "id=android:id/title text=\"Android version\""
+      },
+      "outcome": "ok"
+    }
+  ],
+  "checks": {
+    "quotes": [
+      "FrameLayout id=com.android.settings:id/collapsing_toolbar desc=\"About emulated device\" [0,24][320,80]",
+      "TextView id=android:id/summary text=\"15\" [24,581][40,600]",
+      "TextView id=android:id/title text=\"Android version\" [24,553][163,581]"
+    ]
+  }
+}
