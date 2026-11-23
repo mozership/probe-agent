@@ -13,6 +13,18 @@
 # its runner the first time, which takes minutes, so the steps have a
 # timeout of 15 minutes. The calls of probe-ios and probe-browser need
 # Probe v1.37.0 or later.
+#
+# The version of iOS is found once by the tester, and recorded under
+# out/cache, and then e2e/cache/ios-version.json is replayed in strict mode,
+# as e2e/android.yml replays one of Android: the tester takes another way
+# each run, at times one that goes by a screen which came only by chance,
+# which a replay does not meet again. The recording committed takes the
+# plain way, through General and About, on the runtime of iOS 26.5 that CI
+# boots. When Settings changes so that it no longer matches, run this
+# workflow, and commit the recording the tester left under out/cache in its
+# place, once it takes the plain way:
+#
+#   cp out/cache/ios-version.json e2e/cache/ios-version.json
 name: probe-agent against an iOS app
 
 actions:
@@ -74,8 +86,8 @@ jobs:
       cache_mode: refresh
     test: res.verdict == "pass" && res.targets[0].kind == "ios" && res.cache.saved
 
-  # The recording of the test before is replayed without the tester, from
-  # the first screen of the app, as the test before left it on another. A
+  # The recording committed is replayed without the tester, from the first
+  # screen of the app, as the test before left it on another. A
   # value the tester typed after a screenshot, as into the search of
   # Settings, is a gap, which a replay hands to the tester as partial.
   - name: probe-ios launches the app afresh for the replay
@@ -99,7 +111,7 @@ jobs:
           app: com.apple.Preferences
           device: "{{vars.device}}"
           timeout: 2m
-      cache: out/cache/ios-version.json
+      cache: e2e/cache/ios-version.json
       cache_mode: strict
     test: res.verdict == "pass" && res.cache.status == "hit" && res.cache.replayed > 0
 

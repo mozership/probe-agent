@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "task": "Find which version of iOS the iPhone runs.",
+  "expect": "The screen shows the version of iOS.",
+  "steps": [
+    {
+      "target": "ios",
+      "tool": "ios_tree",
+      "outcome": "ok"
+    },
+    {
+      "target": "ios",
+      "tool": "ios_tap",
+      "input": {
+        "selector": "id=com.apple.settings.general"
+      },
+      "outcome": "ok"
+    },
+    {
+      "target": "ios",
+      "tool": "ios_tap",
+      "input": {
+        "selector": "type=button id=About"
+      },
+      "outcome": "ok"
+    }
+  ],
+  "checks": {
+    "quotes": [
+      "NavigationBar, 0x117876440, {{0.0, 62.0}, {402.0, 54.0}}, identifier: 'About'",
+      "StaticText, 0x117880000, {{36.0, 203.0}, {88.0, 20.3}}, label: 'iOS Version'",
+      "identifier: 'SW_VERSION_SPECIFIER', label: 'iOS Version, 26.5'"
+    ]
+  }
+}
