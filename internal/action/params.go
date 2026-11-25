@@ -161,11 +161,11 @@ type req struct {
 
 // dbReq is targets.db.
 type dbReq struct {
-	// DSN is the database, as the db action of Probe takes it.
+	// DSN is the database, as probe-db takes it.
 	DSN string
 	// Driver is postgres, mysql or sqlite, by the scheme of DSN.
 	Driver string
-	// Timeout bounds each statement; zero for the default of the db action.
+	// Timeout bounds each statement; zero for the default of probe-db.
 	Timeout time.Duration
 }
 
@@ -198,13 +198,13 @@ type graphqlReq struct {
 // grpcReq is targets.grpc.
 type grpcReq struct {
 	Addr string
-	// Conn are the keys of the grpc action that say how to reach the
+	// Conn are the keys of probe-grpc that say how to reach the
 	// server, as targets.grpc gives them: protocol, the TLS ones and
 	// timeout.
 	Conn map[string]any
 	// Metadata are sent with each call.
 	Metadata map[string]string
-	// Proto is the proto of the grpc action; nil for none.
+	// Proto is the proto of probe-grpc; nil for none.
 	Proto map[string]any
 }
 
@@ -678,7 +678,7 @@ func readHTTP(t map[string]any, h *httpReq) []error {
 	return errs
 }
 
-// readGRPC reads targets.grpc t into g. What the grpc action reads itself,
+// readGRPC reads targets.grpc t into g. What probe-grpc reads itself,
 // such as the files of proto, it checks when it is called.
 func readGRPC(t map[string]any, g *grpcReq) []error {
 	var errs []error
@@ -860,7 +860,7 @@ func readDB(t map[string]any, d *dbReq) []error {
 	case d.DSN == "":
 		errs = append(errs, errors.New("targets.db.dsn is required"))
 	default:
-		// The db action reads a scheme in lower case alone, as
+		// probe-db reads a scheme in lower case alone, as
 		// postgresql:// and file: are, so it is given one.
 		if i := strings.Index(d.DSN, ":"); i > 0 {
 			d.DSN = strings.ToLower(d.DSN[:i]) + d.DSN[i:]
@@ -872,7 +872,7 @@ func readDB(t map[string]any, d *dbReq) []error {
 		case d.Driver != "sqlite":
 			// The error leaves the DSN out, as it holds the password.
 			if _, err := url.Parse(d.DSN); err != nil {
-				errs = append(errs, errors.New("targets.db.dsn is not a URL the db action can read: percent-encode a special character of its password, such as / ? # @ or a space"))
+				errs = append(errs, errors.New("targets.db.dsn is not a URL probe-db can read: percent-encode a special character of its password, such as / ? # @ or a space"))
 			}
 		}
 	}
@@ -887,8 +887,8 @@ func readDB(t map[string]any, d *dbReq) []error {
 	return errs
 }
 
-// dbDriverOf names the driver of dsn by its scheme, as the db action of
-// Probe reads it, or "" for one it does not take.
+// dbDriverOf names the driver of dsn by its scheme, as probe-db reads it,
+// or "" for one it does not take.
 func dbDriverOf(dsn string) string {
 	dsn = strings.ToLower(dsn)
 	switch {
@@ -903,12 +903,12 @@ func dbDriverOf(dsn string) string {
 }
 
 // readProto reads targets.grpc.proto into g: files, the .proto files, and
-// import_paths, each a list of paths, and strict and request, as the grpc
-// action takes them. Whether the files compile, the grpc action tells.
+// import_paths, each a list of paths, and strict and request, as
+// probe-grpc takes them. Whether the files compile, probe-grpc tells.
 func readProto(v any, g *grpcReq) []error {
 	p, isMap := v.(map[string]any)
 	if !isMap {
-		return []error{errors.New("targets.grpc.proto must be a map of files, and import_paths, strict and request if need be, as the grpc action takes it")}
+		return []error{errors.New("targets.grpc.proto must be a map of files, and import_paths, strict and request if need be, as probe-grpc takes it")}
 	}
 	var errs []error
 	paths := func(k string) {

@@ -379,7 +379,7 @@ func TestGRPCWith(t *testing.T) {
 }
 
 func TestGRPCResponse(t *testing.T) {
-	got, err := grpcResponse(&sdk.CallResult{
+	got, err := grpcResponse("rpc", &sdk.CallResult{
 		Result: map[string]any{"res": map[string]any{
 			"status_code": "OK", "status_message": "", "metadata": map[string]any{"x-id": "7"},
 			"body": `{"user":{"id":"1"}}`, "messages": []any{map[string]any{"id": "1"}, map[string]any{"id": "2"}},
@@ -400,20 +400,19 @@ func TestGRPCResponse(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("response %+v, want %+v", got, want)
 	}
+	if _, err := grpcResponse("rpc", &sdk.CallResult{Result: map[string]any{}}); err == nil || err.Error() != "rpc returned no res" {
+		t.Errorf("without res: err %v", err)
+	}
 }
 
 func TestGRPCTarget(t *testing.T) {
 	caller := sdk.NewCaller(sdk.Call{}, "")
-	t.Setenv(sdk.ExecutableEnv, "")
-	if _, err := grpcTarget(caller, nil, grpcReq{Addr: "a.test:443"}); err == nil || !strings.Contains(err.Error(), "needs Probe v1.38.0 or later") {
-		t.Errorf("without %s: err %v", sdk.ExecutableEnv, err)
+	if _, err := grpcTarget(caller, nil, grpcReq{Addr: "a.test:443"}); err == nil || !strings.Contains(err.Error(), "targets.grpc calls the API through probe-grpc: name it under actions of the workflow, as grpc: github.com/mozership/probe-grpc@<commit SHA>") {
+		t.Errorf("without probe-grpc: err %v", err)
 	}
-	t.Setenv(sdk.ExecutableEnv, "/usr/local/bin/probe")
-	if _, err := grpcTarget(caller, map[string]string{"grpc": "./mine"}, grpcReq{Addr: "a.test:443"}); err == nil || !strings.Contains(err.Error(), "give the name grpc to ./mine") {
-		t.Errorf("an action named grpc: err %v", err)
-	}
-	rpc, err := grpcTarget(caller, nil, grpcReq{Addr: "a.test:443", Metadata: map[string]string{"b": "1", "a": "2"}, Proto: map[string]any{"files": []any{"x.proto"}}})
-	if err != nil || !slices.Equal(rpc.Fixed, []string{"a", "b"}) || !rpc.Proto {
+	actions := map[string]string{"rpc": "github.com/mozership/probe-grpc@" + strings.Repeat("a", 40)}
+	rpc, err := grpcTarget(caller, actions, grpcReq{Addr: "a.test:443", Metadata: map[string]string{"b": "1", "a": "2"}, Proto: map[string]any{"files": []any{"x.proto"}}})
+	if err != nil || !slices.Equal(rpc.Fixed, []string{"a", "b"}) || !rpc.Proto || rpc.List == nil || rpc.Call == nil {
 		t.Errorf("rpc %+v, %v", rpc, err)
 	}
 }
@@ -1060,7 +1059,7 @@ func TestParse_TargetsDB(t *testing.T) {
 
 func TestDBGuard(t *testing.T) {
 	g := dbGuard(sdk.Guard{AllowHosts: []string{"db.test"}})
-	if !g.ReadOnly || !g.Runs("db") || !slices.Equal(g.AllowHosts, []string{"db.test"}) {
+	if !g.ReadOnly || !slices.Equal(g.AllowHosts, []string{"db.test"}) || g.Keeps != nil {
 		t.Errorf("guard %+v", g)
 	}
 	// The guard of the run is left as it was.
@@ -1122,12 +1121,14 @@ func TestDSNShown(t *testing.T) {
 }
 
 func TestDBTarget(t *testing.T) {
-	t.Setenv(sdk.ExecutableEnv, "/usr/bin/probe")
 	caller := sdk.NewCaller(sdk.Call{}, "")
-	if _, err := dbTarget(caller, map[string]string{"db": "github.com/x/y@" + strings.Repeat("a", 40)}, dbReq{DSN: "file::memory:", Driver: "sqlite"}); err == nil || !strings.Contains(err.Error(), "give the name db to") {
-		t.Errorf("err %v", err)
+	if _, err := dbTarget(caller, nil, dbReq{DSN: "file::memory:", Driver: "sqlite"}); err == nil || !strings.Contains(err.Error(), "targets.db reads the database through probe-db: name it under actions of the workflow, as db: github.com/mozership/probe-db@<commit SHA>") {
+		t.Errorf("without probe-db: err %v", err)
 	}
-	db, err := dbTarget(caller, nil, dbReq{DSN: "postgres://r:pw@db.test/shop", Driver: "postgres"})
+	if _, err := dbTarget(caller, map[string]string{"db": "github.com/x/y@" + strings.Repeat("a", 40)}, dbReq{DSN: "file::memory:", Driver: "sqlite"}); err == nil || !strings.Contains(err.Error(), "through probe-db") {
+		t.Errorf("db named for another action: err %v", err)
+	}
+	db, err := dbTarget(caller, dbActions, dbReq{DSN: "postgres://r:pw@db.test/shop", Driver: "postgres"})
 	if err != nil || db.Name != "postgres://r:***@db.test/shop" || db.Driver != "postgres" || db.Query == nil || db.Tables == nil {
 		t.Errorf("db %+v, %v", db, err)
 	}
@@ -1171,7 +1172,7 @@ func TestParse_RefusesADSNThatIsNotAURL(t *testing.T) {
 	if got := dbDriverOf("MySQL://u@h/d"); got != "mysql" {
 		t.Errorf("driver %q", got)
 	}
-	// A scheme in upper case is given to the db action in lower case.
+	// A scheme in upper case is given to probe-db in lower case.
 	for dsn, want := range map[string]string{"POSTGRESQL://r:PW@h/D?sslmode=disable": "postgresql://r:PW@h/D?sslmode=disable", "FILE:/tmp/A.db": "file:/tmp/A.db"} {
 		r, err := parse(map[string]any{"task": "t", "expect": "e", "targets": map[string]any{"db": map[string]any{"dsn": dsn}}})
 		if err != nil || r.DB.DSN != want {
@@ -1191,10 +1192,9 @@ func TestHideDSN(t *testing.T) {
 }
 
 func TestDBTarget_AMissingSQLiteFile(t *testing.T) {
-	t.Setenv(sdk.ExecutableEnv, "/usr/bin/probe")
 	caller := sdk.NewCaller(sdk.Call{}, "")
 	dir := t.TempDir()
-	if _, err := dbTarget(caller, nil, dbReq{DSN: "file:" + dir + "/typo.db?mode=ro", Driver: "sqlite"}); err == nil || !strings.Contains(err.Error(), "names no SQLite file at "+dir+"/typo.db") {
+	if _, err := dbTarget(caller, dbActions, dbReq{DSN: "file:" + dir + "/typo.db?mode=ro", Driver: "sqlite"}); err == nil || !strings.Contains(err.Error(), "names no SQLite file at "+dir+"/typo.db") {
 		t.Errorf("err %v", err)
 	}
 	if _, err := os.Stat(dir + "/typo.db"); err == nil {
@@ -1203,20 +1203,24 @@ func TestDBTarget_AMissingSQLiteFile(t *testing.T) {
 	if err := os.WriteFile(dir+"/app.db", nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dbTarget(caller, nil, dbReq{DSN: "file:" + dir + "/app.db", Driver: "sqlite"}); err != nil {
+	if _, err := dbTarget(caller, dbActions, dbReq{DSN: "file:" + dir + "/app.db", Driver: "sqlite"}); err != nil {
 		t.Errorf("err %v", err)
 	}
-	if _, err := dbTarget(caller, nil, dbReq{DSN: "file::memory:", Driver: "sqlite"}); err != nil {
+	if _, err := dbTarget(caller, dbActions, dbReq{DSN: "file::memory:", Driver: "sqlite"}); err != nil {
 		t.Errorf("err %v", err)
 	}
 }
 
 func TestDBGuard_KeepsTheRestOfTheGuard(t *testing.T) {
 	g := dbGuard(sdk.Guard{AllowActions: []string{"agent"}, Keeps: map[string][]string{"http": {sdk.KindReadOnly}}})
-	if !slices.Equal(g.AllowActions, []string{"agent"}) || !slices.Equal(g.Keeps["http"], []string{sdk.KindReadOnly}) || !g.Runs("db") {
+	if !g.ReadOnly || !slices.Equal(g.AllowActions, []string{"agent"}) || !reflect.DeepEqual(g.Keeps, map[string][]string{"http": {sdk.KindReadOnly}}) {
 		t.Errorf("guard %+v", g)
 	}
 }
+
+// dbActions names probe-db under actions, as a workflow that reads a
+// database does.
+var dbActions = map[string]string{"sql": "github.com/mozership/probe-db@" + strings.Repeat("a", 40)}
 
 func TestParse_ACacheOfEachTarget(t *testing.T) {
 	for name, targets := range map[string]map[string]any{

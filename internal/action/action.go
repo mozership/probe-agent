@@ -2,10 +2,10 @@
 // with, readies the targets and the model, runs the test, and returns how
 // it came out, with its evidence written to files. The browser is driven
 // through probe-browser, an iOS app through probe-ios, an Android app
-// through probe-android, an HTTP API and a gRPC API through the http and
-// grpc actions of Probe, a GraphQL API through probe-graphql, a mailbox
-// through probe-jmap, and a database through the db action of Probe, which
-// the agent calls as a step of the run would.
+// through probe-android, an HTTP API through the http action of Probe, a
+// gRPC API through probe-grpc, a GraphQL API through probe-graphql, a
+// mailbox through probe-jmap, and a database through probe-db, which the
+// agent calls as a step of the run would.
 package action
 
 import (
@@ -63,10 +63,10 @@ func (a *Action) Run(with map[string]any) (map[string]any, error) {
 
 // RunStep runs the test the step asks for. The browser and an iOS app are
 // driven through probe-browser and probe-ios, by the names the workflow
-// gives them under actions, an HTTP API and a gRPC API through the http
-// and grpc actions of Probe, a GraphQL API through probe-graphql, a mailbox
-// through probe-jmap, and a database through the db action of Probe, as a
-// step of the run would call them.
+// gives them under actions, an HTTP API through the http action of Probe,
+// a gRPC API through probe-grpc, a GraphQL API through probe-graphql, a
+// mailbox through probe-jmap, and a database through probe-db, as a step
+// of the run would call them.
 func (a *Action) RunStep(call sdk.Call) (map[string]any, map[string]any, error) {
 	sdk.LogParams(a.log, "received agent action request", forLog(call.With))
 	ret, err := a.run(call)
@@ -142,9 +142,9 @@ func (a *Action) run(call sdk.Call) (map[string]any, error) {
 	}
 	var db *scenario.DB
 	if r.DB != nil {
-		// The db action is called by a caller of its own, read-only
-		// whatever the guard of the run, so that the tester cannot write:
-		// the action runs a statement that reads alone, in a read-only
+		// probe-db is called by a caller of its own, read-only whatever
+		// the guard of the run, so that the tester cannot write: the
+		// action runs a statement that reads alone, in a read-only
 		// transaction.
 		dc := call
 		dc.Guard = dbGuard(call.Guard)
@@ -257,6 +257,8 @@ const (
 	probeBrowser = "github.com/mozership/probe-browser"
 	probeGraphQL = "github.com/mozership/probe-graphql"
 	probeJMAP    = "github.com/mozership/probe-jmap"
+	probeGRPC    = "github.com/mozership/probe-grpc"
+	probeDB      = "github.com/mozership/probe-db"
 )
 
 // callRes calls the action name with with, and returns its res. A failed
@@ -355,14 +357,12 @@ func builtinCallable(actions map[string]string, name, since string) error {
 	return nil
 }
 
-// grpcAction is the grpc action of Probe, which a gRPC API is called
-// through.
-const grpcAction = "grpc"
-
-// grpcTarget returns the API of t, called through the grpc action of
-// Probe, which lists its services by reflection from Probe v1.38.0.
+// grpcTarget returns the API of t, called through probe-grpc: the action
+// the workflow names under actions whose reference is that of probe-grpc,
+// whatever its name.
 func grpcTarget(caller *sdk.Caller, actions map[string]string, t grpcReq) (*scenario.GRPC, error) {
-	if err := builtinCallable(actions, grpcAction, "v1.38.0"); err != nil {
+	name, err := actionNamed(actions, probeGRPC, "targets.grpc calls the API", "grpc")
+	if err != nil {
 		return nil, err
 	}
 	rpc := &scenario.GRPC{Addr: t.Addr, Fixed: slices.Sorted(maps.Keys(t.Metadata)), Proto: t.Proto != nil}
@@ -372,19 +372,19 @@ func grpcTarget(caller *sdk.Caller, actions map[string]string, t grpcReq) (*scen
 		if service != "" {
 			with["service"] = service
 		}
-		return callRes(ctx, caller, grpcAction, with)
+		return callRes(ctx, caller, name, with)
 	}
 	rpc.Call = func(ctx context.Context, req scenario.GRPCRequest) (scenario.GRPCResponse, error) {
-		cr, err := caller.Call(ctx, grpcAction, grpcWith(t, &req))
+		cr, err := caller.Call(ctx, name, grpcWith(t, &req))
 		if err != nil {
 			return scenario.GRPCResponse{}, err
 		}
-		return grpcResponse(cr)
+		return grpcResponse(name, cr)
 	}
 	return rpc, nil
 }
 
-// grpcWith is the with of a call of the grpc action to the API of t, with
+// grpcWith is the with of a call of probe-grpc to the API of t, with
 // the metadata t fixes: of req, or of a listing when req is nil.
 func grpcWith(t grpcReq, req *scenario.GRPCRequest) map[string]any {
 	with := maps.Clone(t.Conn)
@@ -414,12 +414,12 @@ func grpcWith(t grpcReq, req *scenario.GRPCRequest) map[string]any {
 	return with
 }
 
-// grpcResponse reads the answer of a call of the grpc action, and what the
-// .proto files made of it.
-func grpcResponse(cr *sdk.CallResult) (scenario.GRPCResponse, error) {
+// grpcResponse reads the answer of a call of probe-grpc, called by name,
+// and what the .proto files made of it.
+func grpcResponse(name string, cr *sdk.CallResult) (scenario.GRPCResponse, error) {
 	res, ok := cr.Result["res"].(map[string]any)
 	if !ok {
-		return scenario.GRPCResponse{}, fmt.Errorf("%s returned no res", grpcAction)
+		return scenario.GRPCResponse{}, fmt.Errorf("%s returned no res", name)
 	}
 	var out scenario.GRPCResponse
 	out.Code, _ = res["status_code"].(string)
@@ -589,24 +589,24 @@ func graphqlResponse(name string, cr *sdk.CallResult) (scenario.GraphQLResponse,
 	return out, nil
 }
 
-// dbAction is the db action of Probe, which a database is read through.
-const dbAction = "db"
-
-// dbGuard returns g read-only, for the db action, which keeps to both
-// kinds of guard, as its package declares.
+// dbGuard returns g read-only, for probe-db. What probe-db keeps to comes
+// from its action.yml, which the caller reads on its first call.
 func dbGuard(g sdk.Guard) sdk.Guard {
 	g.ReadOnly = true
-	return g.WithKeeps(dbAction, []string{sdk.KindReadOnly, sdk.KindAllowHost})
+	return g
 }
 
-// dbTarget returns the database of t, read through the db action of Probe.
+// dbTarget returns the database of t, read through probe-db: the action
+// the workflow names under actions whose reference is that of probe-db,
+// whatever its name.
 func dbTarget(caller *sdk.Caller, actions map[string]string, t dbReq) (*scenario.DB, error) {
-	if err := builtinCallable(actions, dbAction, "v1.37.0"); err != nil {
+	name, err := actionNamed(actions, probeDB, "targets.db reads the database", "db")
+	if err != nil {
 		return nil, err
 	}
 	if t.Driver == "sqlite" {
-		// A SQLite file that is not there would be made, empty, by the db
-		// action, which runs where the agent does.
+		// A SQLite file that is not there would be made, empty, by
+		// probe-db, which runs where the agent does.
 		if path := sqlitePath(t.DSN); path != "" {
 			if _, err := os.Stat(path); err != nil {
 				return nil, fmt.Errorf("targets.db.dsn names no SQLite file at %s: %w", path, errors.Unwrap(err))
@@ -624,7 +624,7 @@ func dbTarget(caller *sdk.Caller, actions map[string]string, t dbReq) (*scenario
 		if t.Timeout > 0 {
 			with["timeout"] = t.Timeout.String()
 		}
-		res, err := callRes(ctx, caller, dbAction, with)
+		res, err := callRes(ctx, caller, name, with)
 		if err != nil {
 			return scenario.DBResult{}, errors.New(hide(err.Error()))
 		}
@@ -662,7 +662,7 @@ WHERE m.type IN ('table', 'view') AND m.name NOT LIKE 'sqlite_%'
 ORDER BY m.name, p.cid`,
 }
 
-// dbResult reads the res of a call of the db action.
+// dbResult reads the res of a call of probe-db.
 func dbResult(res map[string]any) scenario.DBResult {
 	if code, _ := toInt(res["code"]); code != 0 {
 		msg, _ := res["error"].(string)
@@ -698,7 +698,7 @@ func dbTables(rows []map[string]any) []scenario.DBTable {
 	return tables
 }
 
-// hideDSN returns s, as what the db action says, such as an error that
+// hideDSN returns s, as what probe-db says, such as an error that
 // quotes the DSN, with dsn as it is shown, and its password hidden.
 func hideDSN(dsn, s string) string {
 	s = strings.ReplaceAll(s, dsn, dsnShown(dsn))
