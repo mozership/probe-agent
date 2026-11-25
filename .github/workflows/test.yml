@@ -33,12 +33,12 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     # The model is paid for each run, so the job runs only when asked: by
-    # the label e2e-with-api on a pull request, which only those who can
+    # the label e2e-with-agent on a pull request, which only those who can
     # write to the repository can put, or by a run started by hand. A pull
     # request from a fork gets no OIDC token.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.action == 'labeled' && github.event.label.name == 'e2e-with-api' &&
+      (github.event.action == 'labeled' && github.event.label.name == 'e2e-with-agent' &&
       !github.event.pull_request.head.repo.fork)
     permissions:
       contents: read
@@ -103,12 +103,12 @@ jobs:
   e2e-ios:
     runs-on: macos-26
     # The model is paid for each run, so the job runs only when asked: by
-    # the label e2e-with-api on a pull request, which only those who can
+    # the label e2e-with-agent on a pull request, which only those who can
     # write to the repository can put, or by a run started by hand. A pull
     # request from a fork gets no OIDC token.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.action == 'labeled' && github.event.label.name == 'e2e-with-api' &&
+      (github.event.action == 'labeled' && github.event.label.name == 'e2e-with-agent' &&
       !github.event.pull_request.head.repo.fork)
     timeout-minutes: 60
     permissions:
@@ -182,12 +182,12 @@ jobs:
   e2e-android:
     runs-on: ubuntu-latest
     # The model is paid for each run, so the job runs only when asked: by
-    # the label e2e-with-api on a pull request, which only those who can
+    # the label e2e-with-agent on a pull request, which only those who can
     # write to the repository can put, or by a run started by hand. A pull
     # request from a fork gets no OIDC token.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.action == 'labeled' && github.event.label.name == 'e2e-with-api' &&
+      (github.event.action == 'labeled' && github.event.label.name == 'e2e-with-agent' &&
       !github.event.pull_request.head.repo.fork)
     timeout-minutes: 45
     permissions:
@@ -260,12 +260,12 @@ jobs:
   # over lets it be put back for another, after a new push.
   unlabel:
     needs: [e2e, e2e-ios, e2e-android]
-    if: always() && github.event.action == 'labeled' && github.event.label.name == 'e2e-with-api'
+    if: always() && github.event.action == 'labeled' && github.event.label.name == 'e2e-with-agent'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
     steps:
-      - run: gh pr edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label e2e-with-api
+      - run: gh pr edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label e2e-with-agent
         env:
           GH_TOKEN: ${{ github.token }}
           NUMBER: ${{ github.event.pull_request.number }}
