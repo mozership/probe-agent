@@ -11,8 +11,7 @@ import (
 	"github.com/mozership/probe-agent/internal/llm"
 )
 
-// GRPC is a gRPC API, which the tester calls through the grpc action of
-// Probe.
+// GRPC is a gRPC API, which the tester calls through probe-grpc.
 type GRPC struct {
 	// Addr is the address of the server, which the tester cannot change.
 	Addr string
@@ -22,9 +21,9 @@ type GRPC struct {
 	// Proto says whether the calls are checked against .proto files.
 	Proto bool
 	// List lists the services of the server, or, with service, describes
-	// its methods, as the grpc action's list does, and returns its res.
+	// its methods, as the list of probe-grpc does, and returns its res.
 	List func(ctx context.Context, service string) (map[string]any, error)
-	// Call makes a call through the grpc action once, and returns its
+	// Call makes a call through probe-grpc once, and returns its
 	// answer. A call that gets no status from the server, as one the guard
 	// of the run refuses, is an error.
 	Call func(ctx context.Context, req GRPCRequest) (GRPCResponse, error)

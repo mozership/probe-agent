@@ -2,7 +2,7 @@
 
 A [Probe](https://github.com/mozership/probe) action that tests an application from a task written in natural language. A model, the tester, uses the application through a real Chrome, an app on an iOS simulator or an Android emulator or device, an HTTP API, a gRPC API, a GraphQL API, a mailbox, a database, or more than one of them, to carry out the task; another call of the model, the judge, then decides from what they showed whether the expectation holds. See [Targets](#targets) for an iOS app, an Android app, an HTTP API, a gRPC API, a GraphQL API, a mailbox and a database.
 
-Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It drives Chrome through [probe-browser](https://github.com/mozership/probe-browser), an iOS app through [probe-ios](https://github.com/mozership/probe-ios), an Android app through [probe-android](https://github.com/mozership/probe-android), a GraphQL API through [probe-graphql](https://github.com/mozership/probe-graphql), and a mailbox through [probe-jmap](https://github.com/mozership/probe-jmap), which the workflow names under `actions` as it names the agent, and calls an HTTP API, a gRPC API and a database through the [http](https://probe.linyo.ws/reference/actions/http), [grpc](https://probe.linyo.ws/reference/actions/grpc) and [db](https://probe.linyo.ws/reference/actions/db) actions of Probe; it calls them as a step of the run would, which needs Probe v1.37.0 or later.
+Chrome or Chromium has to be installed where Probe runs, and the model is reached with the API key of its provider. It is an [external action](https://probe.linyo.ws/guide/concepts/actions#external-actions): Probe downloads it the first time a workflow uses it, and runs the executable whose SHA-256 the `action.yml` at the pinned commit names. It drives Chrome through [probe-browser](https://github.com/mozership/probe-browser), an iOS app through [probe-ios](https://github.com/mozership/probe-ios), an Android app through [probe-android](https://github.com/mozership/probe-android), a gRPC API through [probe-grpc](https://github.com/mozership/probe-grpc), a GraphQL API through [probe-graphql](https://github.com/mozership/probe-graphql), a mailbox through [probe-jmap](https://github.com/mozership/probe-jmap), and a database through [probe-db](https://github.com/mozership/probe-db), which the workflow names under `actions` as it names the agent, and calls an HTTP API through the [http](https://probe.linyo.ws/reference/actions/http) action of Probe; it calls them as a step of the run would, which needs Probe v1.37.0 or later.
 
 It has two modes:
 
@@ -113,9 +113,9 @@ The model is called with the API key of its provider, which the action takes fro
 | `ios` | An app on an iOS simulator | `app` (required), the bundle identifier; `device`, the simulator by its name or UDID, which has to be given when more than one is booted; `timeout`, see below | [probe-ios](https://github.com/mozership/probe-ios) |
 | `android` | An app on an Android emulator or device | `app` (required), the package name; `device`, by its serial or model, which has to be given when adb lists more than one; `timeout`, as for `ios` | [probe-android](https://github.com/mozership/probe-android) |
 | `http` | An HTTP API | `url` (required), the base URL; `openapi`, `headers`, `cookies` and `timeout`, see below | The built-in [http](https://probe.linyo.ws/reference/actions/http) |
-| `grpc` | A gRPC API | `addr` (required); `protocol`, `tls`, `insecure`, `cert_file`, `key_file`, `ca_file`, `metadata`, `proto` and `timeout`, see below | The built-in [grpc](https://probe.linyo.ws/reference/actions/grpc) |
+| `grpc` | A gRPC API | `addr` (required); `protocol`, `tls`, `insecure`, `cert_file`, `key_file`, `ca_file`, `metadata`, `proto` and `timeout`, see below | [probe-grpc](https://github.com/mozership/probe-grpc) |
 | `graphql` | A GraphQL API | `url` (required), the endpoint; `headers` and `timeout`, see below | [probe-graphql](https://github.com/mozership/probe-graphql) |
-| `db` | A database, PostgreSQL, MySQL or SQLite, read alone | `dsn` (required); `timeout`, see below | The [db](https://probe.linyo.ws/reference/actions/db) action of Probe |
+| `db` | A database, PostgreSQL, MySQL or SQLite, read alone | `dsn` (required); `timeout`, see below | [probe-db](https://github.com/mozership/probe-db) |
 | `mail` | A mailbox, read over JMAP | `url` (required), the JMAP server; `basic_auth`, `headers`, `account_id` and `timeout`, see below | [probe-jmap](https://github.com/mozership/probe-jmap) |
 
 Up to v0.8.0, `url`, `allow_hosts`, `storage_state`, `headless`, `window_w` and `window_h` could be given at the top of `with`, as a short form of `targets.browser`. They are no longer taken there: a step that gives one is refused, and told where it goes.
@@ -261,9 +261,15 @@ The judge checks its quotes against the responses, and is given the last one, wh
 
 ### A gRPC API
 
-The agent calls the API through the grpc action of Probe, as it calls an HTTP API through the http action. It needs Probe v1.38.0 or later, whose grpc action lists the services and methods of a server by its reflection; a workflow must not give the name `grpc` to another action under `actions`.
+The agent calls the API through probe-grpc, which it calls as a step of the run would, under the guard of the run, once for each call of the tester. Name probe-grpc under `actions` of the workflow, by any name, as probe-ios; the agent finds it by its reference.
 
 ```yaml
+actions:
+  agent: github.com/mozership/probe-agent@<commit SHA>
+  grpc: github.com/mozership/probe-grpc@<commit SHA>
+jobs:
+- name: users
+  steps:
   - name: A client renames a user over gRPC
     uses: agent
     with:
@@ -278,7 +284,7 @@ The agent calls the API through the grpc action of Probe, as it calls an HTTP AP
     test: res.verdict == "pass"
 ```
 
-`addr`, `protocol`, `tls`, `insecure`, `cert_file`, `key_file`, `ca_file`, `proto` and `timeout` are those of the [grpc action](https://probe.linyo.ws/reference/actions/grpc#parameters), given to each call; `metadata` is sent with each call, and the tester cannot change it. `proto` is a map of `files`, with `import_paths`, `strict` and `request` if need be, checked before the model is called.
+`addr`, `protocol`, `tls`, `insecure`, `cert_file`, `key_file`, `ca_file`, `proto` and `timeout` are those of [probe-grpc](https://github.com/mozership/probe-grpc), given to each call; `metadata` is sent with each call, and the tester cannot change it. `proto` is a map of `files`, with `import_paths`, `strict` and `request` if need be, checked before the model is called.
 
 | Tool | What it does |
 |---|---|
@@ -374,11 +380,15 @@ The tester sends nothing: the agent sends Email/query and Email/get alone. As th
 
 ### A database
 
-The tester reads a database to check what its moves on the other targets did, as that an order is saved, not only that a page says so. The agent calls the db action of Probe as a step of the run would, once for each statement, read-only whatever the guard of the run: the action runs one statement that reads, as `SELECT`, with no semicolon, in a read-only transaction, or on a SQLite connection that only queries, so a statement that writes rows is refused. It needs Probe v1.37.0 or later.
+The tester reads a database to check what its moves on the other targets did, as that an order is saved, not only that a page says so. The agent calls probe-db as a step of the run would, once for each statement, read-only whatever the guard of the run: the action runs one statement that reads, as `SELECT`, with no semicolon, in a read-only transaction, or on a SQLite connection that only queries, so a statement that writes rows is refused. Name probe-db under `actions` of the workflow, by any name, as probe-graphql; the agent finds it by its reference.
 
 A read-only transaction still lets through what a function does outside it: on PostgreSQL, a superuser can end the sessions of others with `pg_terminate_backend`, or read a file of the server with `pg_read_file`; on MySQL, `SELECT ... INTO OUTFILE` writes a file with the FILE privilege. Give `dsn` a user that can only read the tables of the application: not a superuser, not the owner of the application's role, and without FILE.
 
 ```yaml
+actions:
+  agent: github.com/mozership/probe-agent@<commit SHA>
+  browser: github.com/mozership/probe-browser@<commit SHA>
+  db: github.com/mozership/probe-db@<commit SHA>
 jobs:
 - name: shop
   steps:
@@ -397,8 +407,8 @@ jobs:
 
 | Key | Type | Description |
 |---|---|---|
-| `dsn` | String | The database, as the db action takes it: `postgres://`, `postgresql://`, `mysql://`, or `file:` for SQLite, a file that has to be there. A special character of the password, such as `/` or `@`, is percent-encoded. The tester and the result see it with its password hidden |
-| `timeout` | String or Number | The timeout of each statement, as `10s` or a number of seconds; 30 seconds by default, as in the db action |
+| `dsn` | String | The database, as probe-db takes it: `postgres://`, `postgresql://`, `mysql://`, or `file:` for SQLite, a file that has to be there. A special character of the password, such as `/` or `@`, is percent-encoded. The tester and the result see it with its password hidden |
+| `timeout` | String or Number | The timeout of each statement, as `10s` or a number of seconds; 30 seconds by default, as in probe-db |
 
 | Tool | What it does |
 |---|---|
@@ -683,13 +693,13 @@ probe-ios and probe-android keep to no guard either, and the agent calls them un
 
 The http action keeps to the guard, and the agent calls it under the guard of the run, kept to the host of `targets.http.url`, so the requests of the tester keep to it although the agent is named by `--allow-action`: under `--read-only`, a request other than `GET`, `HEAD` or `OPTIONS` is refused, and the tester is told so; under `--allow-host`, so is one to a host the guard does not allow.
 
-The grpc action keeps to the guard too, and the agent calls it under the guard of the run: under `--read-only`, a method is called only when its definition declares it free of side effects, which `grpc_describe` tells the tester, and listing the services is allowed; under `--allow-host`, `addr` has to be a host the guard allows.
+probe-grpc keeps to the guard too, as its `action.yml` declares, and the agent calls it under the guard of the run: under `--read-only`, a method is called only when its definition declares it free of side effects, which `grpc_describe` tells the tester, and listing the services is allowed; under `--allow-host`, `addr` has to be a host the guard allows.
 
 probe-graphql keeps to the guard as well, as its `action.yml` declares, and the agent calls it under the guard of the run, kept to the host of `targets.graphql.url`, as it calls the http action: under `--read-only`, a mutation or a subscription is refused before it is sent, and the tester is told so; under `--allow-host`, so is a request to a host the guard does not allow.
 
 probe-jmap keeps to the guard too, and the agent calls it under the guard of the run, kept to the host of `targets.mail.url`. It only reads, so `--read-only` lets it through; under `--allow-host`, the host of the server has to be one the guard allows.
 
-The db action keeps to the guard, and the agent calls it read-only whatever the guard of the run, so a statement that writes is refused, and the tester is told so. Under `--allow-host`, the server of `dsn` has to be one the guard allows.
+probe-db keeps to the guard, as its `action.yml` declares, and the agent calls it read-only whatever the guard of the run, so a statement that writes is refused, and the tester is told so. Under `--allow-host`, the server of `dsn` has to be one the guard allows.
 
 ## Development
 
