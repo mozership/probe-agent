@@ -8,7 +8,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/mozership/probe/actionrpc"
+	"github.com/mozership/probe/sdk"
 
 	"github.com/mozership/probe-agent/internal/llm"
 	"github.com/mozership/probe-agent/internal/scenario"
@@ -38,7 +38,7 @@ var usageColumns = []int{4, 5, 6, 7, 8}
 // write can still be overwritten. A summary another step wrote to last
 // starts a table anew. The secrets of the test are hidden in the row, as a
 // step is named after the values of the workflow.
-func writeSummary(path string, step actionrpc.Step, r req, o scenario.Outcome, replay string) error {
+func writeSummary(path string, step sdk.Step, r req, o scenario.Outcome, replay string) error {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return err
@@ -113,7 +113,7 @@ func summaryRows(s string) ([]string, int64) {
 
 // summaryRow is the row of the test: where it ran, how it came out, and
 // what it used of the model.
-func summaryRow(step actionrpc.Step, r req, o scenario.Outcome, replay string) string {
+func summaryRow(step sdk.Step, r req, o scenario.Outcome, replay string) string {
 	name := step.Name
 	if name == "" {
 		name = step.ID
