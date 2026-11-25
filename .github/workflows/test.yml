@@ -4,12 +4,15 @@ on:
     branches:
       - main
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
 jobs:
   # The tests of the page package build probe-browser and drive a real
   # Chrome through it; the others answer from a stand-in for the model.
   test:
+    # Labelling a pull request asks for the e2e jobs alone.
+    if: github.event.action != 'labeled'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -29,8 +32,14 @@ jobs:
   # real model, which it calls with the OIDC token of the job.
   e2e:
     runs-on: ubuntu-latest
-    # A pull request from a fork, and Dependabot, get no OIDC token.
-    if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
+    # The model is paid for each run, so the job runs only when asked: by
+    # the label e2e-with-api on a pull request, which only those who can
+    # write to the repository can put, or by a run started by hand. A pull
+    # request from a fork gets no OIDC token.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'e2e-with-api' &&
+      !github.event.pull_request.head.repo.fork)
     permissions:
       contents: read
       id-token: write
@@ -93,8 +102,14 @@ jobs:
   # the Claude API.
   e2e-ios:
     runs-on: macos-26
-    # A pull request from a fork, and Dependabot, get no OIDC token.
-    if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
+    # The model is paid for each run, so the job runs only when asked: by
+    # the label e2e-with-api on a pull request, which only those who can
+    # write to the repository can put, or by a run started by hand. A pull
+    # request from a fork gets no OIDC token.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'e2e-with-api' &&
+      !github.event.pull_request.head.repo.fork)
     timeout-minutes: 60
     permissions:
       contents: read
@@ -166,8 +181,14 @@ jobs:
   # does not open to the job's user.
   e2e-android:
     runs-on: ubuntu-latest
-    # A pull request from a fork, and Dependabot, get no OIDC token.
-    if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
+    # The model is paid for each run, so the job runs only when asked: by
+    # the label e2e-with-api on a pull request, which only those who can
+    # write to the repository can put, or by a run started by hand. A pull
+    # request from a fork gets no OIDC token.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'e2e-with-api' &&
+      !github.event.pull_request.head.repo.fork)
     timeout-minutes: 45
     permissions:
       contents: read
@@ -235,7 +256,23 @@ jobs:
         if: always()
         run: cat "$RUNNER_TEMP/server.txt"
 
+  # The label asks for one run of the e2e jobs. Taking it off once they are
+  # over lets it be put back for another, after a new push.
+  unlabel:
+    needs: [e2e, e2e-ios, e2e-android]
+    if: always() && github.event.action == 'labeled' && github.event.label.name == 'e2e-with-api'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - run: gh pr edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label e2e-with-api
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number }}
+
   lint:
+    # Labelling a pull request asks for the e2e jobs alone.
+    if: github.event.action != 'labeled'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -257,6 +294,8 @@ jobs:
   # requires or in the standard library of the Go in go.mod, which releases
   # are built with: update the module, or the Go in go.mod.
   vuln:
+    # Labelling a pull request asks for the e2e jobs alone.
+    if: github.event.action != 'labeled'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
