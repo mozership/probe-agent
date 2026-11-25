@@ -12,7 +12,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/mozership/probe/actionrpc"
+	"github.com/mozership/probe/sdk"
 
 	"github.com/mozership/probe-agent/internal/llm"
 )
@@ -363,7 +363,7 @@ func parse(with map[string]any) (req, error) {
 			strIn(i, prefix, "app", &a.App)
 			strIn(i, prefix, "device", &a.Device)
 			if v, ok := i["timeout"]; ok {
-				d, err := actionrpc.ParseTimeout(v)
+				d, err := sdk.ParseTimeout(v)
 				if err != nil {
 					errs = append(errs, fmt.Errorf("%stimeout: %w", prefix, err))
 				} else {
@@ -496,7 +496,7 @@ func parse(with map[string]any) (req, error) {
 	}
 
 	if v, ok := with["timeout"]; ok {
-		d, err := actionrpc.ParseTimeout(v)
+		d, err := sdk.ParseTimeout(v)
 		if err != nil {
 			errs = append(errs, err)
 		} else {
@@ -668,7 +668,7 @@ func readHTTP(t map[string]any, h *httpReq) []error {
 		}
 	}
 	if v, ok := t["timeout"]; ok {
-		d, err := actionrpc.ParseTimeout(v)
+		d, err := sdk.ParseTimeout(v)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("targets.http.timeout: %w", err))
 		} else {
@@ -717,7 +717,7 @@ func readGRPC(t map[string]any, g *grpcReq) []error {
 		}
 	}
 	if v, ok := t["timeout"]; ok {
-		d, err := actionrpc.ParseTimeout(v)
+		d, err := sdk.ParseTimeout(v)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("targets.grpc.timeout: %w", err))
 		} else {
@@ -780,7 +780,7 @@ func readGraphQL(t map[string]any, g *graphqlReq) []error {
 		}
 	}
 	if v, ok := t["timeout"]; ok {
-		d, err := actionrpc.ParseTimeout(v)
+		d, err := sdk.ParseTimeout(v)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("targets.graphql.timeout: %w", err))
 		} else {
@@ -839,7 +839,7 @@ func readMail(t map[string]any, m *mailReq) []error {
 		m.AccountID = strings.TrimSpace(s)
 	}
 	if v, ok := t["timeout"]; ok {
-		d, err := actionrpc.ParseTimeout(v)
+		d, err := sdk.ParseTimeout(v)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("targets.mail.timeout: %w", err))
 		} else {
@@ -877,7 +877,7 @@ func readDB(t map[string]any, d *dbReq) []error {
 		}
 	}
 	if v, ok := t["timeout"]; ok {
-		dur, err := actionrpc.ParseTimeout(v)
+		dur, err := sdk.ParseTimeout(v)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("targets.db.timeout: %w", err))
 		} else {

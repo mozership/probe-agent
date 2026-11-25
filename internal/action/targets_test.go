@@ -9,8 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mozership/probe"
-	"github.com/mozership/probe/actionrpc"
+	"github.com/mozership/probe/sdk"
 
 	"github.com/mozership/probe-agent/internal/scenario"
 )
@@ -380,14 +379,14 @@ func TestGRPCWith(t *testing.T) {
 }
 
 func TestGRPCResponse(t *testing.T) {
-	got, err := grpcResponse(&probe.CallResult{
+	got, err := grpcResponse(&sdk.CallResult{
 		Result: map[string]any{"res": map[string]any{
 			"status_code": "OK", "status_message": "", "metadata": map[string]any{"x-id": "7"},
 			"body": `{"user":{"id":"1"}}`, "messages": []any{map[string]any{"id": "1"}, map[string]any{"id": "2"}},
 		}},
-		Contract: &actionrpc.ContractCheck{
-			Matched:    &actionrpc.ContractMatch{Operation: "users.v1.UserService/GetUser"},
-			Violations: []actionrpc.Violation{{In: "response", Field: "$.user.id", Message: "bad"}},
+		Contract: &sdk.ContractCheck{
+			Matched:    &sdk.ContractMatch{Operation: "users.v1.UserService/GetUser"},
+			Violations: []sdk.Violation{{In: "response", Field: "$.user.id", Message: "bad"}},
 		},
 	})
 	if err != nil {
@@ -404,12 +403,12 @@ func TestGRPCResponse(t *testing.T) {
 }
 
 func TestGRPCTarget(t *testing.T) {
-	caller := probe.NewActionCaller(actionrpc.Call{}, "")
-	t.Setenv(probe.ExecutableEnv, "")
+	caller := sdk.NewCaller(sdk.Call{}, "")
+	t.Setenv(sdk.ExecutableEnv, "")
 	if _, err := grpcTarget(caller, nil, grpcReq{Addr: "a.test:443"}); err == nil || !strings.Contains(err.Error(), "needs Probe v1.38.0 or later") {
-		t.Errorf("without %s: err %v", probe.ExecutableEnv, err)
+		t.Errorf("without %s: err %v", sdk.ExecutableEnv, err)
 	}
-	t.Setenv(probe.ExecutableEnv, "/usr/local/bin/probe")
+	t.Setenv(sdk.ExecutableEnv, "/usr/local/bin/probe")
 	if _, err := grpcTarget(caller, map[string]string{"grpc": "./mine"}, grpcReq{Addr: "a.test:443"}); err == nil || !strings.Contains(err.Error(), "give the name grpc to ./mine") {
 		t.Errorf("an action named grpc: err %v", err)
 	}
@@ -471,15 +470,15 @@ func TestHTTPWith(t *testing.T) {
 }
 
 func TestHTTPResponse(t *testing.T) {
-	cr := &probe.CallResult{
+	cr := &sdk.CallResult{
 		Result: map[string]any{"res": map[string]any{
 			"code": 201.0, "status": "201 Created",
 			"headers": map[string]any{"Content-Type": "application/json"},
 			"body":    `{"id":7}`,
 		}},
-		Contract: &actionrpc.ContractCheck{
-			Matched:    &actionrpc.ContractMatch{Spec: "o.yml", Operation: "POST /orders", Response: "201"},
-			Violations: []actionrpc.Violation{{In: "response", Field: "$.id", Reason: "type", Message: "id must be a string"}},
+		Contract: &sdk.ContractCheck{
+			Matched:    &sdk.ContractMatch{Spec: "o.yml", Operation: "POST /orders", Response: "201"},
+			Violations: []sdk.Violation{{In: "response", Field: "$.id", Reason: "type", Message: "id must be a string"}},
 		},
 	}
 	got, err := httpResponse(cr)
@@ -499,32 +498,32 @@ func TestHTTPResponse(t *testing.T) {
 
 	// A body that came parsed is given as JSON, and one that is not text
 	// by its file.
-	got, _ = httpResponse(&probe.CallResult{Result: map[string]any{"res": map[string]any{"code": 200, "body": map[string]any{"a": 1.0}}}})
+	got, _ = httpResponse(&sdk.CallResult{Result: map[string]any{"res": map[string]any{"code": 200, "body": map[string]any{"a": 1.0}}}})
 	if got.Body != `{"a":1}` {
 		t.Errorf("body %q", got.Body)
 	}
-	got, _ = httpResponse(&probe.CallResult{Result: map[string]any{"res": map[string]any{"code": 200, "body": "", "filepath": "/tmp/x.png"}}})
+	got, _ = httpResponse(&sdk.CallResult{Result: map[string]any{"res": map[string]any{"code": 200, "body": "", "filepath": "/tmp/x.png"}}})
 	if got.File != "/tmp/x.png" || got.Body != "" {
 		t.Errorf("response %+v", got)
 	}
-	if _, err := httpResponse(&probe.CallResult{Result: map[string]any{}}); err == nil {
+	if _, err := httpResponse(&sdk.CallResult{Result: map[string]any{}}); err == nil {
 		t.Error("a result without res is taken")
 	}
 }
 
 func TestAPIGuard(t *testing.T) {
-	g := apiGuard(actionrpc.Guard{}, "https://api.test/v1")
+	g := apiGuard(sdk.Guard{}, "https://api.test/v1")
 	// The port of the scheme is named, so that neither another port nor
 	// plain http is allowed.
 	if !slices.Equal(g.AllowHosts, []string{"api.test:443"}) || !g.Runs("http") || g.AllowsHost("evil.test:443") || g.AllowsHost("api.test:80") || !g.AllowsHost("api.test:443") {
 		t.Errorf("guard %+v", g)
 	}
-	g = apiGuard(actionrpc.Guard{ReadOnly: true, AllowHosts: []string{"*.test"}}, "http://api.test:8080/")
+	g = apiGuard(sdk.Guard{ReadOnly: true, AllowHosts: []string{"*.test"}}, "http://api.test:8080/")
 	if !g.ReadOnly || !slices.Equal(g.AllowHosts, []string{"api.test:8080"}) || !g.Runs("http") {
 		t.Errorf("guard %+v", g)
 	}
 	// A host the run does not allow stays refused.
-	g = apiGuard(actionrpc.Guard{AllowHosts: []string{"other.test"}}, "https://api.test/")
+	g = apiGuard(sdk.Guard{AllowHosts: []string{"other.test"}}, "https://api.test/")
 	if !slices.Equal(g.AllowHosts, []string{"other.test"}) {
 		t.Errorf("guard %+v", g)
 	}
@@ -542,13 +541,13 @@ func TestResult_MasksTheBaseURLOfTheAPI(t *testing.T) {
 }
 
 func TestHTTPTarget(t *testing.T) {
-	caller := probe.NewActionCaller(actionrpc.Call{}, "")
-	t.Setenv(probe.ExecutableEnv, "")
+	caller := sdk.NewCaller(sdk.Call{}, "")
+	t.Setenv(sdk.ExecutableEnv, "")
 	if _, err := httpTarget(caller, nil, httpReq{URL: "http://a.test/"}); err == nil || !strings.Contains(err.Error(), "needs Probe v1.37.0 or later") {
-		t.Errorf("without %s: err %v", probe.ExecutableEnv, err)
+		t.Errorf("without %s: err %v", sdk.ExecutableEnv, err)
 	}
 
-	t.Setenv(probe.ExecutableEnv, "/usr/local/bin/probe")
+	t.Setenv(sdk.ExecutableEnv, "/usr/local/bin/probe")
 	if _, err := httpTarget(caller, map[string]string{"http": "github.com/x/y@" + strings.Repeat("a", 40)}, httpReq{URL: "http://a.test/"}); err == nil || !strings.Contains(err.Error(), "give the name http to github.com/x/y") {
 		t.Errorf("an action named http: err %v", err)
 	}
@@ -761,7 +760,7 @@ func TestGraphQLWith(t *testing.T) {
 }
 
 func TestGraphQLResponse(t *testing.T) {
-	got, err := graphqlResponse("graphql", &probe.CallResult{Result: map[string]any{"res": map[string]any{
+	got, err := graphqlResponse("graphql", &sdk.CallResult{Result: map[string]any{"res": map[string]any{
 		"code": 200, "status": "200 OK", "data": map[string]any{"note": nil},
 		"errors":  []any{map[string]any{"message": "no note is n9"}},
 		"body":    map[string]any{"data": map[string]any{"note": nil}},
@@ -775,32 +774,32 @@ func TestGraphQLResponse(t *testing.T) {
 		t.Errorf("response %+v, want %+v", got, want)
 	}
 	// A body that is not JSON holds no data, and is kept as it is.
-	got, err = graphqlResponse("graphql", &probe.CallResult{Result: map[string]any{"res": map[string]any{
+	got, err = graphqlResponse("graphql", &sdk.CallResult{Result: map[string]any{"res": map[string]any{
 		"code": 502, "status": "502 Bad Gateway", "data": nil, "errors": []any{}, "body": "upstream down",
 	}}})
 	if err != nil || !reflect.DeepEqual(got, scenario.GraphQLResponse{Code: 502, Status: "502 Bad Gateway", Body: "upstream down"}) {
 		t.Errorf("response %+v, %v", got, err)
 	}
-	if _, err := graphqlResponse("gql", &probe.CallResult{Result: map[string]any{}}); err == nil || err.Error() != "gql returned no res" {
+	if _, err := graphqlResponse("gql", &sdk.CallResult{Result: map[string]any{}}); err == nil || err.Error() != "gql returned no res" {
 		t.Errorf("err %v", err)
 	}
 }
 
 func TestHostGuard(t *testing.T) {
-	g := hostGuard(actionrpc.Guard{}, "https://api.test/graphql")
+	g := hostGuard(sdk.Guard{}, "https://api.test/graphql")
 	// The guard holds no keeps of its own: those of an external action are
 	// read from its action.yml.
 	if !slices.Equal(g.AllowHosts, []string{"api.test:443"}) || len(g.Keeps) != 0 || g.AllowsHost("api.test:80") {
 		t.Errorf("guard %+v", g)
 	}
-	g = hostGuard(actionrpc.Guard{ReadOnly: true, AllowHosts: []string{"other.test"}}, "http://api.test:8080/graphql")
+	g = hostGuard(sdk.Guard{ReadOnly: true, AllowHosts: []string{"other.test"}}, "http://api.test:8080/graphql")
 	if !g.ReadOnly || !slices.Equal(g.AllowHosts, []string{"other.test"}) {
 		t.Errorf("guard %+v", g)
 	}
 }
 
 func TestGraphQLTarget(t *testing.T) {
-	caller := probe.NewActionCaller(actionrpc.Call{}, "")
+	caller := sdk.NewCaller(sdk.Call{}, "")
 	if _, err := graphqlTarget(caller, nil, graphqlReq{URL: "http://a.test/graphql"}); err == nil || !strings.Contains(err.Error(), "targets.graphql calls the API through probe-graphql: name it under actions of the workflow, as graphql: github.com/mozership/probe-graphql@<commit SHA>") {
 		t.Errorf("without probe-graphql: err %v", err)
 	}
@@ -901,7 +900,7 @@ func TestMailSearchCalls(t *testing.T) {
 }
 
 func TestJMAPResults(t *testing.T) {
-	res := func(r map[string]any) *probe.CallResult { return &probe.CallResult{Result: map[string]any{"res": r}} }
+	res := func(r map[string]any) *sdk.CallResult { return &sdk.CallResult{Result: map[string]any{"res": r}} }
 	search, err := jmapResults("jmap", res(map[string]any{"code": 200, "status": "200 OK", "errors": []any{}, "results": map[string]any{
 		"query": map[string]any{"ids": []any{"m2", "m1"}, "total": 5},
 		"get": map[string]any{"list": []any{
@@ -932,14 +931,14 @@ func TestJMAPResults(t *testing.T) {
 		t.Errorf("err %v", err)
 	}
 	// A page of a sign-in, answered with 200, is no JMAP.
-	signIn := &probe.CallResult{Result: map[string]any{"status": 1, "res": map[string]any{"code": 200, "status": "200 OK", "errors": []any{}, "results": map[string]any{}, "body": "<html>Sign in</html>"}}}
+	signIn := &sdk.CallResult{Result: map[string]any{"status": 1, "res": map[string]any{"code": 200, "status": "200 OK", "errors": []any{}, "results": map[string]any{}, "body": "<html>Sign in</html>"}}}
 	if _, err := jmapResults("jmap", signIn); err == nil || err.Error() != "the mail server answered 200 OK, but with no JMAP method responses" {
 		t.Errorf("err %v", err)
 	}
 	if _, err := mailList(map[string]any{"get": map[string]any{}}); err == nil {
 		t.Error("a search without Email/query was taken")
 	}
-	if _, err := jmapResults("jm", &probe.CallResult{Result: map[string]any{}}); err == nil || err.Error() != "jm returned no res" {
+	if _, err := jmapResults("jm", &sdk.CallResult{Result: map[string]any{}}); err == nil || err.Error() != "jm returned no res" {
 		t.Errorf("err %v", err)
 	}
 }
@@ -979,7 +978,7 @@ func TestMailMessage(t *testing.T) {
 }
 
 func TestMailTarget(t *testing.T) {
-	caller := probe.NewActionCaller(actionrpc.Call{}, "")
+	caller := sdk.NewCaller(sdk.Call{}, "")
 	if _, err := mailTarget(caller, nil, mailReq{URL: "http://mail.test"}); err == nil || !strings.Contains(err.Error(), "targets.mail reads the mailbox through probe-jmap: name it under actions of the workflow, as jmap: github.com/mozership/probe-jmap@<commit SHA>") {
 		t.Errorf("without probe-jmap: err %v", err)
 	}
@@ -1060,12 +1059,12 @@ func TestParse_TargetsDB(t *testing.T) {
 }
 
 func TestDBGuard(t *testing.T) {
-	g := dbGuard(actionrpc.Guard{AllowHosts: []string{"db.test"}})
+	g := dbGuard(sdk.Guard{AllowHosts: []string{"db.test"}})
 	if !g.ReadOnly || !g.Runs("db") || !slices.Equal(g.AllowHosts, []string{"db.test"}) {
 		t.Errorf("guard %+v", g)
 	}
 	// The guard of the run is left as it was.
-	run := actionrpc.Guard{}
+	run := sdk.Guard{}
 	_ = dbGuard(run)
 	if run.ReadOnly || run.Keeps != nil {
 		t.Errorf("the guard of the run %+v", run)
@@ -1123,8 +1122,8 @@ func TestDSNShown(t *testing.T) {
 }
 
 func TestDBTarget(t *testing.T) {
-	t.Setenv(probe.ExecutableEnv, "/usr/bin/probe")
-	caller := probe.NewActionCaller(actionrpc.Call{}, "")
+	t.Setenv(sdk.ExecutableEnv, "/usr/bin/probe")
+	caller := sdk.NewCaller(sdk.Call{}, "")
 	if _, err := dbTarget(caller, map[string]string{"db": "github.com/x/y@" + strings.Repeat("a", 40)}, dbReq{DSN: "file::memory:", Driver: "sqlite"}); err == nil || !strings.Contains(err.Error(), "give the name db to") {
 		t.Errorf("err %v", err)
 	}
@@ -1192,8 +1191,8 @@ func TestHideDSN(t *testing.T) {
 }
 
 func TestDBTarget_AMissingSQLiteFile(t *testing.T) {
-	t.Setenv(probe.ExecutableEnv, "/usr/bin/probe")
-	caller := probe.NewActionCaller(actionrpc.Call{}, "")
+	t.Setenv(sdk.ExecutableEnv, "/usr/bin/probe")
+	caller := sdk.NewCaller(sdk.Call{}, "")
 	dir := t.TempDir()
 	if _, err := dbTarget(caller, nil, dbReq{DSN: "file:" + dir + "/typo.db?mode=ro", Driver: "sqlite"}); err == nil || !strings.Contains(err.Error(), "names no SQLite file at "+dir+"/typo.db") {
 		t.Errorf("err %v", err)
@@ -1213,8 +1212,8 @@ func TestDBTarget_AMissingSQLiteFile(t *testing.T) {
 }
 
 func TestDBGuard_KeepsTheRestOfTheGuard(t *testing.T) {
-	g := dbGuard(actionrpc.Guard{AllowActions: []string{"agent"}, Keeps: map[string][]string{"http": {actionrpc.KindReadOnly}}})
-	if !slices.Equal(g.AllowActions, []string{"agent"}) || !slices.Equal(g.Keeps["http"], []string{actionrpc.KindReadOnly}) || !g.Runs("db") {
+	g := dbGuard(sdk.Guard{AllowActions: []string{"agent"}, Keeps: map[string][]string{"http": {sdk.KindReadOnly}}})
+	if !slices.Equal(g.AllowActions, []string{"agent"}) || !slices.Equal(g.Keeps["http"], []string{sdk.KindReadOnly}) || !g.Runs("db") {
 		t.Errorf("guard %+v", g)
 	}
 }

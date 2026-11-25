@@ -29,11 +29,8 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/go-hclog"
-	"github.com/mozership/probe"
 	"github.com/mozership/probe-browser/storagestate"
-	"github.com/mozership/probe/actionref"
-	"github.com/mozership/probe/actionrpc"
-	"github.com/mozership/probe/style"
+	"github.com/mozership/probe/sdk"
 
 	"github.com/mozership/probe-agent/internal/llm"
 	"github.com/mozership/probe-agent/internal/page"
@@ -52,7 +49,7 @@ type Action struct {
 func Serve() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	actionrpc.Serve(func(log hclog.Logger) actionrpc.Action {
+	sdk.Serve(func(log hclog.Logger) sdk.Action {
 		return &Action{log: log, ctx: ctx}
 	})
 }
@@ -60,7 +57,7 @@ func Serve() {
 // Run runs the test the step asks for, under a Probe that tells the
 // action nothing of the step: it can drive no target through an action.
 func (a *Action) Run(with map[string]any) (map[string]any, error) {
-	ret, _, err := a.RunStep(actionrpc.Call{With: with})
+	ret, _, err := a.RunStep(sdk.Call{With: with})
 	return ret, err
 }
 
@@ -70,14 +67,14 @@ func (a *Action) Run(with map[string]any) (map[string]any, error) {
 // and grpc actions of Probe, a GraphQL API through probe-graphql, a mailbox
 // through probe-jmap, and a database through the db action of Probe, as a
 // step of the run would call them.
-func (a *Action) RunStep(call actionrpc.Call) (map[string]any, map[string]any, error) {
-	actionrpc.LogParams(a.log, "received agent action request", forLog(call.With))
+func (a *Action) RunStep(call sdk.Call) (map[string]any, map[string]any, error) {
+	sdk.LogParams(a.log, "received agent action request", forLog(call.With))
 	ret, err := a.run(call)
-	actionrpc.LogOutcome(a.log, "agent test", ret, err)
+	sdk.LogOutcome(a.log, "agent test", ret, err)
 	return ret, nil, err
 }
 
-func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
+func (a *Action) run(call sdk.Call) (map[string]any, error) {
 	start := time.Now()
 	r, err := parse(call.With)
 	if err != nil {
@@ -89,7 +86,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 	// The records of the actions called hide the secrets of the agent,
 	// which the tester types into them, under whatever names they have:
 	// the caller hides only the credentials it recognizes.
-	caller := probe.NewActionCaller(call, "", probe.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
+	caller := sdk.NewCaller(call, "", sdk.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
 	var ios *scenario.App
 	if r.IOS != nil {
 		if ios, err = appTarget(caller, call.Actions, probeIOS, targetIOS, *r.IOS); err != nil {
@@ -110,7 +107,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 		// is refused.
 		hc := call
 		hc.Guard = apiGuard(call.Guard, r.HTTP.URL)
-		httpCaller := probe.NewActionCaller(hc, "", probe.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
+		httpCaller := sdk.NewCaller(hc, "", sdk.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
 		if api, err = httpTarget(httpCaller, call.Actions, *r.HTTP); err != nil {
 			return nil, err
 		}
@@ -127,7 +124,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 		// of the endpoint, as the http action is.
 		gc := call
 		gc.Guard = hostGuard(call.Guard, r.GraphQL.URL)
-		gqlCaller := probe.NewActionCaller(gc, "", probe.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
+		gqlCaller := sdk.NewCaller(gc, "", sdk.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
 		if gql, err = graphqlTarget(gqlCaller, call.Actions, *r.GraphQL); err != nil {
 			return nil, err
 		}
@@ -138,7 +135,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 		// the server, as probe-graphql is.
 		mc := call
 		mc.Guard = hostGuard(call.Guard, r.Mail.URL)
-		mailCaller := probe.NewActionCaller(mc, "", probe.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
+		mailCaller := sdk.NewCaller(mc, "", sdk.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
 		if box, err = mailTarget(mailCaller, call.Actions, *r.Mail); err != nil {
 			return nil, err
 		}
@@ -151,7 +148,7 @@ func (a *Action) run(call actionrpc.Call) (map[string]any, error) {
 		// transaction.
 		dc := call
 		dc.Guard = dbGuard(call.Guard)
-		dbCaller := probe.NewActionCaller(dc, "", probe.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
+		dbCaller := sdk.NewCaller(dc, "", sdk.WithCallerLogOutput(secretsHidden(os.Stderr, r.Secrets)))
 		if db, err = dbTarget(dbCaller, call.Actions, *r.DB); err != nil {
 			return nil, err
 		}
@@ -265,7 +262,7 @@ const (
 // callRes calls the action name with with, and returns its res. A failed
 // call returns its res too, when it has one, as of the console errors of
 // the page.
-func callRes(ctx context.Context, caller *probe.ActionCaller, name string, with map[string]any) (map[string]any, error) {
+func callRes(ctx context.Context, caller *sdk.Caller, name string, with map[string]any) (map[string]any, error) {
 	cr, err := caller.Call(ctx, name, with)
 	if err != nil {
 		return nil, err
@@ -280,7 +277,7 @@ func callRes(ctx context.Context, caller *probe.ActionCaller, name string, with 
 // appTarget returns the app of t, the targets.<kind> of the step, driven
 // through the action of repo, probe-ios or probe-android: the one the
 // workflow names under actions whose reference is repo, whatever its name.
-func appTarget(caller *probe.ActionCaller, actions map[string]string, repo, kind string, t appReq) (*scenario.App, error) {
+func appTarget(caller *sdk.Caller, actions map[string]string, repo, kind string, t appReq) (*scenario.App, error) {
 	name, err := actionNamed(actions, repo, "targets."+kind+" drives the app", kind)
 	if err != nil {
 		return nil, err
@@ -319,7 +316,7 @@ const httpAction = "http"
 // Probe, which the Probe that runs the agent starts. The OpenAPI document is
 // read here, for the tester to be given it, so that one that cannot be
 // read fails the step before the model is called.
-func httpTarget(caller *probe.ActionCaller, actions map[string]string, t httpReq) (*scenario.HTTP, error) {
+func httpTarget(caller *sdk.Caller, actions map[string]string, t httpReq) (*scenario.HTTP, error) {
 	if err := builtinCallable(actions, httpAction, "v1.37.0"); err != nil {
 		return nil, err
 	}
@@ -349,8 +346,8 @@ func httpTarget(caller *probe.ActionCaller, actions map[string]string, t httpReq
 // when the workflow gives its name to another action. since is the
 // version of Probe the target needs.
 func builtinCallable(actions map[string]string, name, since string) error {
-	if os.Getenv(probe.ExecutableEnv) == "" {
-		return fmt.Errorf("targets.%s calls the %s action of Probe, which needs Probe %s or later: %s is not set", name, name, since, probe.ExecutableEnv)
+	if os.Getenv(sdk.ExecutableEnv) == "" {
+		return fmt.Errorf("targets.%s calls the %s action of Probe, which needs Probe %s or later: %s is not set", name, name, since, sdk.ExecutableEnv)
 	}
 	if uses, ok := actions[name]; ok {
 		return fmt.Errorf("targets.%s calls the %s action of Probe, but actions of the workflow give the name %s to %s; give it another name", name, name, name, uses)
@@ -364,7 +361,7 @@ const grpcAction = "grpc"
 
 // grpcTarget returns the API of t, called through the grpc action of
 // Probe, which lists its services by reflection from Probe v1.38.0.
-func grpcTarget(caller *probe.ActionCaller, actions map[string]string, t grpcReq) (*scenario.GRPC, error) {
+func grpcTarget(caller *sdk.Caller, actions map[string]string, t grpcReq) (*scenario.GRPC, error) {
 	if err := builtinCallable(actions, grpcAction, "v1.38.0"); err != nil {
 		return nil, err
 	}
@@ -419,7 +416,7 @@ func grpcWith(t grpcReq, req *scenario.GRPCRequest) map[string]any {
 
 // grpcResponse reads the answer of a call of the grpc action, and what the
 // .proto files made of it.
-func grpcResponse(cr *probe.CallResult) (scenario.GRPCResponse, error) {
+func grpcResponse(cr *sdk.CallResult) (scenario.GRPCResponse, error) {
 	res, ok := cr.Result["res"].(map[string]any)
 	if !ok {
 		return scenario.GRPCResponse{}, fmt.Errorf("%s returned no res", grpcAction)
@@ -472,17 +469,17 @@ func grpcResponse(cr *probe.CallResult) (scenario.GRPCResponse, error) {
 // action, which keeps to the guard, to refuse a request, or a redirect, to
 // any other host. A run that does not allow the host keeps its own hosts,
 // which refuse it all the same.
-func apiGuard(g actionrpc.Guard, raw string) actionrpc.Guard {
+func apiGuard(g sdk.Guard, raw string) sdk.Guard {
 	// The http action keeps to both kinds of guard, as its package
 	// declares, which a guard of a run with none may not hold.
-	return hostGuard(g, raw).WithKeeps(httpAction, []string{actionrpc.KindReadOnly, actionrpc.KindAllowHost})
+	return hostGuard(g, raw).WithKeeps(httpAction, []string{sdk.KindReadOnly, sdk.KindAllowHost})
 }
 
 // hostGuard returns g kept to the host of the URL raw, at the port of its
 // scheme when it names none, for an action that keeps to the guard, to
 // refuse a request, or a redirect, to any other host or port, or from
 // https to http.
-func hostGuard(g actionrpc.Guard, raw string) actionrpc.Guard {
+func hostGuard(g sdk.Guard, raw string) sdk.Guard {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
 		return g
@@ -507,7 +504,7 @@ func hostGuard(g actionrpc.Guard, raw string) actionrpc.Guard {
 // action the workflow names under actions whose reference is that of
 // probe-graphql, whatever its name. Its action.yml declares that it keeps
 // to the guard, which the caller reads on its first call.
-func graphqlTarget(caller *probe.ActionCaller, actions map[string]string, t graphqlReq) (*scenario.GraphQL, error) {
+func graphqlTarget(caller *sdk.Caller, actions map[string]string, t graphqlReq) (*scenario.GraphQL, error) {
 	name, err := actionNamed(actions, probeGraphQL, "targets.graphql calls the API", "graphql")
 	if err != nil {
 		return nil, err
@@ -559,7 +556,7 @@ func graphqlWith(t graphqlReq, req scenario.GraphQLRequest) (map[string]any, err
 
 // graphqlResponse reads the response of a call of probe-graphql, called
 // by name.
-func graphqlResponse(name string, cr *probe.CallResult) (scenario.GraphQLResponse, error) {
+func graphqlResponse(name string, cr *sdk.CallResult) (scenario.GraphQLResponse, error) {
 	res, ok := cr.Result["res"].(map[string]any)
 	if !ok {
 		return scenario.GraphQLResponse{}, fmt.Errorf("%s returned no res", name)
@@ -597,13 +594,13 @@ const dbAction = "db"
 
 // dbGuard returns g read-only, for the db action, which keeps to both
 // kinds of guard, as its package declares.
-func dbGuard(g actionrpc.Guard) actionrpc.Guard {
+func dbGuard(g sdk.Guard) sdk.Guard {
 	g.ReadOnly = true
-	return g.WithKeeps(dbAction, []string{actionrpc.KindReadOnly, actionrpc.KindAllowHost})
+	return g.WithKeeps(dbAction, []string{sdk.KindReadOnly, sdk.KindAllowHost})
 }
 
 // dbTarget returns the database of t, read through the db action of Probe.
-func dbTarget(caller *probe.ActionCaller, actions map[string]string, t dbReq) (*scenario.DB, error) {
+func dbTarget(caller *sdk.Caller, actions map[string]string, t dbReq) (*scenario.DB, error) {
 	if err := builtinCallable(actions, dbAction, "v1.37.0"); err != nil {
 		return nil, err
 	}
@@ -765,7 +762,7 @@ func dsnShown(dsn string) string {
 // whatever its name. Its action.yml declares that it keeps to the guard,
 // which the caller reads on its first call. The calls it is given only
 // read: Email/query and Email/get.
-func mailTarget(caller *probe.ActionCaller, actions map[string]string, t mailReq) (*scenario.Mail, error) {
+func mailTarget(caller *sdk.Caller, actions map[string]string, t mailReq) (*scenario.Mail, error) {
 	name, err := actionNamed(actions, probeJMAP, "targets.mail reads the mailbox", "jmap")
 	if err != nil {
 		return nil, err
@@ -867,7 +864,7 @@ func jmapWith(t mailReq, calls []any) map[string]any {
 // jmapResults returns the results of the calls of probe-jmap, called by
 // name, by call id. A server that did not answer them all is an error,
 // told as it answered.
-func jmapResults(name string, cr *probe.CallResult) (map[string]any, error) {
+func jmapResults(name string, cr *sdk.CallResult) (map[string]any, error) {
 	res, ok := cr.Result["res"].(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("%s returned no res", name)
@@ -1038,7 +1035,7 @@ func httpWith(t httpReq, req scenario.HTTPRequest) map[string]any {
 
 // httpResponse reads the response of a call of the http action, and what
 // the OpenAPI document made of it.
-func httpResponse(cr *probe.CallResult) (scenario.HTTPResponse, error) {
+func httpResponse(cr *sdk.CallResult) (scenario.HTTPResponse, error) {
 	res, ok := cr.Result["res"].(map[string]any)
 	if !ok {
 		return scenario.HTTPResponse{}, fmt.Errorf("%s returned no res", httpAction)
@@ -1082,7 +1079,7 @@ func httpResponse(cr *probe.CallResult) (scenario.HTTPResponse, error) {
 func actionNamed(actions map[string]string, repo, what, example string) (string, error) {
 	var names []string
 	for name, uses := range actions {
-		ref, err := actionref.Parse(uses)
+		ref, err := sdk.ParseRef(uses)
 		if err == nil && ref.Local == "" && "github.com/"+ref.Owner+"/"+ref.Repo == repo && ref.Dir == "" {
 			names = append(names, name)
 		}
@@ -1230,21 +1227,21 @@ func result(r req, o scenario.Outcome, f files, took time.Duration) (map[string]
 // as Probe marks a step: a test that passed as one that passed, one that
 // failed as one that failed, and one that could not be carried out, or a
 // verdict of no other kind, as a warning.
-func verdictMark(verdict string) style.Mark {
+func verdictMark(verdict string) sdk.Mark {
 	switch verdict {
 	case scenario.Pass:
-		return style.Success
+		return sdk.MarkSuccess
 	case scenario.Fail:
-		return style.Failure
+		return sdk.MarkFailure
 	default:
-		return style.Warning
+		return sdk.MarkWarning
 	}
 }
 
 // severityMark is the mark of a finding of severity in what Probe prints
 // under the step: the mark of the level of its note.
-func severityMark(severity string) style.Mark {
-	return style.NoteLevel(levels[severity])
+func severityMark(severity string) sdk.Mark {
+	return sdk.NoteLevelMark(levels[severity])
 }
 
 // shortReport is what Probe prints under the step: the verdict, why, and

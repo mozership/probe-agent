@@ -19,8 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mozership/probe"
-	"github.com/mozership/probe/actionrpc"
+	"github.com/mozership/probe/sdk"
 	// The tests build probe-browser, whose packages go.sum keeps for it.
 	_ "github.com/mozership/probe-browser/browser"
 )
@@ -143,12 +142,12 @@ func startBrowser(t *testing.T, o Options) *Browser {
 	}
 	dir := probeBrowserAction(t)
 	t.Setenv("PROBE_BROWSER_CACHE_DIR", t.TempDir())
-	call := actionrpc.Call{
-		Step:      actionrpc.Step{RunID: t.Name() + "-" + fmt.Sprint(time.Now().UnixNano())},
-		Cleanups:  &actionrpc.Cleanups{},
-		Processes: &actionrpc.Processes{},
+	call := sdk.Call{
+		Step:      sdk.Step{RunID: t.Name() + "-" + fmt.Sprint(time.Now().UnixNano())},
+		Cleanups:  &sdk.Cleanups{},
+		Processes: &sdk.Processes{},
 	}
-	caller := probe.NewActionCaller(call, "", probe.WithCallerLogOutput(nopWriter{}))
+	caller := sdk.NewCaller(call, "", sdk.WithCallerLogOutput(nopWriter{}))
 	if o.Width == 0 {
 		o.Width, o.Height = 1280, 800
 	}
@@ -538,12 +537,12 @@ func TestSlowest(t *testing.T) {
 // TestWithoutPageAtFailure leaves the page at the failure out of an error
 // of probe-browser, and keeps the error it was, as a refusal of the guard.
 func TestWithoutPageAtFailure(t *testing.T) {
-	refused := &actionrpc.Refused{Reason: "not allowed"}
+	refused := &sdk.Refused{Reason: "not allowed"}
 	err := withoutPageAtFailure(fmt.Errorf("click #go: %w (page at failure: url http://a/, screenshot s.png, html s.html)", refused))
 	if err.Error() != "click #go: "+refused.Error() {
 		t.Errorf("error %q", err)
 	}
-	if _, ok := errors.AsType[*actionrpc.Refused](err); !ok {
+	if _, ok := errors.AsType[*sdk.Refused](err); !ok {
 		t.Errorf("%v is no longer the refusal", err)
 	}
 	plain := errors.New("plain")

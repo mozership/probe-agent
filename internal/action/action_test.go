@@ -12,9 +12,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/hashicorp/go-hclog"
-	"github.com/mozership/probe/actionref"
-	"github.com/mozership/probe/actionrpc"
-	"github.com/mozership/probe/style"
+	"github.com/mozership/probe/sdk"
 
 	"github.com/mozership/probe-agent/internal/llm"
 	"github.com/mozership/probe-agent/internal/page"
@@ -30,7 +28,7 @@ func TestManifestsDeclare(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		m, err := actionref.ParseManifest(data)
+		m, err := sdk.ParseManifest(data)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -48,7 +46,7 @@ func TestManifestsDeclare(t *testing.T) {
 // to report a value the action does not take: that the providers are those
 // the agent knows, that parse takes every value declared, in upper case
 // too for a key taken in any case, and that it refuses one that is not.
-func checkChoices(t *testing.T, name string, choices map[string]actionref.Choice) {
+func checkChoices(t *testing.T, name string, choices map[string]sdk.Choice) {
 	t.Helper()
 	want := []string{"cache_judge", "cache_mode", "effort", "provider"}
 	if got := slices.Sorted(maps.Keys(choices)); !slices.Equal(got, want) {
@@ -453,7 +451,7 @@ func TestParse_StorageState(t *testing.T) {
 // when the step that saves the login failed.
 func TestRun_MissingStorageState(t *testing.T) {
 	a := &Action{ctx: t.Context(), log: hclog.NewNullLogger()}
-	_, err := a.run(actionrpc.Call{Actions: browserActions, With: map[string]any{
+	_, err := a.run(sdk.Call{Actions: browserActions, With: map[string]any{
 		"task": "t", "expect": "e",
 		"targets": browserAt("http://a.test/", "storage_state", filepath.Join(t.TempDir(), "missing.json")),
 	}})
@@ -485,7 +483,7 @@ func TestRun_StorageStateOfAnotherShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &Action{ctx: t.Context(), log: hclog.NewNullLogger()}
-	_, err := a.run(actionrpc.Call{Actions: browserActions, With: map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/", "storage_state", path)}})
+	_, err := a.run(sdk.Call{Actions: browserActions, With: map[string]any{"task": "t", "expect": "e", "targets": browserAt("http://a.test/", "storage_state", path)}})
 	if err == nil || !strings.Contains(err.Error(), "storage_state: "+path+" is not a storage state: it has no list of cookies") {
 		t.Errorf("error %v, want the file refused", err)
 	}
@@ -528,11 +526,11 @@ func TestShortReport_MarksAsProbe(t *testing.T) {
 }
 
 func TestVerdictMark(t *testing.T) {
-	tests := map[string]style.Mark{
-		scenario.Pass:    style.Success,
-		scenario.Fail:    style.Failure,
-		scenario.Blocked: style.Warning,
-		"":               style.Warning,
+	tests := map[string]sdk.Mark{
+		scenario.Pass:    sdk.MarkSuccess,
+		scenario.Fail:    sdk.MarkFailure,
+		scenario.Blocked: sdk.MarkWarning,
+		"":               sdk.MarkWarning,
 	}
 	for verdict, want := range tests {
 		if got := verdictMark(verdict); got != want {
@@ -547,7 +545,7 @@ func TestShortReport_ColoredUnderATerminal(t *testing.T) {
 	plainMarks(t)
 	t.Setenv("PROBE_TTY", "1")
 	report := shortReport(req{Task: "t", Expect: "e"}, outcome(), files{})
-	if !strings.HasPrefix(report, style.Success.String()+" pass: ") || !strings.Contains(report, "\x1b[") {
+	if !strings.HasPrefix(report, sdk.MarkSuccess.String()+" pass: ") || !strings.Contains(report, "\x1b[") {
 		t.Errorf("report %q", report)
 	}
 }

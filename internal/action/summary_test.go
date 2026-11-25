@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mozership/probe/actionrpc"
+	"github.com/mozership/probe/sdk"
 
 	"github.com/mozership/probe-agent/internal/llm"
 	"github.com/mozership/probe-agent/internal/scenario"
@@ -26,11 +26,11 @@ func TestWriteSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := req{Model: "claude-opus-5-5"}
-	first := actionrpc.Step{JobName: "Sign-up", Name: "A new user | signs up"}
+	first := sdk.Step{JobName: "Sign-up", Name: "A new user | signs up"}
 	if err := writeSummary(path, first, r, usageOutcome(scenario.Pass, llm.Usage{Requests: 3, InputTokens: 1200, CacheReadTokens: 50000, CacheWriteTokens: 8000, OutputTokens: 900}), "hit"); err != nil {
 		t.Fatal(err)
 	}
-	second := actionrpc.Step{JobName: "Persona", ID: "step_2", Repeat: 1, Attempt: 2}
+	second := sdk.Step{JobName: "Persona", ID: "step_2", Repeat: 1, Attempt: 2}
 	if err := writeSummary(path, second, r, usageOutcome(scenario.Fail, llm.Usage{Requests: 12, InputTokens: 3000, CacheReadTokens: 1000000, OutputTokens: 4100}), ""); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestWriteSummary_TestsSideBySide(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range n {
 		wg.Go(func() {
-			step := actionrpc.Step{JobName: fmt.Sprintf("job %d", i), Name: "test"}
+			step := sdk.Step{JobName: fmt.Sprintf("job %d", i), Name: "test"}
 			if err := writeSummary(path, step, req{}, usageOutcome(scenario.Pass, llm.Usage{Requests: 1, InputTokens: 10}), ""); err != nil {
 				t.Error(err)
 			}
@@ -110,7 +110,7 @@ func TestParse_JobSummary(t *testing.T) {
 
 func TestWriteSummary_HidesTheSecrets(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "summary.md")
-	step := actionrpc.Step{JobName: "Log in", Name: "Log in as Alice@Example.com"}
+	step := sdk.Step{JobName: "Log in", Name: "Log in as Alice@Example.com"}
 	r := req{Secrets: map[string]string{"EMAIL": "alice@example.com"}}
 	if err := writeSummary(path, step, r, usageOutcome(scenario.Pass, llm.Usage{Requests: 1}), ""); err != nil {
 		t.Fatal(err)
@@ -123,7 +123,7 @@ func TestWriteSummary_HidesTheSecrets(t *testing.T) {
 
 func TestWriteSummary_HidesASecretTheCellChanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "summary.md")
-	step := actionrpc.Step{JobName: "Log in", Name: "Log in with p|ss"}
+	step := sdk.Step{JobName: "Log in", Name: "Log in with p|ss"}
 	r := req{Secrets: map[string]string{"PASS": "p|ss", "ONE": "1"}}
 	if err := writeSummary(path, step, r, usageOutcome(scenario.Pass, llm.Usage{Requests: 1, InputTokens: 1}), ""); err != nil {
 		t.Fatal(err)
@@ -136,7 +136,7 @@ func TestWriteSummary_HidesASecretTheCellChanges(t *testing.T) {
 
 func TestWriteSummary_ATotalEditedByHand(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "summary.md")
-	if err := writeSummary(path, actionrpc.Step{JobName: "a", Name: "b"}, req{}, usageOutcome(scenario.Pass, llm.Usage{Requests: 1}), ""); err != nil {
+	if err := writeSummary(path, sdk.Step{JobName: "a", Name: "b"}, req{}, usageOutcome(scenario.Pass, llm.Usage{Requests: 1}), ""); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
@@ -144,7 +144,7 @@ func TestWriteSummary_ATotalEditedByHand(t *testing.T) {
 	if err := os.WriteFile(path, []byte(long), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSummary(path, actionrpc.Step{JobName: "a", Name: "c"}, req{}, usageOutcome(scenario.Pass, llm.Usage{Requests: 1}), ""); err != nil {
+	if err := writeSummary(path, sdk.Step{JobName: "a", Name: "c"}, req{}, usageOutcome(scenario.Pass, llm.Usage{Requests: 1}), ""); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(path)

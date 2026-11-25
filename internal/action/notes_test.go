@@ -5,20 +5,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mozership/probe/actionrpc"
+	"github.com/mozership/probe/sdk"
 
 	"github.com/mozership/probe-agent/internal/scenario"
 )
 
 // parsedNotes returns the res.notes of the result of o, read as an action
 // that posts them reads the notes context.
-func parsedNotes(t *testing.T, r req, o scenario.Outcome) []actionrpc.Note {
+func parsedNotes(t *testing.T, r req, o scenario.Outcome) []sdk.Note {
 	t.Helper()
 	ret, err := result(r, o, files{Report: "/tmp/x/report.md"}, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	notes, err := actionrpc.ParseNotes(ret["res"].(map[string]any)["notes"])
+	notes, err := sdk.ParseNotes(ret["res"].(map[string]any)["notes"])
 	if err != nil {
 		t.Fatalf("res.notes is not what Probe reads: %v", err)
 	}
@@ -33,14 +33,14 @@ func TestNotes_Persona(t *testing.T) {
 		t.Fatalf("notes = %+v, want one for each finding", notes)
 	}
 	high, low := notes[0], notes[1]
-	if high.Level != actionrpc.NoteCritical || high.Title != "The note page fails" {
+	if high.Level != sdk.NoteCritical || high.Title != "The note page fails" {
 		t.Errorf("the note of a high finding = %+v", high)
 	}
 	want := "**Expected:** A form\n\n**Observed:** A 500\n\nerror · step 2 · http://a.test/notes/new\n\n> GET http://a.test/notes/new -> 500"
 	if high.Body != want {
 		t.Errorf("body =\n%s\nwant\n%s", high.Body, want)
 	}
-	if low.Level != actionrpc.NoteInfo || !strings.Contains(low.Body, "None of the evidence was found") || strings.Contains(low.Body, "> Welcom") {
+	if low.Level != sdk.NoteInfo || !strings.Contains(low.Body, "None of the evidence was found") || strings.Contains(low.Body, "> Welcom") {
 		t.Errorf("the note of an unverified low finding = %+v, want it said and its quote left out", low)
 	}
 }
@@ -64,14 +64,14 @@ func TestNotes_Scenario(t *testing.T) {
 	o.Evidence = []scenario.Evidence{{Quote: "Dashboard", Verified: true}, {Quote: "Hello, alice"}}
 	notes := parsedNotes(t, r, o)
 	want := "The dashboard says nothing of a welcome.\n\nThe tester stopped (done) at http://a.test/dashboard\n\n> Dashboard"
-	if len(notes) != 1 || notes[0].Level != actionrpc.NoteCritical || notes[0].Title != "The expectation did not hold" || notes[0].Body != want {
+	if len(notes) != 1 || notes[0].Level != sdk.NoteCritical || notes[0].Title != "The expectation did not hold" || notes[0].Body != want {
 		t.Errorf("the notes of a fail = %+v, want one critical with body\n%s", notes, want)
 	}
 
 	o = outcome()
 	o.Verdict, o.Reason, o.Stopped, o.Evidence = scenario.Blocked, "A CAPTCHA stopped the tester.", scenario.StoppedBlocked, nil
 	notes = parsedNotes(t, r, o)
-	if len(notes) != 1 || notes[0].Level != actionrpc.NoteWarning || !strings.HasPrefix(notes[0].Body, "A CAPTCHA stopped the tester.") {
+	if len(notes) != 1 || notes[0].Level != sdk.NoteWarning || !strings.HasPrefix(notes[0].Body, "A CAPTCHA stopped the tester.") {
 		t.Errorf("the notes of a blocked test = %+v, want one warning", notes)
 	}
 }

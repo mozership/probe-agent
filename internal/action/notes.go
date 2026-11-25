@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/mozership/probe/actionrpc"
+	"github.com/mozership/probe/sdk"
 
 	"github.com/mozership/probe-agent/internal/scenario"
 )
@@ -15,9 +15,9 @@ const maxTitle = 120
 
 // levels are the levels of the notes of findings of each severity.
 var levels = map[string]string{
-	"high":   actionrpc.NoteCritical,
-	"medium": actionrpc.NoteWarning,
-	"low":    actionrpc.NoteInfo,
+	"high":   sdk.NoteCritical,
+	"medium": sdk.NoteWarning,
+	"low":    sdk.NoteInfo,
 }
 
 // note is an entry of res.notes, as Probe reads it.
@@ -85,9 +85,9 @@ func notesOf(o scenario.Outcome, language string) []note {
 	}
 	switch o.Verdict {
 	case scenario.Fail:
-		notes = append(notes, note{Level: actionrpc.NoteCritical, Title: w.failed, Body: verdictBody(o, w)})
+		notes = append(notes, note{Level: sdk.NoteCritical, Title: w.failed, Body: verdictBody(o, w)})
 	case scenario.Blocked:
-		notes = append(notes, note{Level: actionrpc.NoteWarning, Title: w.blocked, Body: verdictBody(o, w)})
+		notes = append(notes, note{Level: sdk.NoteWarning, Title: w.blocked, Body: verdictBody(o, w)})
 	}
 	return notes
 }
@@ -120,7 +120,7 @@ func findingNote(f scenario.Finding, w words) note {
 	}
 	level, ok := levels[f.Severity]
 	if !ok {
-		level = actionrpc.NoteWarning
+		level = sdk.NoteWarning
 	}
 	return note{Level: level, Title: title(f.Title), Body: b.String()}
 }
