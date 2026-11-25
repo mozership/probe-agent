@@ -11,9 +11,9 @@ choices:
   provider: {values: [anthropic, gemini, openai, sakura, xai], ignore_case: true}
 runs:
   using: binary
-  url: https://github.com/mozership/probe-agent/releases/download/v0.14.2/probe-agent_{os}_{arch}
+  url: https://github.com/mozership/probe-agent/releases/download/v0.14.3/probe-agent_{os}_{arch}
   checksums:
-    darwin_amd64: "72289156b975da12288868cd5fd079dc290ff808713aa6b142707526d096b8ef"
-    darwin_arm64: "ba5cbd69c53cca4f83af3c68a5aafefa8e2974c61d8434c0f0304e1468939ccc"
-    linux_amd64: "80660146e23304d7b15058e40e4ec37c9286e37dfcf766617a3501d9062f5e7f"
-    linux_arm64: "350b6d53cc9652c533a27a53b0af7912ed39caafc070e18f3782343503052050"
+    darwin_amd64: "dd4790c44e6fa9890235aceac34f15109651274cb169167e6e3e5d25a3192026"
+    darwin_arm64: "b36317ebdac899a3794ce35c3e27e32afef45b850e31d492c0789db0fc5993f4"
+    linux_amd64: "5f14c13d64f127238051be9d8ac454cc04b759de36a692029a8ccf9b788dd005"
+    linux_arm64: "c834d22e63ade2245d02d02916ec3e67aabc1a9513a27a20490b14e4bc8f4378"
